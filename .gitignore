@@ -1,0 +1,57 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build output
+/build/
+/tmp/
+
+# SDE data cache (large, auto-downloaded)
+/data/
+
+# SQLite database files
+flipper.db
+flipper.db-shm
+flipper.db-wal
+
+# Legacy config backup
+config.json
+config.json.bak
+
+# Frontend dependencies
+frontend/node_modules/
+
+# Frontend build output
+frontend/dist/
+
+# Tauri build artifacts (legacy, no longer used)
+frontend/src-tauri/target/
+frontend/src-tauri/gen/schemas/
+
+# Air live-reload config
+.air.toml
+
+# Claude settings
+.claude/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment files
+.env
+.env.local
+.env.*.local
+frontend/.env
+frontend/.env.local

@@ -1,0 +1,106 @@
+param(
+    [Parameter(Position=0)]
+    [ValidateSet("build","run","test","frontend","cross","clean","all","help")]
+    [string]$Command = "help"
+)
+
+$AppName  = "eve-flipper"
+$BuildDir = "build"
+$Version  = & git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+$LdFlags  = "-s -w -X main.version=$Version"
+
+function Build {
+    Write-Host "Building frontend..." -ForegroundColor Cyan
+    Push-Location frontend
+    npm install --silent 2>$null
+    npm run build
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) { Write-Host "Frontend build failed!" -ForegroundColor Red; return }
+
+    Write-Host "Building $AppName ($Version)..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
+    go build -ldflags $LdFlags -o "$BuildDir/$AppName.exe" .
+    if ($LASTEXITCODE -eq 0) { Write-Host "OK: $BuildDir/$AppName.exe" -ForegroundColor Green }
+}
+
+function Run {
+    Build
+    if ($LASTEXITCODE -eq 0) { & "./$BuildDir/$AppName.exe" }
+}
+
+function Test {
+    Write-Host "Running tests..." -ForegroundColor Cyan
+    go test ./...
+}
+
+function Frontend {
+    Write-Host "Building frontend..." -ForegroundColor Cyan
+    Push-Location frontend
+    npm install
+    npm run build
+    Pop-Location
+}
+
+function Cross {
+    Frontend
+    if ($LASTEXITCODE -ne 0) { return }
+    Write-Host "Cross-compiling $AppName ($Version)..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
+
+    $targets = @(
+        @{ GOOS="windows"; GOARCH="amd64"; Ext=".exe" },
+        @{ GOOS="linux";   GOARCH="amd64"; Ext="" },
+        @{ GOOS="linux";   GOARCH="arm64"; Ext="" },
+        @{ GOOS="darwin";  GOARCH="amd64"; Ext="" },
+        @{ GOOS="darwin";  GOARCH="arm64"; Ext="" }
+    )
+
+    foreach ($t in $targets) {
+        $out = "$BuildDir/$AppName-$($t.GOOS)-$($t.GOARCH)$($t.Ext)"
+        Write-Host "  $($t.GOOS)/$($t.GOARCH) -> $out"
+        $env:GOOS   = $t.GOOS
+        $env:GOARCH = $t.GOARCH
+        $env:CGO_ENABLED = "0"
+        go build -ldflags $LdFlags -o $out .
+    }
+
+    # Reset env
+    Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+    Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+    Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
+
+    Write-Host "Done! Binaries in $BuildDir/" -ForegroundColor Green
+}
+
+function Clean {
+    if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
+    Write-Host "Cleaned." -ForegroundColor Green
+}
+
+function ShowHelp {
+    Write-Host @"
+Usage: .\make.ps1 <command>
+
+Commands:
+  build      Build frontend + backend into single .exe
+  run        Build and run the backend
+  test       Run all Go tests
+  frontend   Install deps and build frontend
+  cross      Cross-compile for Windows, Linux, macOS
+  clean      Remove build artifacts
+  all        Test + frontend + cross-compile
+  help       Show this help
+"@ -ForegroundColor Yellow
+}
+
+switch ($Command) {
+    "build"    { Build }
+    "run"      { Run }
+    "test"     { Test }
+    "frontend" { Frontend }
+    "cross"    { Cross }
+    "clean"    { Clean }
+    "all"      { Test; Frontend; Cross }
+    "help"     { ShowHelp }
+}
