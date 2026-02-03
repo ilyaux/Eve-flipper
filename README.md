@@ -11,6 +11,13 @@
 
 <br/>
 
+[![GitHub stars](https://img.shields.io/github/stars/ilyaux/Eve-flipper?style=for-the-badge&logo=github&color=yellow)](https://github.com/ilyaux/Eve-flipper/stargazers)
+[![GitHub release](https://img.shields.io/github/v/release/ilyaux/Eve-flipper?style=for-the-badge&logo=github&color=blue)](https://github.com/ilyaux/Eve-flipper/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ilyaux/Eve-flipper/total?style=for-the-badge&logo=github&color=brightgreen)](https://github.com/ilyaux/Eve-flipper/releases)
+[![Last Commit](https://img.shields.io/github/last-commit/ilyaux/Eve-flipper?style=for-the-badge&logo=github)](https://github.com/ilyaux/Eve-flipper/commits/master)
+
+<br/>
+
 **Station Trading** · **Hauling Routes** · **Contract Flipping** · **Industry Analysis**
 
 [📥 Download](https://github.com/ilyaux/Eve-flipper/releases) · 
@@ -170,6 +177,25 @@ git clone https://github.com/ilyaux/Eve-flipper.git
 cd Eve-flipper
 make build  # or .\make.ps1 build on Windows
 ```
+
+---
+
+## 👥 Contributors
+
+<div align="center">
+
+<a href="https://github.com/ilyaux/Eve-flipper/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ilyaux/Eve-flipper&max=100" />
+</a>
+
+<br/><br/>
+
+[![Contributors](https://img.shields.io/github/contributors/ilyaux/Eve-flipper?style=for-the-badge&color=blue)](https://github.com/ilyaux/Eve-flipper/graphs/contributors)
+[![Forks](https://img.shields.io/github/forks/ilyaux/Eve-flipper?style=for-the-badge&color=lightgrey)](https://github.com/ilyaux/Eve-flipper/network/members)
+[![Issues](https://img.shields.io/github/issues/ilyaux/Eve-flipper?style=for-the-badge&color=yellow)](https://github.com/ilyaux/Eve-flipper/issues)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](https://github.com/ilyaux/Eve-flipper/pulls)
+
+</div>
 
 ---
 
