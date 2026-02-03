@@ -20,7 +20,7 @@ export function StatusBar() {
   }, []);
 
   return (
-    <div className="flex items-center gap-4 px-4 py-2 bg-eve-panel border border-eve-border rounded-sm">
+    <div className="flex items-center gap-4 h-[34px] px-4 bg-eve-panel border border-eve-border rounded-sm">
       <StatusDot
         ok={status?.sde_loaded ?? false}
         loading={status === null}

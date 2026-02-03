@@ -25,6 +25,11 @@ type FlipResult struct {
 	BuyJumps        int
 	SellJumps       int
 	TotalJumps      int
+	DailyVolume     int64   `json:"DailyVolume"`
+	Velocity        float64 `json:"Velocity"`
+	PriceTrend      float64 `json:"PriceTrend"`
+	BuyCompetitors  int     `json:"BuyCompetitors"`
+	SellCompetitors int     `json:"SellCompetitors"`
 }
 
 // ContractResult represents a profitable public contract compared to market value.
@@ -76,6 +81,7 @@ type RouteParams struct {
 	SalesTaxPercent float64
 	MinHops         int
 	MaxHops         int
+	MaxResults      int // 0 = use default (50)
 }
 
 // ScanParams holds the input parameters for radius and region scans.
@@ -86,4 +92,9 @@ type ScanParams struct {
 	SellRadius      int
 	MinMargin       float64
 	SalesTaxPercent float64
+	// Advanced filters
+	MinDailyVolume int64   // 0 = no filter
+	MaxInvestment  float64 // 0 = no filter (max ISK per position)
+	SecurityFilter string  // "" = all, "highsec", "lowsec", "nullsec"
+	MaxResults     int     // 0 = use default (100)
 }

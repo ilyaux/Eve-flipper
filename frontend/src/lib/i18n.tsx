@@ -6,6 +6,7 @@ const translations = {
   ru: {
     // Header
     appTitle: "EVE Flipper",
+    loginEve: "Войти через EVE",
 
     // Status
     sdeLoading: "SDE: загрузка...",
@@ -22,6 +23,9 @@ const translations = {
     sellRadius: "Радиус продажи (прыжки)",
     minMargin: "Мин. маржа (%)",
     salesTax: "Налог продажи (%)",
+    minDailyVolume: "Мин. дн. объём",
+    maxInvestment: "Макс. инвестиция ISK",
+    maxResults: "Лимит результатов",
 
     // Tabs
     tabRadius: "Флипер (радиус)",
@@ -42,8 +46,15 @@ const translations = {
     colUnitsToBuy: "Покупать",
     colAcceptQty: "Приём",
     colProfit: "Прибыль ISK",
+    colDailyProfit: "Дн. прибыль",
+    colProfitPerUnit: "Прибыль/шт",
     colProfitPerJump: "ISK/прыжок",
     colJumps: "Прыжки",
+    colDailyVolume: "Дн. объём",
+    colVelocity: "Скорость",
+    colPriceTrend: "Тренд %",
+    colBuyCompetitors: "Конк. покуп.",
+    colSellCompetitors: "Конк. прод.",
 
     // Contract table
     colTitle: "Название",
@@ -125,6 +136,52 @@ const translations = {
     // Notifications
     alertTriggered: "Маржа {margin}% > порог {threshold}%",
 
+    // Station Trading
+    tabStation: "Стейшн Трейдинг",
+    stationSelect: "Выберите станцию",
+    brokerFee: "Комиссия брокера (%)",
+    colSpread: "Спред ISK",
+    colROI: "ROI %",
+    colBuyOrders: "Buy ордера",
+    colSellOrders: "Sell ордера",
+    colBuyVolume: "Buy объём",
+    colSellVolume: "Sell объём",
+    stationPrompt: "Выберите станцию и нажмите «Сканировать»",
+    foundStationDeals: "Найдено {count} возможностей",
+    noStations: "Нет станций в системе",
+    loadingStations: "Загрузка станций...",
+    allStations: "Все станции",
+    stationRadius: "Радиус",
+    colStationName: "Станция",
+
+    // EVE Guru Station Trading metrics
+    profitFilters: "Фильтры прибыли",
+    riskProfile: "Профиль риска",
+    bvsAndLimits: "B v S и лимиты",
+    minItemProfit: "Мин. прибыль/шт",
+    minDemandPerDay: "Мин. спрос/день",
+    avgPricePeriod: "Период (дн.)",
+    minPeriodROI: "Мин. Period ROI",
+    maxPVI: "Макс. PVI",
+    maxSDS: "Макс. SDS",
+    bvsRatioMin: "B v S мин",
+    bvsRatioMax: "B v S макс",
+    limitBuyToPriceLow: "Лимит покупки по P.Low",
+    flagExtremePrices: "Флаг экстрем. цен",
+    colCTS: "CTS",
+    colPeriodROI: "P.ROI %",
+    colBuyPerDay: "Спрос/день",
+    colBvS: "B v S",
+    colDOS: "D.O.S.",
+    colSDS: "SDS",
+    colVWAP: "VWAP",
+    colOBDS: "OBDS",
+    colNowROI: "Now ROI",
+    colCapital: "Капитал",
+    highRisk: "Высокий риск",
+    extremePrice: "Экстрем. цена",
+    avgCTS: "Средний CTS",
+
     // History
     scanHistory: "История сканирований",
     historyEmpty: "Нет истории",
@@ -132,6 +189,7 @@ const translations = {
   en: {
     // Header
     appTitle: "EVE Flipper",
+    loginEve: "Login with EVE",
 
     // Status
     sdeLoading: "SDE: loading...",
@@ -148,6 +206,9 @@ const translations = {
     sellRadius: "Sell Radius (jumps)",
     minMargin: "Min Margin (%)",
     salesTax: "Sales Tax (%)",
+    minDailyVolume: "Min Daily Volume",
+    maxInvestment: "Max Investment ISK",
+    maxResults: "Results Limit",
 
     // Tabs
     tabRadius: "Flipper (radius)",
@@ -168,8 +229,15 @@ const translations = {
     colUnitsToBuy: "Buy Qty",
     colAcceptQty: "Accept Qty",
     colProfit: "Profit ISK",
+    colDailyProfit: "Daily Profit",
+    colProfitPerUnit: "Profit/Unit",
     colProfitPerJump: "ISK/Jump",
     colJumps: "Jumps",
+    colDailyVolume: "Daily Vol",
+    colVelocity: "Velocity",
+    colPriceTrend: "Trend %",
+    colBuyCompetitors: "Buy Comp.",
+    colSellCompetitors: "Sell Comp.",
 
     // Contract table
     colTitle: "Title",
@@ -250,6 +318,52 @@ const translations = {
 
     // Notifications
     alertTriggered: "Margin {margin}% > threshold {threshold}%",
+
+    // Station Trading
+    tabStation: "Station Trading",
+    stationSelect: "Select station",
+    brokerFee: "Broker fee (%)",
+    colSpread: "Spread ISK",
+    colROI: "ROI %",
+    colBuyOrders: "Buy Orders",
+    colSellOrders: "Sell Orders",
+    colBuyVolume: "Buy Volume",
+    colSellVolume: "Sell Volume",
+    stationPrompt: "Select a station and press \"Scan\"",
+    foundStationDeals: "Found {count} opportunities",
+    noStations: "No stations in system",
+    loadingStations: "Loading stations...",
+    allStations: "All stations",
+    stationRadius: "Radius",
+    colStationName: "Station",
+
+    // EVE Guru Station Trading metrics
+    profitFilters: "Profit Filters",
+    riskProfile: "Risk Profile",
+    bvsAndLimits: "B v S & Limits",
+    minItemProfit: "Min Profit/Unit",
+    minDemandPerDay: "Min Demand/Day",
+    avgPricePeriod: "Period (days)",
+    minPeriodROI: "Min Period ROI",
+    maxPVI: "Max PVI",
+    maxSDS: "Max SDS",
+    bvsRatioMin: "B v S Min",
+    bvsRatioMax: "B v S Max",
+    limitBuyToPriceLow: "Limit Buy to P.Low",
+    flagExtremePrices: "Flag Extreme Prices",
+    colCTS: "CTS",
+    colPeriodROI: "P.ROI %",
+    colBuyPerDay: "Buy/Day",
+    colBvS: "B v S",
+    colDOS: "D.O.S.",
+    colSDS: "SDS",
+    colVWAP: "VWAP",
+    colOBDS: "OBDS",
+    colNowROI: "Now ROI",
+    colCapital: "Capital",
+    highRisk: "High Risk",
+    extremePrice: "Extreme Price",
+    avgCTS: "Avg CTS",
 
     // History
     scanHistory: "Scan history",

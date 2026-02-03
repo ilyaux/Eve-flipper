@@ -1,0 +1,468 @@
+package engine
+
+import (
+	"fmt"
+	"log"
+	"math"
+	"sort"
+
+	"eve-flipper/internal/esi"
+)
+
+// StationTrade represents a same-station flip opportunity (buy via buy order, sell via sell order).
+type StationTrade struct {
+	TypeID          int32   `json:"TypeID"`
+	TypeName        string  `json:"TypeName"`
+	Volume          float64 `json:"Volume"`
+	BuyPrice        float64 `json:"BuyPrice"`  // highest buy order price (we sell to this)
+	SellPrice       float64 `json:"SellPrice"` // lowest sell order price (we buy from this)
+	Spread          float64 `json:"Spread"`    // SellPrice - BuyPrice
+	MarginPercent   float64 `json:"MarginPercent"`
+	ProfitPerUnit   float64 `json:"ProfitPerUnit"`
+	DailyVolume     int64   `json:"DailyVolume"`
+	BuyOrderCount   int     `json:"BuyOrderCount"`
+	SellOrderCount  int     `json:"SellOrderCount"`
+	BuyVolume       int32   `json:"BuyVolume"`  // total volume of buy orders
+	SellVolume      int32   `json:"SellVolume"` // total volume of sell orders
+	TotalProfit     float64 `json:"TotalProfit"`
+	ROI             float64 `json:"ROI"` // profit / investment * 100
+	StationName     string  `json:"StationName"`
+	StationID       int64   `json:"StationID"`
+
+	// --- EVE Guru style metrics ---
+	CapitalRequired float64 `json:"CapitalRequired"` // Sum of all buy orders ISK
+	NowROI          float64 `json:"NowROI"`          // ProfitPerUnit / CapitalPerUnit * 100
+	PeriodROI       float64 `json:"PeriodROI"`       // (AvgSell - AvgBuy) / AvgBuy * 100
+
+	// Volume/Liquidity metrics
+	BuyUnitsPerDay  float64 `json:"BuyUnitsPerDay"`  // History volume / days
+	SellUnitsPerDay float64 `json:"SellUnitsPerDay"` // Estimated from order counts
+	BvSRatio        float64 `json:"BvSRatio"`        // BuyUnitsPerDay / SellUnitsPerDay
+	DOS             float64 `json:"DOS"`             // Days of Supply = SellVolume / BuyUnitsPerDay
+
+	// Advanced risk metrics
+	VWAP float64 `json:"VWAP"` // Volume-Weighted Average Price (30 days)
+	PVI  float64 `json:"PVI"`  // Price Volatility Index (StdDev of daily range)
+	OBDS float64 `json:"OBDS"` // Order Book Depth Score
+	SDS  int     `json:"SDS"`  // Scam Detection Score (0-100)
+	CI   int     `json:"CI"`   // Competition Index
+	CTS  float64 `json:"CTS"`  // Composite Trading Score (final rating 0-100)
+
+	// Price history
+	AvgPrice  float64 `json:"AvgPrice"`  // Average price over period
+	PriceHigh float64 `json:"PriceHigh"` // Max price over period
+	PriceLow  float64 `json:"PriceLow"`  // Min price over period
+
+	// Risk flags
+	IsExtremePriceFlag bool `json:"IsExtremePriceFlag"` // Anomalous price detected
+	IsHighRiskFlag     bool `json:"IsHighRiskFlag"`     // SDS >= 50
+}
+
+// stationTypeKey uniquely identifies a station+type combination for order grouping.
+type stationTypeKey struct {
+	locationID int64
+	typeID     int32
+}
+
+// orderGroup holds buy and sell orders for a single station+type combination.
+type orderGroup struct {
+	buyOrders  []esi.MarketOrder
+	sellOrders []esi.MarketOrder
+}
+
+// StationTradeParams holds input parameters for station trading scan.
+type StationTradeParams struct {
+	StationIDs      map[int64]bool // nil or empty = all stations in region
+	RegionID        int32
+	MinMargin       float64
+	SalesTaxPercent float64
+	BrokerFee       float64 // percent
+	MinDailyVolume  int64   // 0 = no filter
+	MaxResults      int     // 0 = use default (100)
+
+	// --- EVE Guru Profit Filters ---
+	MinItemProfit   float64 // Min profit per unit ISK (e.g. 1,000,000)
+	MinDemandPerDay float64 // Min daily buy volume (e.g. 1.0)
+
+	// --- Risk Profile ---
+	AvgPricePeriod int     // Days for Period ROI calc (default 90)
+	MinPeriodROI   float64 // Min Period ROI % (e.g. 20%)
+	BvSRatioMin    float64 // Min B v S Ratio (e.g. 0.5)
+	BvSRatioMax    float64 // Max B v S Ratio (e.g. 2.0)
+	MaxPVI         float64 // Max volatility % (e.g. 25%)
+	MaxSDS         int     // Max scam score (e.g. 40)
+
+	// --- Price Limits ---
+	LimitBuyToPriceLow bool // Don't buy above P.Low + 10%
+	FlagExtremePrices  bool // Flag anomalous prices
+}
+
+// ScanStationTrades finds profitable same-station trading opportunities.
+func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(string)) ([]StationTrade, error) {
+	progress("Fetching all region orders...")
+
+	// Fetch all orders for the region
+	allOrders, err := s.ESI.FetchRegionOrders(params.RegionID, "all")
+	if err != nil {
+		return nil, fmt.Errorf("fetch orders: %w", err)
+	}
+
+	progress(fmt.Sprintf("Processing %d orders...", len(allOrders)))
+
+	// Group orders by (locationID, typeID) — supports multi-station scan
+	groups := make(map[stationTypeKey]*orderGroup)
+
+	filterStations := len(params.StationIDs) > 0
+
+	for _, o := range allOrders {
+		// Filter to allowed stations (if specified)
+		if filterStations {
+			if _, ok := params.StationIDs[o.LocationID]; !ok {
+				continue
+			}
+		}
+		key := stationTypeKey{o.LocationID, o.TypeID}
+		g, ok := groups[key]
+		if !ok {
+			g = &orderGroup{}
+			groups[key] = g
+		}
+		if o.IsBuyOrder {
+			g.buyOrders = append(g.buyOrders, o)
+		} else {
+			g.sellOrders = append(g.sellOrders, o)
+		}
+	}
+
+	log.Printf("[DEBUG] StationTrades: %d type+station groups", len(groups))
+
+	progress(fmt.Sprintf("Analyzing %d items...", len(groups)))
+
+	taxMult := 1.0 - params.SalesTaxPercent/100
+	brokerMult := 1.0 - params.BrokerFee/100
+	if taxMult < 0 {
+		taxMult = 0
+	}
+	if brokerMult < 0 {
+		brokerMult = 0
+	}
+
+	var results []StationTrade
+	// Store order groups for advanced metrics calculation
+	orderGroups := make(map[stationTypeKey]*orderGroup)
+
+	for key, g := range groups {
+		typeID := key.typeID
+		if len(g.buyOrders) == 0 || len(g.sellOrders) == 0 {
+			continue
+		}
+
+		// Find highest buy and lowest sell
+		var highestBuy esi.MarketOrder
+		for _, o := range g.buyOrders {
+			if o.Price > highestBuy.Price {
+				highestBuy = o
+			}
+		}
+
+		var lowestSell esi.MarketOrder
+		lowestSell.Price = math.MaxFloat64
+		for _, o := range g.sellOrders {
+			if o.Price < lowestSell.Price {
+				lowestSell = o
+			}
+		}
+
+		if highestBuy.Price <= 0.01 || lowestSell.Price >= math.MaxFloat64 {
+			continue
+		}
+
+		// Skip absurd spreads — if buy is less than 1% of sell, it's a junk buy order
+		if highestBuy.Price < lowestSell.Price*0.01 {
+			continue
+		}
+
+		// Station trading: you PLACE a buy order (competing with existing buy orders)
+		// and PLACE a sell order (competing with existing sell orders).
+		// Buy cost = highestBuy.Price (what you offer to buy at) + broker fee
+		// Sell revenue = lowestSell.Price (what you list to sell at) - sales tax - broker fee
+		buyAt := highestBuy.Price
+		sellAt := lowestSell.Price
+		if sellAt <= buyAt {
+			continue // no spread
+		}
+		effectiveSell := sellAt * taxMult * brokerMult
+		effectiveBuy := buyAt * (1 + params.BrokerFee/100)
+		profitPerUnit := effectiveSell - effectiveBuy
+
+		if profitPerUnit <= 0 {
+			continue
+		}
+
+		margin := profitPerUnit / effectiveBuy * 100
+		if margin < params.MinMargin {
+			continue
+		}
+
+		itemType, ok := s.SDE.Types[typeID]
+		if !ok {
+			continue
+		}
+
+		// Total volumes and capital required
+		var totalBuyVol, totalSellVol int32
+		var capitalRequired float64
+		for _, o := range g.buyOrders {
+			totalBuyVol += o.VolumeRemain
+			capitalRequired += o.Price * float64(o.VolumeRemain)
+		}
+		for _, o := range g.sellOrders {
+			totalSellVol += o.VolumeRemain
+		}
+
+		if totalBuyVol <= 0 || totalSellVol <= 0 {
+			continue
+		}
+
+		// Pre-filter by MinItemProfit
+		if params.MinItemProfit > 0 && profitPerUnit < params.MinItemProfit {
+			continue
+		}
+
+		// Calculate order book metrics
+		ci := CalcCI(append(g.buyOrders, g.sellOrders...))
+		obds := CalcOBDS(g.buyOrders, g.sellOrders, capitalRequired)
+
+		// NowROI = profit per unit / cost per unit * 100
+		capitalPerUnit := capitalRequired / float64(totalBuyVol)
+		nowROI := 0.0
+		if capitalPerUnit > 0 {
+			nowROI = profitPerUnit / capitalPerUnit * 100
+		}
+
+		results = append(results, StationTrade{
+			TypeID:          typeID,
+			TypeName:        itemType.Name,
+			Volume:          itemType.Volume,
+			BuyPrice:        buyAt,
+			SellPrice:       sellAt,
+			Spread:          sellAt - buyAt,
+			MarginPercent:   sanitizeFloat(margin),
+			ProfitPerUnit:   sanitizeFloat(profitPerUnit),
+			BuyOrderCount:   len(g.buyOrders),
+			SellOrderCount:  len(g.sellOrders),
+			BuyVolume:       totalBuyVol,
+			SellVolume:      totalSellVol,
+			ROI:             sanitizeFloat(margin),
+			StationID:       key.locationID,
+			CapitalRequired: sanitizeFloat(capitalRequired),
+			NowROI:          sanitizeFloat(nowROI),
+			CI:              ci,
+			OBDS:            sanitizeFloat(obds),
+			// History-dependent fields will be calculated in enrichStationWithHistory
+		})
+
+		// Store order groups for advanced metrics (needed for SDS calculation)
+		orderGroups[key] = g
+	}
+
+	log.Printf("[DEBUG] StationTrades: %d profitable items", len(results))
+
+	// Sort by total profit descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].TotalProfit > results[j].TotalProfit
+	})
+	limit := EffectiveMaxResults(params.MaxResults, DefaultMaxResults)
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	// Fill station names (prefetch all unique station IDs)
+	if len(results) > 0 {
+		progress("Fetching station names...")
+		stationIDs := make(map[int64]bool)
+		for _, r := range results {
+			stationIDs[r.StationID] = true
+		}
+		s.ESI.PrefetchStationNames(stationIDs)
+		for i := range results {
+			results[i].StationName = s.ESI.StationName(results[i].StationID)
+		}
+	}
+
+	// Enrich with market history and calculate advanced metrics
+	s.enrichStationWithHistory(results, params.RegionID, orderGroups, params, progress)
+
+	// Apply post-history filters
+	results = applyStationTradeFilters(results, params)
+
+	log.Printf("[DEBUG] StationTrades: %d after all filters", len(results))
+
+	// Final sort by CTS (Composite Trading Score) descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CTS > results[j].CTS
+	})
+
+	progress(fmt.Sprintf("Found %d station trading opportunities", len(results)))
+	return results, nil
+}
+
+// applyStationTradeFilters applies post-history filters based on params.
+func applyStationTradeFilters(results []StationTrade, params StationTradeParams) []StationTrade {
+	filtered := results[:0]
+	for _, r := range results {
+		// Min daily volume
+		if params.MinDailyVolume > 0 && r.DailyVolume < params.MinDailyVolume {
+			continue
+		}
+		// Min demand per day
+		if params.MinDemandPerDay > 0 && r.BuyUnitsPerDay < params.MinDemandPerDay {
+			continue
+		}
+		// Min Period ROI
+		if params.MinPeriodROI > 0 && r.PeriodROI < params.MinPeriodROI {
+			continue
+		}
+		// B v S Ratio range
+		if params.BvSRatioMin > 0 && r.BvSRatio < params.BvSRatioMin {
+			continue
+		}
+		if params.BvSRatioMax > 0 && r.BvSRatio > params.BvSRatioMax {
+			continue
+		}
+		// Max PVI (volatility)
+		if params.MaxPVI > 0 && r.PVI > params.MaxPVI {
+			continue
+		}
+		// Max SDS (scam score)
+		if params.MaxSDS > 0 && r.SDS > params.MaxSDS {
+			continue
+		}
+		// Price limit filter
+		if params.LimitBuyToPriceLow && r.PriceLow > 0 {
+			maxBuyPrice := r.PriceLow * 1.1 // 10% above historical low
+			if r.BuyPrice > maxBuyPrice {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
+}
+
+// enrichStationWithHistory fetches market history and calculates advanced metrics.
+func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int32, orderGroups map[stationTypeKey]*orderGroup, params StationTradeParams, progress func(string)) {
+	if s.History == nil || len(results) == 0 {
+		return
+	}
+
+	progress("Fetching market history...")
+
+	// Determine period for calculations (default 90 days)
+	avgPeriod := params.AvgPricePeriod
+	if avgPeriod <= 0 {
+		avgPeriod = 90
+	}
+
+	type histResult struct {
+		idx     int
+		entries []esi.HistoryEntry
+		stats   esi.MarketStats
+	}
+	ch := make(chan histResult, len(results))
+	sem := make(chan struct{}, 10)
+
+	for i := range results {
+		sem <- struct{}{}
+		go func(idx int) {
+			defer func() { <-sem }()
+
+			entries, ok := s.History.GetMarketHistory(regionID, results[idx].TypeID)
+			if !ok {
+				var err error
+				entries, err = s.ESI.FetchMarketHistory(regionID, results[idx].TypeID)
+				if err != nil {
+					ch <- histResult{idx, nil, esi.MarketStats{}}
+					return
+				}
+				s.History.SetMarketHistory(regionID, results[idx].TypeID, entries)
+			}
+
+			totalListed := results[idx].BuyVolume + results[idx].SellVolume
+			stats := esi.ComputeMarketStats(entries, totalListed)
+			ch <- histResult{idx, entries, stats}
+		}(i)
+	}
+
+	progress("Calculating advanced metrics...")
+
+	for range results {
+		r := <-ch
+		idx := r.idx
+
+		// Basic history stats
+		results[idx].DailyVolume = r.stats.DailyVolume
+		results[idx].TotalProfit = sanitizeFloat(results[idx].ProfitPerUnit * float64(r.stats.DailyVolume))
+
+		if len(r.entries) == 0 {
+			continue
+		}
+
+		// Calculate VWAP (30 days)
+		results[idx].VWAP = sanitizeFloat(CalcVWAP(r.entries, 30))
+
+		// Calculate PVI (30 days)
+		results[idx].PVI = sanitizeFloat(CalcPVI(r.entries, 30))
+
+		// Calculate Period ROI
+		results[idx].PeriodROI = sanitizeFloat(CalcPeriodROI(r.entries, avgPeriod))
+
+		// Calculate price stats
+		avg, high, low := CalcAvgPriceStats(r.entries, avgPeriod)
+		results[idx].AvgPrice = sanitizeFloat(avg)
+		results[idx].PriceHigh = sanitizeFloat(high)
+		results[idx].PriceLow = sanitizeFloat(low)
+
+		// Calculate Buy/Sell Units per Day
+		results[idx].BuyUnitsPerDay = avgDailyVolume(r.entries, 7)
+
+		// Estimate sell units per day from order count velocity
+		// Approximation: assume average order fills in ~3 days
+		if results[idx].SellOrderCount > 0 {
+			avgOrderSize := float64(results[idx].SellVolume) / float64(results[idx].SellOrderCount)
+			results[idx].SellUnitsPerDay = avgOrderSize * float64(results[idx].SellOrderCount) / 3.0
+		}
+
+		// B v S Ratio
+		if results[idx].SellUnitsPerDay > 0 {
+			results[idx].BvSRatio = sanitizeFloat(results[idx].BuyUnitsPerDay / results[idx].SellUnitsPerDay)
+		}
+
+		// Days of Supply
+		if results[idx].BuyUnitsPerDay > 0 {
+			results[idx].DOS = sanitizeFloat(float64(results[idx].SellVolume) / results[idx].BuyUnitsPerDay)
+		}
+
+		// Calculate SDS (Scam Detection Score)
+		key := stationTypeKey{results[idx].StationID, results[idx].TypeID}
+		if g, ok := orderGroups[key]; ok {
+			results[idx].SDS = CalcSDS(g.buyOrders, r.entries, results[idx].VWAP)
+		}
+
+		// Set risk flags
+		results[idx].IsHighRiskFlag = results[idx].SDS >= 50
+		if params.FlagExtremePrices && results[idx].VWAP > 0 {
+			results[idx].IsExtremePriceFlag = IsExtremePrice(results[idx].BuyPrice, results[idx].VWAP, 50)
+		}
+
+		// Calculate CTS (Composite Trading Score)
+		results[idx].CTS = sanitizeFloat(CalcCTS(
+			results[idx].PeriodROI,
+			results[idx].OBDS,
+			results[idx].PVI,
+			results[idx].CI,
+			results[idx].SDS,
+			results[idx].BuyUnitsPerDay,
+		))
+	}
+}

@@ -25,6 +25,10 @@ const columnDefs: { key: SortKey; labelKey: TranslationKey; width: string; numer
   { key: "TotalProfit", labelKey: "colProfit", width: "min-w-[120px]", numeric: true },
   { key: "ProfitPerJump", labelKey: "colProfitPerJump", width: "min-w-[110px]", numeric: true },
   { key: "TotalJumps", labelKey: "colJumps", width: "min-w-[60px]", numeric: true },
+  { key: "DailyVolume", labelKey: "colDailyVolume", width: "min-w-[80px]", numeric: true },
+  { key: "PriceTrend", labelKey: "colPriceTrend", width: "min-w-[70px]", numeric: true },
+  { key: "BuyCompetitors", labelKey: "colBuyCompetitors", width: "min-w-[70px]", numeric: true },
+  { key: "SellCompetitors", labelKey: "colSellCompetitors", width: "min-w-[70px]", numeric: true },
 ];
 
 // Unique key for a row
@@ -221,6 +225,10 @@ export function ScanResultsTable({ results, scanning, progress }: Props) {
       return formatISK(val as number);
     }
     if (col.key === "MarginPercent") return formatMargin(val as number);
+    if (col.key === "PriceTrend") {
+      const v = val as number;
+      return (v >= 0 ? "+" : "") + v.toFixed(1) + "%";
+    }
     if (typeof val === "number") return val.toLocaleString("ru-RU");
     return String(val);
   };

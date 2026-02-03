@@ -335,8 +335,9 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 	sort.Slice(completedRoutes, func(i, j int) bool {
 		return completedRoutes[i].TotalProfit > completedRoutes[j].TotalProfit
 	})
-	if len(completedRoutes) > maxRoutes {
-		completedRoutes = completedRoutes[:maxRoutes]
+	routeLimit := EffectiveMaxResults(params.MaxResults, maxRoutes)
+	if len(completedRoutes) > routeLimit {
+		completedRoutes = completedRoutes[:routeLimit]
 	}
 
 	// Prefetch station names for all hops

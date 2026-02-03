@@ -235,8 +235,9 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Profit > results[j].Profit
 	})
-	if len(results) > MaxResults {
-		results = results[:MaxResults]
+	limit := EffectiveMaxResults(params.MaxResults, DefaultMaxResults)
+	if len(results) > limit {
+		results = results[:limit]
 	}
 
 	progress(fmt.Sprintf("Found %d profitable contracts", len(results)))

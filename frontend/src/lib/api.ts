@@ -1,4 +1,4 @@
-import type { AppConfig, AppStatus, ContractResult, FlipResult, NdjsonContractMessage, NdjsonMessage, NdjsonRouteMessage, RouteResult, ScanParams, ScanRecord, WatchlistItem } from "./types";
+import type { AppConfig, AppStatus, AuthStatus, CharacterInfo, ContractResult, FlipResult, NdjsonContractMessage, NdjsonMessage, NdjsonRouteMessage, NdjsonStationMessage, RouteResult, ScanParams, ScanRecord, StationInfo, StationTrade, WatchlistItem } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:13370";
 
@@ -112,6 +112,7 @@ export async function findRoutes(
       sales_tax_percent: params.sales_tax_percent,
       min_hops: minHops,
       max_hops: maxHops,
+      max_results: params.max_results,
     }),
     signal,
   });
@@ -186,6 +187,87 @@ export async function updateWatchlistItem(typeId: number, alertMinMargin: number
   return res.json();
 }
 
+// --- Station Trading ---
+
+export async function getStations(systemName: string): Promise<StationInfo[]> {
+  const res = await fetch(`${BASE}/api/stations?system=${encodeURIComponent(systemName)}`);
+  return res.json();
+}
+
+export async function scanStation(
+  params: {
+    station_id?: number;
+    region_id?: number;
+    system_name?: string;
+    radius?: number;
+    min_margin: number;
+    sales_tax_percent: number;
+    broker_fee: number;
+    min_daily_volume?: number;
+    max_results?: number;
+    // EVE Guru Profit Filters
+    min_item_profit?: number;
+    min_demand_per_day?: number;
+    // Risk Profile
+    avg_price_period?: number;
+    min_period_roi?: number;
+    bvs_ratio_min?: number;
+    bvs_ratio_max?: number;
+    max_pvi?: number;
+    max_sds?: number;
+    limit_buy_to_price_low?: boolean;
+    flag_extreme_prices?: boolean;
+  },
+  onProgress: (msg: string) => void,
+  signal?: AbortSignal
+): Promise<StationTrade[]> {
+  const res = await fetch(`${BASE}/api/scan/station`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error ?? "Station scan failed");
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let results: StationTrade[] = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const msg: NdjsonStationMessage = JSON.parse(line);
+      if (msg.type === "progress") {
+        onProgress(msg.message);
+      } else if (msg.type === "result") {
+        results = msg.data ?? [];
+      } else if (msg.type === "error") {
+        throw new Error(msg.message);
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    const msg: NdjsonStationMessage = JSON.parse(buffer);
+    if (msg.type === "result") results = msg.data ?? [];
+    else if (msg.type === "error") throw new Error(msg.message);
+  }
+
+  return results;
+}
+
 // --- Scan History ---
 
 export async function getScanHistory(): Promise<ScanRecord[]> {
@@ -244,4 +326,25 @@ async function streamScan(
   }
 
   return results;
+}
+
+// --- Auth ---
+
+export function getLoginUrl(): string {
+  return `${BASE}/api/auth/login`;
+}
+
+export async function getAuthStatus(): Promise<AuthStatus> {
+  const res = await fetch(`${BASE}/api/auth/status`);
+  return res.json();
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${BASE}/api/auth/logout`, { method: "POST" });
+}
+
+export async function getCharacterInfo(): Promise<CharacterInfo> {
+  const res = await fetch(`${BASE}/api/auth/character`);
+  if (!res.ok) throw new Error("Not logged in");
+  return res.json();
 }

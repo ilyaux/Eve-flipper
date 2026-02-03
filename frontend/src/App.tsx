@@ -5,13 +5,14 @@ import { ScanResultsTable } from "./components/ScanResultsTable";
 import { ContractResultsTable } from "./components/ContractResultsTable";
 import { RouteBuilder } from "./components/RouteBuilder";
 import { WatchlistTab } from "./components/WatchlistTab";
+import { StationTrading } from "./components/StationTrading";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { ToastContainer, useToast } from "./components/Toast";
-import { getConfig, updateConfig, scan, scanMultiRegion, scanContracts, getWatchlist } from "./lib/api";
+import { getConfig, updateConfig, scan, scanMultiRegion, scanContracts, getWatchlist, getAuthStatus, logout as apiLogout, getLoginUrl } from "./lib/api";
 import { useI18n } from "./lib/i18n";
-import type { ContractResult, FlipResult, ScanParams } from "./lib/types";
+import type { AuthStatus, ContractResult, FlipResult, ScanParams } from "./lib/types";
 
-type Tab = "radius" | "region" | "contracts" | "route" | "watchlist";
+type Tab = "radius" | "region" | "contracts" | "station" | "route" | "watchlist";
 
 function App() {
   const { t } = useI18n();
@@ -23,9 +24,11 @@ function App() {
     sell_radius: 10,
     min_margin: 5,
     sales_tax_percent: 8,
+    max_results: 100,
   });
 
   const [tab, setTab] = useState<Tab>("radius");
+  const [authStatus, setAuthStatus] = useState<AuthStatus>({ logged_in: false });
 
   const [radiusResults, setRadiusResults] = useState<FlipResult[]>([]);
   const [regionResults, setRegionResults] = useState<FlipResult[]>([]);
@@ -52,6 +55,12 @@ function App() {
         });
       })
       .catch(() => {});
+    getAuthStatus().then(setAuthStatus).catch(() => {});
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await apiLogout();
+    setAuthStatus({ logged_in: false });
   }, []);
 
   // Save config on param change (debounced)
@@ -119,7 +128,30 @@ function App() {
         <h1 className="text-lg font-semibold text-eve-accent tracking-wide uppercase">
           {t("appTitle")}
         </h1>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {/* Auth chip — same style as StatusBar */}
+          <div className="flex items-center gap-2 h-[34px] px-4 bg-eve-panel border border-eve-border rounded-sm text-xs">
+            {authStatus.logged_in ? (
+              <>
+                <img
+                  src={`https://images.evetech.net/characters/${authStatus.character_id}/portrait?size=32`}
+                  alt=""
+                  className="w-5 h-5 rounded-sm"
+                />
+                <span className="text-eve-accent font-medium">{authStatus.character_name}</span>
+                <button
+                  onClick={handleLogout}
+                  className="text-eve-dim hover:text-eve-error transition-colors text-[10px] ml-0.5"
+                >
+                  ✕
+                </button>
+              </>
+            ) : (
+              <a href={getLoginUrl()} className="text-eve-accent hover:text-eve-accent-hover transition-colors">
+                {t("loginEve")}
+              </a>
+            )}
+          </div>
           <LanguageSwitcher />
           <StatusBar />
         </div>
@@ -147,6 +179,11 @@ function App() {
             label={t("tabContracts")}
           />
           <TabButton
+            active={tab === "station"}
+            onClick={() => setTab("station")}
+            label={t("tabStation")}
+          />
+          <TabButton
             active={tab === "route"}
             onClick={() => setTab("route")}
             label={t("tabRoute")}
@@ -157,7 +194,7 @@ function App() {
             label={`⭐ ${t("tabWatchlist")}`}
           />
           <div className="flex-1" />
-          {tab !== "route" && tab !== "watchlist" && <button
+          {tab !== "route" && tab !== "watchlist" && tab !== "station" && <button
             onClick={handleScan}
             disabled={!params.system_name}
             className={`mr-3 px-5 py-1.5 rounded-sm text-xs font-semibold uppercase tracking-wider transition-all
@@ -182,6 +219,9 @@ function App() {
           </div>
           <div className={`flex-1 min-h-0 flex flex-col ${tab === "contracts" ? "" : "hidden"}`}>
             <ContractResultsTable results={contractResults} scanning={scanning && tab === "contracts"} progress={tab === "contracts" ? progress : ""} />
+          </div>
+          <div className={`flex-1 min-h-0 flex flex-col ${tab === "station" ? "" : "hidden"}`}>
+            <StationTrading params={params} />
           </div>
           <div className={`flex-1 min-h-0 flex flex-col ${tab === "route" ? "" : "hidden"}`}>
             <RouteBuilder params={params} />

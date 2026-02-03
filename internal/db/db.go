@@ -138,5 +138,58 @@ func (d *DB) migrate() error {
 		log.Println("[DB] Applied migration v1")
 	}
 
+	if version < 2 {
+		_, err := d.sql.Exec(`
+			CREATE TABLE IF NOT EXISTS market_history (
+				region_id   INTEGER NOT NULL,
+				type_id     INTEGER NOT NULL,
+				date        TEXT NOT NULL,
+				average     REAL,
+				highest     REAL,
+				lowest      REAL,
+				volume      INTEGER,
+				order_count INTEGER,
+				PRIMARY KEY (region_id, type_id, date)
+			);
+
+			CREATE TABLE IF NOT EXISTS market_history_meta (
+				region_id  INTEGER NOT NULL,
+				type_id    INTEGER NOT NULL,
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (region_id, type_id)
+			);
+
+			INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+		`)
+		if err != nil {
+			return fmt.Errorf("migration v2: %w", err)
+		}
+		log.Println("[DB] Applied migration v2 (market history)")
+	}
+
+	if version < 3 {
+		_, err := d.sql.Exec(`
+			CREATE TABLE IF NOT EXISTS auth_session (
+				id              INTEGER PRIMARY KEY DEFAULT 1,
+				character_id    INTEGER NOT NULL,
+				character_name  TEXT NOT NULL,
+				access_token    TEXT NOT NULL,
+				refresh_token   TEXT NOT NULL,
+				expires_at      INTEGER NOT NULL
+			);
+
+			INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+		`)
+		if err != nil {
+			return fmt.Errorf("migration v3: %w", err)
+		}
+		log.Println("[DB] Applied migration v3 (auth session)")
+	}
+
 	return nil
+}
+
+// SqlDB returns the underlying *sql.DB for use by other packages (e.g. auth store).
+func (d *DB) SqlDB() *sql.DB {
+	return d.sql
 }

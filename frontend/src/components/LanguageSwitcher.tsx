@@ -12,8 +12,8 @@ export function LanguageSwitcher() {
   return (
     <button
       onClick={() => setLocale(next)}
-      className="flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs
-                 bg-eve-input border border-eve-border hover:border-eve-accent/50
+      className="flex items-center justify-center gap-1.5 h-[34px] px-3 rounded-sm text-xs
+                 bg-eve-panel border border-eve-border hover:border-eve-accent/50
                  transition-colors cursor-pointer select-none"
       title={locale === "ru" ? "Switch to English" : "Переключить на русский"}
     >

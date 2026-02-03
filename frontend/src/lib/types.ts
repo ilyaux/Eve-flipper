@@ -20,6 +20,11 @@ export interface FlipResult {
   BuyJumps: number;
   SellJumps: number;
   TotalJumps: number;
+  DailyVolume: number;
+  Velocity: number;
+  PriceTrend: number;
+  BuyCompetitors: number;
+  SellCompetitors: number;
 }
 
 export interface ContractResult {
@@ -83,6 +88,57 @@ export interface ScanRecord {
   top_profit: number;
 }
 
+export interface StationTrade {
+  TypeID: number;
+  TypeName: string;
+  Volume: number;
+  BuyPrice: number;
+  SellPrice: number;
+  Spread: number;
+  MarginPercent: number;
+  ProfitPerUnit: number;
+  DailyVolume: number;
+  BuyOrderCount: number;
+  SellOrderCount: number;
+  BuyVolume: number;
+  SellVolume: number;
+  TotalProfit: number;
+  ROI: number;
+  StationName: string;
+  StationID: number;
+  // EVE Guru style metrics
+  CapitalRequired: number;
+  NowROI: number;
+  PeriodROI: number;
+  BuyUnitsPerDay: number;
+  SellUnitsPerDay: number;
+  BvSRatio: number;
+  DOS: number;
+  VWAP: number;
+  PVI: number;
+  OBDS: number;
+  SDS: number;
+  CI: number;
+  CTS: number;
+  AvgPrice: number;
+  PriceHigh: number;
+  PriceLow: number;
+  IsExtremePriceFlag: boolean;
+  IsHighRiskFlag: boolean;
+}
+
+export type NdjsonStationMessage =
+  | { type: "progress"; message: string }
+  | { type: "result"; data: StationTrade[]; count: number }
+  | { type: "error"; message: string };
+
+export interface StationInfo {
+  id: number;
+  name: string;
+  system_id: number;
+  region_id: number;
+}
+
 export interface ScanParams {
   system_name: string;
   cargo_capacity: number;
@@ -90,6 +146,9 @@ export interface ScanParams {
   sell_radius: number;
   min_margin: number;
   sales_tax_percent: number;
+  min_daily_volume?: number;
+  max_investment?: number;
+  max_results?: number;
 }
 
 export interface AppConfig {
@@ -117,3 +176,33 @@ export type NdjsonMessage =
   | { type: "progress"; message: string }
   | { type: "result"; data: FlipResult[]; count: number }
   | { type: "error"; message: string };
+
+export interface AuthStatus {
+  logged_in: boolean;
+  character_id?: number;
+  character_name?: string;
+}
+
+export interface CharacterInfo {
+  character_id: number;
+  character_name: string;
+  wallet: number;
+  orders: CharacterOrder[];
+  skills: SkillSheet | null;
+}
+
+export interface CharacterOrder {
+  order_id: number;
+  type_id: number;
+  location_id: number;
+  region_id: number;
+  price: number;
+  volume_remain: number;
+  volume_total: number;
+  is_buy_order: boolean;
+}
+
+export interface SkillSheet {
+  skills: { skill_id: number; active_skill_level: number }[];
+  total_sp: number;
+}

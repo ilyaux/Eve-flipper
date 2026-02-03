@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"eve-flipper/internal/auth"
 	"eve-flipper/internal/config"
 	"eve-flipper/internal/db"
 	"eve-flipper/internal/engine"
@@ -19,21 +20,26 @@ import (
 
 // Server is the HTTP API server that connects the ESI client, scanner engine, and database.
 type Server struct {
-	cfg     *config.Config
-	sdeData *sde.Data
-	scanner *engine.Scanner
-	esi     *esi.Client
-	db      *db.DB
-	mu      sync.RWMutex
-	ready   bool
+	cfg      *config.Config
+	sdeData  *sde.Data
+	scanner  *engine.Scanner
+	esi      *esi.Client
+	db       *db.DB
+	sso      *auth.SSOConfig
+	sessions *auth.SessionStore
+	mu       sync.RWMutex
+	ready    bool
+	ssoState string // CSRF state for current login flow
 }
 
 // NewServer creates a Server with the given config, ESI client, and database.
-func NewServer(cfg *config.Config, esiClient *esi.Client, database *db.DB) *Server {
+func NewServer(cfg *config.Config, esiClient *esi.Client, database *db.DB, ssoConfig *auth.SSOConfig, sessions *auth.SessionStore) *Server {
 	return &Server{
-		cfg: cfg,
-		esi: esiClient,
-		db:  database,
+		cfg:      cfg,
+		esi:      esiClient,
+		db:       database,
+		sso:      ssoConfig,
+		sessions: sessions,
 	}
 }
 
@@ -42,7 +48,9 @@ func (s *Server) SetSDE(data *sde.Data) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sdeData = data
-	s.scanner = engine.NewScanner(data, s.esi)
+	scanner := engine.NewScanner(data, s.esi)
+	scanner.History = s.db
+	s.scanner = scanner
 	s.ready = true
 }
 
@@ -67,7 +75,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/watchlist", s.handleAddWatchlist)
 	mux.HandleFunc("DELETE /api/watchlist/{typeID}", s.handleDeleteWatchlist)
 	mux.HandleFunc("PUT /api/watchlist/{typeID}", s.handleUpdateWatchlist)
+	mux.HandleFunc("POST /api/scan/station", s.handleScanStation)
+	mux.HandleFunc("GET /api/stations", s.handleGetStations)
 	mux.HandleFunc("GET /api/scan/history", s.handleGetHistory)
+	// Auth
+	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("GET /api/auth/callback", s.handleAuthCallback)
+	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("GET /api/auth/character", s.handleAuthCharacter)
 	return corsMiddleware(mux)
 }
 
@@ -190,6 +206,10 @@ type scanRequest struct {
 	SellRadius      int     `json:"sell_radius"`
 	MinMargin       float64 `json:"min_margin"`
 	SalesTaxPercent float64 `json:"sales_tax_percent"`
+	// Advanced filters
+	MinDailyVolume int64   `json:"min_daily_volume"`
+	MaxInvestment  float64 `json:"max_investment"`
+	MaxResults     int     `json:"max_results"`
 }
 
 func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
@@ -211,6 +231,9 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 		SellRadius:      req.SellRadius,
 		MinMargin:       req.MinMargin,
 		SalesTaxPercent: req.SalesTaxPercent,
+		MinDailyVolume:  req.MinDailyVolume,
+		MaxInvestment:   req.MaxInvestment,
+		MaxResults:      req.MaxResults,
 	}, nil
 }
 
@@ -411,6 +434,7 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		SalesTaxPercent float64 `json:"sales_tax_percent"`
 		MinHops         int     `json:"min_hops"`
 		MaxHops         int     `json:"max_hops"`
+		MaxResults      int     `json:"max_results"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid json")
@@ -449,6 +473,7 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		SalesTaxPercent: req.SalesTaxPercent,
 		MinHops:         req.MinHops,
 		MaxHops:         req.MaxHops,
+		MaxResults:      req.MaxResults,
 	}
 
 	log.Printf("[API] RouteFind: system=%s, cargo=%.0f, margin=%.1f, hops=%d-%d",
@@ -534,8 +559,355 @@ func (s *Server) handleUpdateWatchlist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.db.GetWatchlist())
 }
 
+// --- Station Trading ---
+
+func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StationID       int64   `json:"station_id"`       // 0 = all stations
+		RegionID        int32   `json:"region_id"`         // required
+		SystemName      string  `json:"system_name"`       // for radius-based scan
+		Radius          int     `json:"radius"`            // 0 = single system
+		MinMargin       float64 `json:"min_margin"`
+		SalesTaxPercent float64 `json:"sales_tax_percent"`
+		BrokerFee       float64 `json:"broker_fee"`
+		MinDailyVolume  int64   `json:"min_daily_volume"`
+		MaxResults      int     `json:"max_results"`
+		// EVE Guru Profit Filters
+		MinItemProfit   float64 `json:"min_item_profit"`
+		MinDemandPerDay float64 `json:"min_demand_per_day"`
+		// Risk Profile
+		AvgPricePeriod     int     `json:"avg_price_period"`
+		MinPeriodROI       float64 `json:"min_period_roi"`
+		BvSRatioMin        float64 `json:"bvs_ratio_min"`
+		BvSRatioMax        float64 `json:"bvs_ratio_max"`
+		MaxPVI             float64 `json:"max_pvi"`
+		MaxSDS             int     `json:"max_sds"`
+		LimitBuyToPriceLow bool    `json:"limit_buy_to_price_low"`
+		FlagExtremePrices  bool    `json:"flag_extreme_prices"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid json")
+		return
+	}
+	if !s.isReady() {
+		writeError(w, 503, "SDE not loaded yet")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, 500, "streaming not supported")
+		return
+	}
+
+	s.mu.RLock()
+	scanner := s.scanner
+	s.mu.RUnlock()
+
+	progressFn := func(msg string) {
+		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
+		fmt.Fprintf(w, "%s\n", line)
+		flusher.Flush()
+	}
+
+	// Build StationIDs and RegionIDs based on request params
+	s.mu.RLock()
+	sdeData := s.sdeData
+	s.mu.RUnlock()
+
+	stationIDs := make(map[int64]bool)
+	regionIDs := make(map[int32]bool)
+	historyLabel := ""
+
+	if req.Radius > 0 && req.SystemName != "" {
+		// Radius-based scan: find all systems within radius, collect their stations
+		systemID, ok := sdeData.SystemByName[strings.ToLower(req.SystemName)]
+		if !ok {
+			writeError(w, 400, "unknown system")
+			return
+		}
+		systems := sdeData.Universe.SystemsWithinRadius(systemID, req.Radius)
+		for _, st := range sdeData.Stations {
+			if _, inRange := systems[st.SystemID]; inRange {
+				stationIDs[st.ID] = true
+			}
+		}
+		for sysID := range systems {
+			if sys, ok2 := sdeData.Systems[sysID]; ok2 {
+				regionIDs[sys.RegionID] = true
+			}
+		}
+		historyLabel = fmt.Sprintf("%s +%d jumps", req.SystemName, req.Radius)
+	} else if req.StationID > 0 {
+		// Single station
+		stationIDs[req.StationID] = true
+		regionIDs[req.RegionID] = true
+		historyLabel = fmt.Sprintf("Station %d", req.StationID)
+	} else {
+		// All stations in region
+		regionIDs[req.RegionID] = true
+		historyLabel = fmt.Sprintf("Region %d (all)", req.RegionID)
+	}
+
+	log.Printf("[API] ScanStation starting: stations=%d, regions=%d, margin=%.1f, tax=%.1f, broker=%.1f",
+		len(stationIDs), len(regionIDs), req.MinMargin, req.SalesTaxPercent, req.BrokerFee)
+
+	// Scan each region and merge results
+	var allResults []engine.StationTrade
+	for regionID := range regionIDs {
+		params := engine.StationTradeParams{
+			StationIDs:         stationIDs,
+			RegionID:           regionID,
+			MinMargin:          req.MinMargin,
+			SalesTaxPercent:    req.SalesTaxPercent,
+			BrokerFee:          req.BrokerFee,
+			MinDailyVolume:     req.MinDailyVolume,
+			MaxResults:         req.MaxResults,
+			MinItemProfit:      req.MinItemProfit,
+			MinDemandPerDay:    req.MinDemandPerDay,
+			AvgPricePeriod:     req.AvgPricePeriod,
+			MinPeriodROI:       req.MinPeriodROI,
+			BvSRatioMin:        req.BvSRatioMin,
+			BvSRatioMax:        req.BvSRatioMax,
+			MaxPVI:             req.MaxPVI,
+			MaxSDS:             req.MaxSDS,
+			LimitBuyToPriceLow: req.LimitBuyToPriceLow,
+			FlagExtremePrices:  req.FlagExtremePrices,
+		}
+		// For "all stations in region" mode, pass nil StationIDs
+		if req.StationID == 0 && req.Radius == 0 {
+			params.StationIDs = nil
+		}
+
+		results, err := scanner.ScanStationTrades(params, progressFn)
+		if err != nil {
+			log.Printf("[API] ScanStation error (region %d): %v", regionID, err)
+			line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
+			fmt.Fprintf(w, "%s\n", line)
+			flusher.Flush()
+			return
+		}
+		allResults = append(allResults, results...)
+	}
+
+	log.Printf("[API] ScanStation complete: %d results", len(allResults))
+	tp := 0.0
+	for _, r := range allResults {
+		if r.TotalProfit > tp {
+			tp = r.TotalProfit
+		}
+	}
+	s.db.InsertHistory("station", historyLabel, len(allResults), tp)
+
+	line, marshalErr := json.Marshal(map[string]interface{}{"type": "result", "data": allResults, "count": len(allResults)})
+	if marshalErr != nil {
+		log.Printf("[API] ScanStation JSON marshal error: %v", marshalErr)
+		errLine, _ := json.Marshal(map[string]string{"type": "error", "message": "JSON: " + marshalErr.Error()})
+		fmt.Fprintf(w, "%s\n", errLine)
+		flusher.Flush()
+		return
+	}
+	fmt.Fprintf(w, "%s\n", line)
+	flusher.Flush()
+}
+
+func (s *Server) handleGetStations(w http.ResponseWriter, r *http.Request) {
+	systemName := strings.TrimSpace(r.URL.Query().Get("system"))
+	if systemName == "" || !s.isReady() {
+		writeJSON(w, []interface{}{})
+		return
+	}
+
+	s.mu.RLock()
+	systemID, ok := s.sdeData.SystemByName[strings.ToLower(systemName)]
+	stations := s.sdeData.Stations
+	s.mu.RUnlock()
+
+	if !ok {
+		writeJSON(w, []interface{}{})
+		return
+	}
+
+	type stationInfo struct {
+		ID       int64  `json:"id"`
+		Name     string `json:"name"`
+		SystemID int32  `json:"system_id"`
+		RegionID int32  `json:"region_id"`
+	}
+
+	// Collect station IDs for this system
+	var stationIDs []int64
+	for _, st := range stations {
+		if st.SystemID == systemID {
+			stationIDs = append(stationIDs, st.ID)
+		}
+	}
+
+	// Prefetch station names from ESI (uses cache)
+	idMap := make(map[int64]bool, len(stationIDs))
+	for _, id := range stationIDs {
+		idMap[id] = true
+	}
+	s.esi.PrefetchStationNames(idMap)
+
+	regionID := int32(0)
+	if sys, ok2 := s.sdeData.Systems[systemID]; ok2 {
+		regionID = sys.RegionID
+	}
+
+	var result []stationInfo
+	for _, id := range stationIDs {
+		result = append(result, stationInfo{
+			ID:       id,
+			Name:     s.esi.StationName(id),
+			SystemID: systemID,
+			RegionID: regionID,
+		})
+	}
+
+	writeJSON(w, result)
+}
+
 // --- Scan History ---
 
 func (s *Server) handleGetHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.db.GetHistory(50))
+}
+
+// --- Auth ---
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if s.sso == nil {
+		writeError(w, 500, "SSO not configured")
+		return
+	}
+	state := auth.GenerateState()
+	s.mu.Lock()
+	s.ssoState = state
+	s.mu.Unlock()
+	http.Redirect(w, r, s.sso.BuildAuthURL(state), http.StatusTemporaryRedirect)
+}
+
+func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
+	if s.sso == nil {
+		writeError(w, 500, "SSO not configured")
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	s.mu.RLock()
+	expectedState := s.ssoState
+	s.mu.RUnlock()
+
+	if state == "" || state != expectedState {
+		writeError(w, 400, "invalid state parameter")
+		return
+	}
+
+	// Exchange code for tokens
+	tok, err := s.sso.ExchangeCode(code)
+	if err != nil {
+		log.Printf("[AUTH] Exchange error: %v", err)
+		writeError(w, 500, "token exchange failed: "+err.Error())
+		return
+	}
+
+	// Verify token to get character info
+	info, err := auth.VerifyToken(tok.AccessToken)
+	if err != nil {
+		log.Printf("[AUTH] Verify error: %v", err)
+		writeError(w, 500, "token verify failed: "+err.Error())
+		return
+	}
+
+	// Save session
+	sess := &auth.Session{
+		CharacterID:   info.CharacterID,
+		CharacterName: info.CharacterName,
+		AccessToken:   tok.AccessToken,
+		RefreshToken:  tok.RefreshToken,
+		ExpiresAt:     time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second),
+	}
+	if err := s.sessions.Save(sess); err != nil {
+		log.Printf("[AUTH] Save session error: %v", err)
+		writeError(w, 500, "save session failed")
+		return
+	}
+
+	log.Printf("[AUTH] Logged in as %s (ID: %d)", info.CharacterName, info.CharacterID)
+
+	// Redirect back to frontend
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+}
+
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessions.Get()
+	if sess == nil {
+		writeJSON(w, map[string]interface{}{"logged_in": false})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"logged_in":      true,
+		"character_id":   sess.CharacterID,
+		"character_name": sess.CharacterName,
+	})
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	s.sessions.Delete()
+	log.Println("[AUTH] Logged out")
+	writeJSON(w, map[string]interface{}{"logged_in": false})
+}
+
+func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
+	token, err := s.sessions.EnsureValidToken(s.sso)
+	if err != nil {
+		writeError(w, 401, err.Error())
+		return
+	}
+	sess := s.sessions.Get()
+	if sess == nil {
+		writeError(w, 401, "not logged in")
+		return
+	}
+
+	type charInfo struct {
+		CharacterID   int64                `json:"character_id"`
+		CharacterName string               `json:"character_name"`
+		Wallet        float64              `json:"wallet"`
+		Orders        []esi.CharacterOrder `json:"orders"`
+		Skills        *esi.SkillSheet      `json:"skills"`
+	}
+
+	result := charInfo{
+		CharacterID:   sess.CharacterID,
+		CharacterName: sess.CharacterName,
+	}
+
+	// Fetch wallet
+	if balance, err := esi.GetWalletBalance(sess.CharacterID, token); err == nil {
+		result.Wallet = balance
+	} else {
+		log.Printf("[AUTH] Wallet error: %v", err)
+	}
+
+	// Fetch orders
+	if orders, err := esi.GetCharacterOrders(sess.CharacterID, token); err == nil {
+		result.Orders = orders
+	} else {
+		log.Printf("[AUTH] Orders error: %v", err)
+	}
+
+	// Fetch skills
+	if skills, err := esi.GetSkills(sess.CharacterID, token); err == nil {
+		result.Skills = skills
+	} else {
+		log.Printf("[AUTH] Skills error: %v", err)
+	}
+
+	writeJSON(w, result)
 }

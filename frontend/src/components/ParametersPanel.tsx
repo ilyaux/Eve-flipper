@@ -69,6 +69,40 @@ export function ParametersPanel({ params, onChange }: Props) {
             step={0.1}
           />
         </Field>
+
+        <Field label={t("minDailyVolume")}>
+          <NumberInput
+            value={params.min_daily_volume ?? 0}
+            onChange={(v) => set("min_daily_volume", v)}
+            min={0}
+            max={999999999}
+          />
+        </Field>
+
+        <Field label={t("maxInvestment")}>
+          <NumberInput
+            value={params.max_investment ?? 0}
+            onChange={(v) => set("max_investment", v)}
+            min={0}
+            max={999999999999}
+          />
+        </Field>
+
+        <Field label={t("maxResults")}>
+          <select
+            value={params.max_results ?? 100}
+            onChange={(e) => set("max_results", parseInt(e.target.value))}
+            className="w-full px-3 py-1.5 bg-eve-input border border-eve-border rounded-sm text-eve-text text-sm font-mono
+                       focus:outline-none focus:border-eve-accent focus:ring-1 focus:ring-eve-accent/30
+                       transition-colors"
+          >
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={250}>250</option>
+            <option value={500}>500</option>
+            <option value={1000}>1000</option>
+          </select>
+        </Field>
       </div>
     </div>
   );
