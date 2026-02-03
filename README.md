@@ -1,88 +1,109 @@
-<p align="center">
-  <h1 align="center">EVE Flipper</h1>
-  <p align="center">
-    Real-time market arbitrage scanner for EVE Online
-    <br/>
-    <em>Station trading &bull; Hauling &bull; Contract flipping &bull; Trade routes &bull; Industry analysis</em>
-  </p>
-</p>
+<div align="center">
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go" />
-  <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react" />
-  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript" />
-  <img src="https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite" />
-  <img src="https://img.shields.io/badge/license-MIT-green" />
-</p>
+# 🚀 EVE Flipper
 
-<p align="center">
-  <a href="https://github.com/ilyaux/Eve-flipper/releases">Download</a> •
-  <a href="https://github.com/ilyaux/Eve-flipper/wiki">Documentation</a> •
-  <a href="https://github.com/ilyaux/Eve-flipper/issues">Issues</a>
-</p>
+### *The Ultimate Market Tool for EVE Online Traders*
+
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+
+<br/>
+
+**Station Trading** · **Hauling Routes** · **Contract Flipping** · **Industry Analysis**
+
+[📥 Download](https://github.com/ilyaux/Eve-flipper/releases) · 
+[📚 Documentation](https://github.com/ilyaux/Eve-flipper/wiki) · 
+[🐛 Report Bug](https://github.com/ilyaux/Eve-flipper/issues)
+
+<br/>
+
+<img src="assets/screenshot-station.png" alt="EVE Flipper Screenshot" width="800"/>
+
+</div>
 
 ---
 
-EVE Flipper finds profitable station-trading and hauling opportunities by analyzing real-time market data from the [EVE Swagger Interface (ESI)](https://esi.evetech.net/ui/).
-
-Ships as a **single executable** &mdash; frontend embedded into the Go binary. No installer, no dependencies.
-
-## Features
-
-| Tool | Description |
-|------|-------------|
-| **[Station Trading Pro](https://github.com/ilyaux/Eve-flipper/wiki/Station-Trading)** | Same-station trading with EVE Guru-style metrics (CTS, SDS, VWAP, PVI) |
-| **[Radius Scan](https://github.com/ilyaux/Eve-flipper/wiki/Radius-Scan)** | Find flips within jump radius |
-| **[Region Arbitrage](https://github.com/ilyaux/Eve-flipper/wiki/Region-Arbitrage)** | Cross-region price differences |
-| **[Contract Scanner](https://github.com/ilyaux/Eve-flipper/wiki/Contract-Scanner)** | Evaluate public contracts vs market with VWAP-based scam detection |
-| **[Route Builder](https://github.com/ilyaux/Eve-flipper/wiki/Route-Trading)** | Multi-hop trade routes |
-| **[Industry Chain Optimizer](https://github.com/ilyaux/Eve-flipper/wiki/Industry-Chain-Optimizer)** | 🆕 Analyze production chains: ore → minerals → components → ship |
-| **[Watchlist](https://github.com/ilyaux/Eve-flipper/wiki/Watchlist)** | Track items with margin alerts |
-
-### Advanced
-- **[Scam Detection](https://github.com/ilyaux/Eve-flipper/wiki/Scam-Detection)** &mdash; VWAP-based risk scoring, bait order detection
-- **[EVE SSO Login](https://github.com/ilyaux/Eve-flipper/wiki/EVE-SSO-Login)** &mdash; View your orders, wallet, transactions, skills
-- **[Advanced Metrics](https://github.com/ilyaux/Eve-flipper/wiki/Metrics-Reference)** &mdash; CTS, VWAP, PVI, OBDS, Period ROI, B v S Ratio
-- **[Scan History](https://github.com/ilyaux/Eve-flipper/wiki/Scan-History)** &mdash; Save and restore previous scan results
-- **[Keyboard Shortcuts](https://github.com/ilyaux/Eve-flipper/wiki/Keyboard-Shortcuts)** &mdash; Ctrl+S scan, Alt+1-5 tabs, and more
-
-## Screenshots
+## ✨ Features
 
 <table>
-  <tr>
-    <td align="center"><b>Station Trading Pro</b></td>
-    <td align="center"><b>Radius Scan</b></td>
-    <td align="center"><b>Route Builder</b></td>
-  </tr>
-  <tr>
-    <td><a href="assets/screenshot-station.png"><img src="assets/screenshot-station.png" width="280"/></a></td>
-    <td><a href="assets/screenshot-radius.png"><img src="assets/screenshot-radius.png" width="280"/></a></td>
-    <td><a href="assets/screenshot-routes.png"><img src="assets/screenshot-routes.png" width="280"/></a></td>
-  </tr>
+<tr>
+<td width="50%">
+
+### 📊 Trading Tools
+- **Station Trading Pro** — Same-station flipping with EVE Guru metrics
+- **Radius Scan** — Find deals within jump range
+- **Region Arbitrage** — Cross-region price differences
+- **Contract Scanner** — Evaluate contracts vs market
+- **Route Builder** — Optimal multi-hop trade routes
+
+</td>
+<td width="50%">
+
+### 🏭 Industry Analysis
+- **Production Chain Optimizer** — Buy vs Build calculator
+- **Material Tree** — Visualize complete production chains
+- **Shopping Lists** — Auto-generated buy lists
+- **Cost Calculations** — ME/TE, system index, facility bonuses
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+### 🛡️ Risk Management
+- **Scam Detection** — VWAP-based risk scoring
+- **Bait Order Detection** — Identifies manipulation
+- **Volume Analysis** — Liquidity warnings
+- **Historical Data** — Price trend analysis
+
+</td>
+<td width="50%">
+
+### 🎮 Quality of Life
+- **EVE SSO Login** — View your orders & wallet
+- **Scan History** — Save & restore results
+- **Keyboard Shortcuts** — Power user workflow
+- **Dark Theme** — Easy on the eyes
+
+</td>
+</tr>
 </table>
 
+---
+
+## 🖼️ Screenshots
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><b>Station Trading</b></td>
+<td align="center"><b>Route Builder</b></td>
+<td align="center"><b>Industry Optimizer</b></td>
+</tr>
+<tr>
+<td><a href="assets/screenshot-station.png"><img src="assets/screenshot-station.png" width="280"/></a></td>
+<td><a href="assets/screenshot-routes.png"><img src="assets/screenshot-routes.png" width="280"/></a></td>
+<td><a href="assets/screenshot-radius.png"><img src="assets/screenshot-radius.png" width="280"/></a></td>
+</tr>
+</table>
 <sub>Click to enlarge</sub>
+</div>
 
-### Industry Chain Optimizer (NEW)
+---
 
-Analyze complete production chains and compare "buy ready" vs "produce yourself":
-- 📊 Material tree visualization with buy/build decisions
-- 💰 Shopping list with total costs
-- ⚙️ Support for ME/TE, system cost index, facility bonuses
-
-## Quick Start
+## 🚀 Quick Start
 
 ### Download
 
-Grab the latest release for your platform from [Releases](https://github.com/ilyaux/Eve-flipper/releases):
+Grab the latest release for your platform:
 
-| Platform | Binary |
-|----------|--------|
-| Windows (x64) | `eve-flipper-windows-amd64.exe` |
-| Linux (x64) | `eve-flipper-linux-amd64` |
-| Linux (ARM64) | `eve-flipper-linux-arm64` |
-| macOS (Intel) | `eve-flipper-darwin-amd64` |
-| macOS (Apple Silicon) | `eve-flipper-darwin-arm64` |
+| Platform | Download |
+|:--------:|:--------:|
+| <img src="https://img.icons8.com/color/48/windows-10.png" width="24"/> **Windows** | [`eve-flipper-windows-amd64.exe`](https://github.com/ilyaux/Eve-flipper/releases/latest) |
+| <img src="https://img.icons8.com/color/48/linux.png" width="24"/> **Linux** | [`eve-flipper-linux-amd64`](https://github.com/ilyaux/Eve-flipper/releases/latest) |
+| <img src="https://img.icons8.com/color/48/mac-os.png" width="24"/> **macOS** | [`eve-flipper-darwin-arm64`](https://github.com/ilyaux/Eve-flipper/releases/latest) |
 
 ### Run
 
@@ -95,54 +116,97 @@ chmod +x eve-flipper-*
 ./eve-flipper-linux-amd64
 ```
 
-Open [http://127.0.0.1:13370](http://127.0.0.1:13370) in your browser.
+Open **http://127.0.0.1:13370** in your browser 🎉
 
-> **First launch:** SDE download takes 1-2 minutes.
+> **Note:** First launch downloads SDE data (~1-2 minutes)
 
-## Documentation
+---
 
-📚 **[Full documentation on Wiki](https://github.com/ilyaux/Eve-flipper/wiki)**
+## 📖 Documentation
 
-- [Getting Started](https://github.com/ilyaux/Eve-flipper/wiki/Getting-Started)
-- [Station Trading Guide](https://github.com/ilyaux/Eve-flipper/wiki/Station-Trading)
-- [Industry Chain Optimizer](https://github.com/ilyaux/Eve-flipper/wiki/Industry-Chain-Optimizer)
-- [Contract Scanner](https://github.com/ilyaux/Eve-flipper/wiki/Contract-Scanner)
-- [Metrics Reference](https://github.com/ilyaux/Eve-flipper/wiki/Metrics-Reference)
-- [API Reference](https://github.com/ilyaux/Eve-flipper/wiki/API-Reference)
-- [Building from Source](https://github.com/ilyaux/Eve-flipper/wiki/Building-from-Source)
+| Guide | Description |
+|-------|-------------|
+| 🏁 [Getting Started](https://github.com/ilyaux/Eve-flipper/wiki/Getting-Started) | Installation & first scan |
+| 💹 [Station Trading](https://github.com/ilyaux/Eve-flipper/wiki/Station-Trading) | Master same-station trading |
+| 🏭 [Industry Optimizer](https://github.com/ilyaux/Eve-flipper/wiki/Industry-Chain-Optimizer) | Buy vs Build analysis |
+| 📊 [Metrics Reference](https://github.com/ilyaux/Eve-flipper/wiki/Metrics-Reference) | CTS, VWAP, SDS explained |
+| 🔐 [EVE SSO Login](https://github.com/ilyaux/Eve-flipper/wiki/EVE-SSO-Login) | Connect your character |
+| 🛠️ [Building from Source](https://github.com/ilyaux/Eve-flipper/wiki/Building-from-Source) | Compile yourself |
 
-## Building from Source
+---
+
+## ⌨️ Keyboard Shortcuts
+
+| Shortcut | Action |
+|:--------:|--------|
+| `Ctrl + S` | Start/Stop scan |
+| `Alt + 1-6` | Switch tabs |
+| `Ctrl + W` | Open Watchlist |
+| `Ctrl + H` | Open History |
+| `Escape` | Close modals |
+
+---
+
+## 🛠️ Tech Stack
+
+<div align="center">
+
+| Backend | Frontend | Data |
+|:-------:|:--------:|:----:|
+| ![Go](https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white) | ![React](https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black) | ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white) |
+| ![Fiber](https://img.shields.io/badge/net/http-00ADD8?style=flat-square&logo=go&logoColor=white) | ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) | ![ESI](https://img.shields.io/badge/EVE_ESI-1D1D1D?style=flat-square&logo=eve-online&logoColor=white) |
+| Single binary | ![Tailwind](https://img.shields.io/badge/Tailwind-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white) | Real-time data |
+
+</div>
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 git clone https://github.com/ilyaux/Eve-flipper.git
 cd Eve-flipper
-
-# Windows
-.\make.ps1 build
-
-# Linux/macOS
-make build
+make build  # or .\make.ps1 build on Windows
 ```
-
-See [Building from Source](https://github.com/ilyaux/Eve-flipper/wiki/Building-from-Source) for details.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-## License
-
-[MIT](LICENSE)
-
-## Disclaimer
-
-EVE Flipper is a third-party tool and is not affiliated with or endorsed by CCP Games. EVE Online and all related trademarks are property of CCP hf.
 
 ---
 
+## 📄 License
+
+This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
+
+---
+
+## ⚠️ Disclaimer
+
+EVE Flipper is a third-party tool and is **not affiliated with or endorsed by CCP Games**. 
+EVE Online and all related trademarks are property of CCP hf.
+
+---
+
+<div align="center">
+
+**Made with ❤️ for New Eden traders**
+
+⭐ Star this repo if you find it useful!
+
+<br/>
+
+<sub>
+<a href="https://github.com/ilyaux/Eve-flipper/stargazers">Stars</a> · 
+<a href="https://github.com/ilyaux/Eve-flipper/network/members">Forks</a> · 
+<a href="https://github.com/ilyaux/Eve-flipper/issues">Issues</a> · 
+<a href="https://github.com/ilyaux/Eve-flipper/releases">Releases</a>
+</sub>
+
+</div>
+
+<!-- Keywords for search -->
 <details>
 <summary>Keywords</summary>
 
-EVE Online market tool, EVE station trading, EVE hauling calculator, EVE arbitrage scanner, EVE market flipping, EVE ISK making tool, EVE trade route finder, EVE contract scanner, EVE profit calculator, EVE market bot, EVE ESI market data, Jita market scanner, EVE market analysis, New Eden trading, EVE Online trade helper, EVE margin trading tool, EVE cross-region arbitrage, EVE multi-hop trade routes, EVE market flipper, CCP ESI API tool, EVE industry calculator, EVE production chain analyzer, EVE manufacturing cost calculator, EVE blueprint calculator, EVE buy vs build
+EVE Online market tool, EVE station trading, EVE hauling calculator, EVE arbitrage scanner, EVE market flipping, EVE ISK making tool, EVE trade route finder, EVE contract scanner, EVE profit calculator, EVE market analysis, Jita market scanner, EVE industry calculator, EVE production chain analyzer, EVE manufacturing cost calculator, EVE blueprint calculator, EVE buy vs build, New Eden trading, CCP ESI API tool
 
 </details>
