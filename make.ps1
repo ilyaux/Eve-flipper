@@ -11,10 +11,12 @@ if (-not $Version) { $Version = "dev" }
 $LdFlags  = "-s -w -X main.version=$Version"
 
 function Build {
-    Write-Host "Building frontend..." -ForegroundColor Cyan
+    Write-Host "Building frontend ($Version)..." -ForegroundColor Cyan
     Push-Location frontend
+    $env:VITE_APP_VERSION = $Version
     npm install --silent 2>$null
     npm run build
+    Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
     Pop-Location
     if ($LASTEXITCODE -ne 0) { Write-Host "Frontend build failed!" -ForegroundColor Red; return }
 
@@ -35,15 +37,23 @@ function Test {
 }
 
 function Frontend {
-    Write-Host "Building frontend..." -ForegroundColor Cyan
+    Write-Host "Building frontend ($Version)..." -ForegroundColor Cyan
     Push-Location frontend
+    $env:VITE_APP_VERSION = $Version
     npm install
     npm run build
+    Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
     Pop-Location
 }
 
 function Cross {
-    Frontend
+    Write-Host "Building frontend ($Version)..." -ForegroundColor Cyan
+    Push-Location frontend
+    $env:VITE_APP_VERSION = $Version
+    npm install
+    npm run build
+    Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
+    Pop-Location
     if ($LASTEXITCODE -ne 0) { return }
     Write-Host "Cross-compiling $AppName ($Version)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
