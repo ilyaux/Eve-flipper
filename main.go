@@ -54,7 +54,7 @@ func main() {
 		ClientID:     envOrDefault("ESI_CLIENT_ID", "4aa8473d2a53457b92e368e823edcb1b"),
 		ClientSecret: envOrDefault("ESI_CLIENT_SECRET", "eat_qHE5tc6su6yTdKMIvsmMDDEFruV55GOo_3xtaoY"),
 		CallbackURL:  envOrDefault("ESI_CALLBACK_URL", "http://localhost:13370/api/auth/callback"),
-		Scopes:       "esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1 esi-wallet.read_character_wallet.v1 esi-assets.read_assets.v1 esi-markets.structure_markets.v1 esi-markets.read_character_orders.v1",
+		Scopes:       "esi-location.read_location.v1 esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1 esi-wallet.read_character_wallet.v1 esi-assets.read_assets.v1 esi-markets.structure_markets.v1 esi-markets.read_character_orders.v1",
 	}
 	sessions := auth.NewSessionStore(database.SqlDB())
 
