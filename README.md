@@ -137,6 +137,9 @@ Open **http://127.0.0.1:13370** in your browser 🎉
 
 > **Note:** First launch downloads SDE data (~1-2 minutes)
 
+> **Security note:** The server listens on `127.0.0.1` by default.  
+> EVE SSO credentials (client ID/secret) are **not stored in the repo** and are injected into official releases via GitHub Actions secrets.
+
 ### Host and port
 
 You can change the bind address and port:
@@ -163,6 +166,24 @@ You can change the bind address and port:
 | 📊 [Metrics Reference](https://github.com/ilyaux/Eve-flipper/wiki/Metrics-Reference) | CTS, VWAP, SDS explained |
 | 🔐 [EVE SSO Login](https://github.com/ilyaux/Eve-flipper/wiki/EVE-SSO-Login) | Connect your character |
 | 🛠️ [Building from Source](https://github.com/ilyaux/Eve-flipper/wiki/Building-from-Source) | Compile yourself |
+
+### Local SSO configuration (developers / source builds)
+
+When building from source, EVE SSO is **disabled by default**. To enable it:
+
+1. Create an EVE developer application (`Authentication Only`) at `https://developers.eveonline.com/`.
+2. Set the callback URL to: `http://localhost:13370/api/auth/callback`.
+3. Copy your **Client ID** and **Client Secret**.
+4. Create a local `.env` file in the repo root (or next to the binary):
+
+```env
+ESI_CLIENT_ID=your-client-id
+ESI_CLIENT_SECRET=your-client-secret
+ESI_CALLBACK_URL=http://localhost:13370/api/auth/callback
+```
+
+> Do **not** commit this file. `.env` is already ignored by `.gitignore`.  
+> Official release binaries use credentials injected from GitHub Secrets; you only need `.env` for local dev/self-builds.
 
 ---
 
