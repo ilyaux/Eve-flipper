@@ -137,6 +137,20 @@ Open **http://127.0.0.1:13370** in your browser 🎉
 
 > **Note:** First launch downloads SDE data (~1-2 minutes)
 
+### Host and port
+
+You can change the bind address and port:
+
+```bash
+# Listen on all interfaces (LAN, VM, port forward)
+./eve-flipper-linux-amd64 --host 0.0.0.0 --port 13370
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `127.0.0.1` | Bind address. Use `0.0.0.0` to allow access from other devices (e.g. Proxmox VM, same network). |
+| `--port` | `13370` | HTTP server port. |
+
 ---
 
 ## 📖 Documentation
