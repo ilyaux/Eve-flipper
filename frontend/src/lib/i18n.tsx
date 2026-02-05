@@ -257,6 +257,9 @@ const translations = {
     execPlanImpactSigmaHuman: "Волатильность: насколько сильно цена прыгает от дня к дню. Учитывается в расчёте оптимального числа ордеров.",
     execPlanImpactForQHuman: "Ожидаемый сдвиг цены при вашем объёме (по модели √Q). Часть «проскальзывания» при исполнении.",
     execPlanImpactTwapHuman: "Сколько ордеров лучше выставить по времени, чтобы меньше двигать рынок одним большим объёмом.",
+    execPlanImpactFromHistory: "Влияние по истории (λ, η, n*)",
+    execPlanImpactForQ: "Оценка ΔP для объёма",
+    execPlanImpactDaysUsed: "По данным за {days} дн.",
 
     // Table status
     foundDeals: "Найдено {count} сделок",

@@ -16,6 +16,8 @@ export interface StationTradingExecutionCalculatorProps {
   brokerFeePercent?: number;
   /** Sales tax % (e.g. 8) — deducted from sell revenue in profit */
   salesTaxPercent?: number;
+  /** Days of market history for impact calibration (λ, η, n*). Optional. */
+  impactDays?: number;
 }
 
 function formatISK(value: number): string {
