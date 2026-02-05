@@ -198,7 +198,7 @@ Join the **EVE Flipper** Discord for questions, tips, and feedback:
 
 [![Discord](https://img.shields.io/badge/Discord-EVE%20Flipper-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/EVHjew5N)
 
-**[→ Join server](https://discord.gg/EVHjew5N)**
+**[→ Join server](https://discord.gg/Z9pXSGcJZE)**
 
 ---
 
