@@ -6,10 +6,14 @@ export interface FlipResult {
   BuyStation: string;
   BuySystemName: string;
   BuySystemID: number;
+  BuyRegionID?: number;
+  BuyLocationID?: number;
   SellPrice: number;
   SellStation: string;
   SellSystemName: string;
   SellSystemID: number;
+  SellRegionID?: number;
+  SellLocationID?: number;
   ProfitPerUnit: number;
   MarginPercent: number;
   UnitsToBuy: number;
@@ -25,6 +29,12 @@ export interface FlipResult {
   PriceTrend: number;
   BuyCompetitors: number;
   SellCompetitors: number;
+  /** Expected fill prices from execution plan (order book depth) */
+  ExpectedBuyPrice?: number;
+  ExpectedSellPrice?: number;
+  ExpectedProfit?: number;
+  SlippageBuyPct?: number;
+  SlippageSellPct?: number;
 }
 
 export interface ContractResult {
@@ -57,6 +67,7 @@ export interface RouteHop {
   Units: number;
   Profit: number;
   Jumps: number;
+  RegionID?: number;
 }
 
 export interface RouteResult {
@@ -128,6 +139,12 @@ export interface StationTrade {
   PriceLow: number;
   IsExtremePriceFlag: boolean;
   IsHighRiskFlag: boolean;
+  /** Expected fill prices from execution plan (order book depth) */
+  ExpectedBuyPrice?: number;
+  ExpectedSellPrice?: number;
+  ExpectedProfit?: number;
+  SlippageBuyPct?: number;
+  SlippageSellPct?: number;
 }
 
 export type NdjsonStationMessage =
@@ -140,6 +157,47 @@ export interface StationInfo {
   name: string;
   system_id: number;
   region_id: number;
+}
+
+// Execution plan (slippage / fill curve)
+export interface DepthLevel {
+  price: number;
+  volume: number;
+  cumulative: number;
+  volume_filled: number;
+}
+
+/** Calibrated market impact params (Kyle's λ, η from history). */
+export interface ImpactParams {
+  lambda: number;
+  eta: number;
+  sigma_sq: number;
+  sigma: number;
+  days_used: number;
+  valid: boolean;
+}
+
+/** Impact estimate for a quantity: ΔP (linear/√V) and TWAP n*. */
+export interface ImpactEstimate {
+  linear_impact: number;
+  sqrt_impact: number;
+  recommended_impact: number;
+  optimal_slices_twap: number;
+  params: ImpactParams;
+}
+
+export interface ExecutionPlanResult {
+  best_price: number;
+  expected_price: number;
+  slippage_percent: number;
+  total_cost: number;
+  depth_levels: DepthLevel[];
+  total_depth: number;
+  can_fill: boolean;
+  optimal_slices: number;
+  suggested_min_gap: number;
+  /** Set when market history available (Kyle's λ, √V, TWAP n*). */
+  impact?: ImpactEstimate;
 }
 
 export interface ScanParams {
@@ -263,6 +321,8 @@ export interface IndustryParams {
   system_name: string;
   facility_tax: number;
   structure_bonus: number;
+  broker_fee?: number;
+  sales_tax_percent?: number;
   max_depth?: number;
 }
 
@@ -311,6 +371,8 @@ export interface IndustryAnalysis {
   material_tree: MaterialNode;
   flat_materials: FlatMaterial[];
   system_cost_index: number;
+  region_id: number;
+  region_name?: string;
 }
 
 export type NdjsonIndustryMessage =

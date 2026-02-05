@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/industry/search", s.handleIndustrySearch)
 	mux.HandleFunc("GET /api/industry/systems", s.handleIndustrySystems)
 	mux.HandleFunc("GET /api/industry/status", s.handleIndustryStatus)
+	mux.HandleFunc("POST /api/execution/plan", s.handleExecutionPlan)
 	// Demand / War Tracker
 	mux.HandleFunc("GET /api/demand/regions", s.handleDemandRegions)
 	mux.HandleFunc("GET /api/demand/hotzones", s.handleDemandHotZones)
@@ -886,6 +887,79 @@ func (s *Server) handleGetStations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+func (s *Server) handleExecutionPlan(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TypeID     int32 `json:"type_id"`
+		RegionID   int32 `json:"region_id"`
+		LocationID int64 `json:"location_id"` // 0 = whole region
+		Quantity   int32 `json:"quantity"`
+		IsBuy      bool  `json:"is_buy"`
+		ImpactDays int   `json:"impact_days"` // 0 = use engine default (e.g. 30); from station trading "Period (days)"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid json")
+		return
+	}
+	if req.RegionID == 0 || req.TypeID == 0 || req.Quantity <= 0 {
+		writeError(w, 400, "region_id, type_id and positive quantity required")
+		return
+	}
+
+	// For buy we need sell orders (we walk the ask side); for sell we need buy orders (bid side)
+	orderType := "sell"
+	if !req.IsBuy {
+		orderType = "buy"
+	}
+	orders, err := s.esi.FetchRegionOrders(req.RegionID, orderType)
+	if err != nil {
+		log.Printf("[API] execution/plan FetchRegionOrders: %v", err)
+		writeError(w, 502, "failed to fetch market orders")
+		return
+	}
+
+	// Filter by type and optional location
+	var filtered []esi.MarketOrder
+	for _, o := range orders {
+		if o.TypeID != req.TypeID {
+			continue
+		}
+		if req.LocationID != 0 && o.LocationID != req.LocationID {
+			continue
+		}
+		filtered = append(filtered, o)
+	}
+
+	result := engine.ComputeExecutionPlan(filtered, req.Quantity, req.IsBuy)
+
+	// When market history is available, add impact calibration (Kyle's λ, √V, TWAP n*)
+	if s.db != nil {
+		history, ok := s.db.GetMarketHistory(req.RegionID, req.TypeID)
+		if !ok {
+			entries, err := s.esi.FetchMarketHistory(req.RegionID, req.TypeID)
+			if err == nil && len(entries) > 0 {
+				s.db.SetMarketHistory(req.RegionID, req.TypeID, entries)
+				history = entries
+			}
+		}
+		if len(history) >= 5 {
+			impactDays := req.ImpactDays
+			if impactDays <= 0 {
+				impactDays = engine.DefaultImpactDays
+			}
+			if impactDays > 365 {
+				impactDays = 365
+			}
+			params := engine.CalibrateImpact(history, impactDays)
+			if params.Valid {
+				est := engine.EstimateImpact(params, float64(req.Quantity), engine.DefaultTWAPHorizonDays)
+				result.Impact = &est
+			}
+		}
+	}
+
+	writeJSON(w, result)
+}
+
 // --- Scan History ---
 
 func (s *Server) handleGetHistory(w http.ResponseWriter, r *http.Request) {
@@ -1233,6 +1307,8 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 		SystemName         string  `json:"system_name"`
 		FacilityTax        float64 `json:"facility_tax"`
 		StructureBonus     float64 `json:"structure_bonus"`
+		BrokerFee          float64 `json:"broker_fee"`
+		SalesTaxPercent    float64 `json:"sales_tax_percent"`
 		MaxDepth           int     `json:"max_depth"`
 	}
 
@@ -1267,6 +1343,8 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 		SystemID:           systemID,
 		FacilityTax:        req.FacilityTax,
 		StructureBonus:     req.StructureBonus,
+		BrokerFee:          req.BrokerFee,
+		SalesTaxPercent:    req.SalesTaxPercent,
 		MaxDepth:           req.MaxDepth,
 	}
 

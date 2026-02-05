@@ -12,6 +12,7 @@ import {
 import { SystemAutocomplete } from "./SystemAutocomplete";
 import { EmptyState } from "./EmptyState";
 import { useGlobalToast } from "./Toast";
+import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
 
 // Highlight matching text in search results
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -73,6 +74,8 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
   const [systemName, setSystemName] = useState("Jita");
   const [facilityTax, setFacilityTax] = useState(0);
   const [structureBonus, setStructureBonus] = useState(1);
+  const [brokerFee, setBrokerFee] = useState(3);
+  const [salesTaxPercent, setSalesTaxPercent] = useState(8);
 
   // Analysis state
   const [analyzing, setAnalyzing] = useState(false);
@@ -82,6 +85,9 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
 
   // View mode
   const [viewMode, setViewMode] = useState<"tree" | "shopping">("tree");
+
+  // Execution plan popup (from shopping list)
+  const [execPlanMaterial, setExecPlanMaterial] = useState<FlatMaterial | null>(null);
 
   // Search handler with debounce
   const handleSearch = useCallback((query: string) => {
@@ -178,6 +184,8 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
       system_name: systemName,
       facility_tax: facilityTax,
       structure_bonus: structureBonus,
+      broker_fee: brokerFee,
+      sales_tax_percent: salesTaxPercent,
       max_depth: 10,
     };
 
@@ -193,7 +201,7 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     } finally {
       setAnalyzing(false);
     }
-  }, [analyzing, selectedItem, runs, me, te, systemName, facilityTax, structureBonus, t, onError]);
+  }, [analyzing, selectedItem, runs, me, te, systemName, facilityTax, structureBonus, brokerFee, salesTaxPercent, t, onError]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -277,6 +285,19 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
               <SettingsNumberInput value={facilityTax} onChange={setFacilityTax} min={0} max={50} step={0.1} />
             </SettingsField>
           </SettingsGrid>
+
+          {/* After broker: broker fee and sales tax */}
+          <div className="mt-3 pt-3 border-t border-eve-border/30">
+            <div className="text-[10px] uppercase tracking-wider text-eve-dim mb-2">{t("industryAfterBroker")}</div>
+            <SettingsGrid cols={5}>
+              <SettingsField label={t("brokerFee")}>
+                <SettingsNumberInput value={brokerFee} onChange={setBrokerFee} min={0} max={10} step={0.1} />
+              </SettingsField>
+              <SettingsField label={t("salesTax")}>
+                <SettingsNumberInput value={salesTaxPercent} onChange={setSalesTaxPercent} min={0} max={100} step={0.1} />
+              </SettingsField>
+            </SettingsGrid>
+          </div>
 
           {/* Advanced Options */}
           <details className="mt-3 group">
@@ -411,7 +432,11 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
             {viewMode === "tree" ? (
               <MaterialTree node={result.material_tree} />
             ) : (
-              <ShoppingList materials={result.flat_materials} />
+              <ShoppingList
+                materials={result.flat_materials}
+                regionId={result.region_id ?? 0}
+                onOpenExecutionPlan={setExecPlanMaterial}
+              />
             )}
           </div>
         </div>
@@ -423,6 +448,17 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
           <EmptyState reason="no_item_selected" wikiSlug="Industry-Chain-Optimizer" />
         </div>
       )}
+
+      <ExecutionPlannerPopup
+        open={execPlanMaterial !== null}
+        onClose={() => setExecPlanMaterial(null)}
+        typeID={execPlanMaterial?.type_id ?? 0}
+        typeName={execPlanMaterial?.type_name ?? ""}
+        regionID={result?.region_id ?? 0}
+        defaultQuantity={execPlanMaterial?.quantity ?? 100}
+        isBuy={true}
+        salesTaxPercent={salesTaxPercent}
+      />
     </div>
   );
 }
@@ -530,7 +566,16 @@ function TreeNode({ node, level = 0 }: { node: MaterialNode; level?: number }) {
 }
 
 // Shopping List Component
-function ShoppingList({ materials }: { materials: FlatMaterial[] }) {
+function ShoppingList({
+  materials,
+  regionId,
+  onOpenExecutionPlan,
+}: {
+  materials: FlatMaterial[];
+  regionId: number;
+  onOpenExecutionPlan: (m: FlatMaterial) => void;
+}) {
+  const { t } = useI18n();
   const totalCost = useMemo(() => 
     materials.reduce((sum, m) => sum + m.total_price, 0), 
     [materials]
@@ -546,6 +591,7 @@ function ShoppingList({ materials }: { materials: FlatMaterial[] }) {
       <table className="w-full text-sm">
         <thead className="sticky top-0 bg-eve-dark z-10">
           <tr className="text-eve-dim text-[10px] uppercase tracking-wider border-b border-eve-border">
+            <th className="min-w-[32px] px-1 py-2" />
             <th className="px-3 py-2 text-left font-medium">Item</th>
             <th className="px-3 py-2 text-right font-medium">Quantity</th>
             <th className="px-3 py-2 text-right font-medium">Unit Price</th>
@@ -561,6 +607,18 @@ function ShoppingList({ materials }: { materials: FlatMaterial[] }) {
                 i % 2 === 0 ? "bg-eve-panel" : "bg-[#161616]"
               }`}
             >
+              <td className="px-1 py-1.5 text-center">
+                {regionId > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenExecutionPlan(m)}
+                    className="text-eve-dim hover:text-eve-accent transition-colors text-sm"
+                    title={t("execPlanTitle")}
+                  >
+                    📊
+                  </button>
+                )}
+              </td>
               <td className="px-3 py-1.5 text-eve-text">{m.type_name}</td>
               <td className="px-3 py-1.5 text-right font-mono text-eve-accent">
                 {m.quantity.toLocaleString()}
@@ -579,6 +637,7 @@ function ShoppingList({ materials }: { materials: FlatMaterial[] }) {
         </tbody>
         <tfoot className="bg-eve-dark border-t border-eve-border">
           <tr>
+            <td className="px-1 py-2" />
             <td className="px-3 py-2 text-eve-dim font-medium">Total</td>
             <td className="px-3 py-2 text-right font-mono text-eve-accent font-semibold">
               {materials.length} items

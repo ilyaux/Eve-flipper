@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import type { StationTrade, StationInfo, ScanParams } from "@/lib/types";
-import { getStations, scanStation } from "@/lib/api";
+import type { StationTrade, StationInfo, ScanParams, WatchlistItem } from "@/lib/types";
+import { getStations, scanStation, getWatchlist, addToWatchlist, removeFromWatchlist } from "@/lib/api";
 import { formatISK, formatMargin, formatNumber } from "@/lib/format";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { MetricTooltip } from "./Tooltip";
 import { EmptyState } from "./EmptyState";
+import { StationTradingExecutionCalculator } from "./StationTradingExecutionCalculator";
+import { useGlobalToast } from "./Toast";
 import {
   TabSettingsPanel,
   SettingsField,
@@ -63,6 +65,7 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
   const [stations, setStations] = useState<StationInfo[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<number>(ALL_STATIONS_ID);
   const [brokerFee, setBrokerFee] = useState(3.0);
+  const [salesTaxPercent, setSalesTaxPercent] = useState(8);
   const [radius, setRadius] = useState(0);
   const [minDailyVolume, setMinDailyVolume] = useState(5);
   const [results, setResults] = useState<StationTrade[]>([]);
@@ -91,6 +94,28 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
   const [sortKey, setSortKey] = useState<SortKey>("CTS");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  // Execution plan popup
+  const [execPlanRow, setExecPlanRow] = useState<StationTrade | null>(null);
+
+  // Context menu (right-click)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: StationTrade } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [pinnedKeys, setPinnedKeys] = useState<Set<string>>(new Set());
+
+  // Watchlist
+  const { addToast } = useGlobalToast();
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  useEffect(() => {
+    getWatchlist().then(setWatchlist).catch(() => {});
+  }, []);
+  const watchlistIds = useMemo(() => new Set(watchlist.map((w) => w.type_id)), [watchlist]);
+
+  // Sync sales tax from global params when they change (e.g. from ParametersPanel on other tabs)
+  useEffect(() => {
+    const pct = params.sales_tax_percent ?? 8;
+    setSalesTaxPercent(pct);
+  }, [params.sales_tax_percent]);
+
   // Load stations when system changes
   useEffect(() => {
     if (!params.system_name) return;
@@ -118,6 +143,45 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
 
   const canScan = params.system_name && (stations.length > 0 || radius > 0);
 
+  function stationRowKey(row: StationTrade) {
+    return `${row.TypeID}-${row.StationID}`;
+  }
+
+  const togglePin = useCallback((key: string) => {
+    setPinnedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const copyText = useCallback(
+    (text: string) => {
+      navigator.clipboard.writeText(text);
+      addToast(t("copied"), "success", 2000);
+      setContextMenu(null);
+    },
+    [addToast, t]
+  );
+
+  // Keep context menu inside viewport
+  useEffect(() => {
+    if (contextMenu && contextMenuRef.current) {
+      const menu = contextMenuRef.current;
+      const rect = menu.getBoundingClientRect();
+      const padding = 10;
+      let x = contextMenu.x;
+      let y = contextMenu.y;
+      if (x + rect.width > window.innerWidth - padding) x = window.innerWidth - rect.width - padding;
+      if (y + rect.height > window.innerHeight - padding) y = window.innerHeight - rect.height - padding;
+      x = Math.max(padding, x);
+      y = Math.max(padding, y);
+      menu.style.left = `${x}px`;
+      menu.style.top = `${y}px`;
+    }
+  }, [contextMenu]);
+
   const handleScan = useCallback(async () => {
     if (scanning) {
       abortRef.current?.abort();
@@ -133,7 +197,7 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
     try {
       const scanParams: Parameters<typeof scanStation>[0] = {
         min_margin: params.min_margin,
-        sales_tax_percent: params.sales_tax_percent,
+        sales_tax_percent: salesTaxPercent,
         broker_fee: brokerFee,
         min_daily_volume: minDailyVolume,
         max_results: params.max_results,
@@ -174,7 +238,7 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
     } finally {
       setScanning(false);
     }
-  }, [scanning, canScan, selectedStationId, regionId, params, brokerFee, radius, minDailyVolume,
+  }, [scanning, canScan, selectedStationId, regionId, params, brokerFee, salesTaxPercent, radius, minDailyVolume,
       minItemProfit, minDemandPerDay, avgPricePeriod, minPeriodROI, bvsRatioMin, bvsRatioMax,
       maxPVI, maxSDS, limitBuyToPriceLow, flagExtremePrices, t]);
 
@@ -209,7 +273,8 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
   const formatCell = (col: (typeof columnDefs)[number], row: StationTrade): string => {
     const val = row[col.key];
     if (col.key === "BuyPrice" || col.key === "SellPrice" || col.key === "Spread" || col.key === "TotalProfit" || col.key === "ProfitPerUnit" || col.key === "CapitalRequired" || col.key === "VWAP") {
-      return formatISK(val as number);
+      const n = val as number | undefined;
+      return n != null && Number.isFinite(n) ? formatISK(n) : "";
     }
     if (col.key === "MarginPercent" || col.key === "NowROI" || col.key === "PeriodROI" || col.key === "PVI") {
       return formatMargin(val as number);
@@ -307,6 +372,16 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
                 onChange={setBrokerFee}
                 min={0}
                 max={10}
+                step={0.1}
+              />
+            </SettingsField>
+
+            <SettingsField label={t("salesTax")}>
+              <SettingsNumberInput
+                value={salesTaxPercent}
+                onChange={(v) => setSalesTaxPercent(Math.max(0, Math.min(100, v)))}
+                min={0}
+                max={100}
                 step={0.1}
               />
             </SettingsField>
@@ -412,6 +487,7 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
           <thead className="sticky top-0 z-10">
             <tr className="bg-eve-dark border-b border-eve-border">
               <th className="min-w-[24px] px-1 py-2"></th>
+              <th className="min-w-[32px] px-1 py-2 text-center text-[10px] uppercase tracking-wider text-eve-dim" title={t("execPlanTitle")}>📊</th>
               {columnDefs.map((col) => {
                 const tooltipKey = metricTooltipKeys[col.key];
                 return (
@@ -441,12 +517,28 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
           <tbody>
             {sorted.map((row, i) => (
               <tr
-                key={`${row.TypeID}-${row.StationID}`}
-                className={getRowClass(row, i)}
+                key={stationRowKey(row)}
+                className={`${getRowClass(row, i)} ${pinnedKeys.has(stationRowKey(row)) ? "bg-eve-accent/10 border-l-2 border-l-eve-accent" : ""}`}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setContextMenu({ x: e.clientX, y: e.clientY, row });
+                }}
               >
                 {/* Risk indicator */}
                 <td className="px-1 py-1 text-center">
                   {row.IsHighRiskFlag ? "🚨" : row.IsExtremePriceFlag ? "⚠️" : ""}
+                </td>
+                <td className="px-1 py-1 text-center">
+                  {regionId > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setExecPlanRow(row)}
+                      className="text-eve-dim hover:text-eve-accent transition-colors text-sm"
+                      title={t("execPlanTitle")}
+                    >
+                      📊
+                    </button>
+                  )}
                 </td>
                 {columnDefs.map((col) => (
                   <td
@@ -464,7 +556,7 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
             ))}
             {results.length === 0 && !scanning && (
               <tr>
-                <td colSpan={columnDefs.length + 1} className="p-0">
+                <td colSpan={columnDefs.length + 2} className="p-0">
                   <EmptyState reason="no_scan_yet" wikiSlug="Station-Trading" />
                 </td>
               </tr>
@@ -490,6 +582,93 @@ export function StationTrading({ params, onChange, isLoggedIn = false }: Props) 
           </span>
         </div>
       )}
+
+      {/* Context menu (right-click) */}
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} />
+          <div
+            ref={contextMenuRef}
+            className="fixed z-50 bg-eve-panel border border-eve-border rounded-sm shadow-eve-glow-strong py-1 min-w-[200px]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <ContextItem label={t("copyItem")} onClick={() => copyText(contextMenu.row.TypeName ?? "")} />
+            <ContextItem label={t("copyBuyStation")} onClick={() => copyText(contextMenu.row.StationName ?? "")} />
+            <ContextItem
+              label={t("copyTradeRoute")}
+              onClick={() => copyText(`${contextMenu.row.TypeName} @ ${contextMenu.row.StationName}`)}
+            />
+            <div className="h-px bg-eve-border my-1" />
+            <ContextItem
+              label={t("openInEveref")}
+              onClick={() => {
+                window.open(`https://everef.net/type/${contextMenu.row.TypeID}`, "_blank");
+                setContextMenu(null);
+              }}
+            />
+            <ContextItem
+              label={t("openInJitaSpace")}
+              onClick={() => {
+                window.open(`https://www.jita.space/market/${contextMenu.row.TypeID}`, "_blank");
+                setContextMenu(null);
+              }}
+            />
+            <div className="h-px bg-eve-border my-1" />
+            <ContextItem
+              label={watchlistIds.has(contextMenu.row.TypeID) ? t("removeFromWatchlist") : `⭐ ${t("addToWatchlist")}`}
+              onClick={() => {
+                const row = contextMenu.row;
+                if (watchlistIds.has(row.TypeID)) {
+                  removeFromWatchlist(row.TypeID).then(setWatchlist).catch(() => {});
+                } else {
+                  addToWatchlist(row.TypeID, row.TypeName).then(setWatchlist).catch(() => {});
+                }
+                setContextMenu(null);
+              }}
+            />
+            <ContextItem
+              label={pinnedKeys.has(stationRowKey(contextMenu.row)) ? t("unpinRow") : t("pinRow")}
+              onClick={() => {
+                togglePin(stationRowKey(contextMenu.row));
+                setContextMenu(null);
+              }}
+            />
+            {regionId > 0 && (
+              <ContextItem
+                label={t("execPlanCalculator")}
+                onClick={() => {
+                  setExecPlanRow(contextMenu.row);
+                  setContextMenu(null);
+                }}
+              />
+            )}
+          </div>
+        </>
+      )}
+
+      <StationTradingExecutionCalculator
+        open={execPlanRow !== null}
+        onClose={() => setExecPlanRow(null)}
+        typeID={execPlanRow?.TypeID ?? 0}
+        typeName={execPlanRow?.TypeName ?? ""}
+        regionID={regionId}
+        stationID={execPlanRow?.StationID ?? 0}
+        defaultQuantity={100}
+        brokerFeePercent={brokerFee}
+        salesTaxPercent={salesTaxPercent}
+        impactDays={avgPricePeriod}
+      />
+    </div>
+  );
+}
+
+function ContextItem({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      className="px-4 py-1.5 text-sm text-eve-text hover:bg-eve-accent/20 hover:text-eve-accent cursor-pointer transition-colors"
+    >
+      {label}
     </div>
   );
 }

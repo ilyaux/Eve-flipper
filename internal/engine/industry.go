@@ -19,6 +19,8 @@ type IndustryParams struct {
 	SystemID            int32   // Manufacturing system
 	FacilityTax         float64 // Facility tax % (default 0)
 	StructureBonus      float64 // Structure material bonus % (e.g., 1% for Raitaru)
+	BrokerFee           float64 // Broker fee % when buying materials / product (default 0)
+	SalesTaxPercent     float64 // Sales tax % when selling product (for display / future use)
 	ReprocessingYield   float64 // Reprocessing efficiency (0-1, e.g., 0.50 for 50%)
 	IncludeReprocessing bool    // Whether to consider reprocessing ore as alternative
 	MaxDepth            int     // Max recursion depth (default 10)
@@ -63,6 +65,8 @@ type IndustryAnalysis struct {
 	MaterialTree       *MaterialNode  `json:"material_tree"`
 	FlatMaterials      []*FlatMaterial `json:"flat_materials"`      // Flattened list of base materials
 	SystemCostIndex    float64        `json:"system_cost_index"`
+	RegionID           int32          `json:"region_id"`   // Market region for execution plan
+	RegionName         string         `json:"region_name"`  // Optional display name
 }
 
 // FlatMaterial is a simplified material for the shopping list.
@@ -154,10 +158,13 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 	// Flatten materials for shopping list
 	flatMaterials := a.flattenMaterials(tree)
 
-	// Calculate totals
+	// Calculate totals (cost to buy product on market; include broker fee)
 	marketBuyPrice := a.marketPrices[params.TypeID] * float64(params.Runs)
 	if bp, ok := a.SDE.Industry.GetBlueprintForProduct(params.TypeID); ok {
 		marketBuyPrice *= float64(bp.ProductQuantity)
+	}
+	if params.BrokerFee > 0 {
+		marketBuyPrice *= (1.0 + params.BrokerFee/100)
 	}
 
 	optimalCost := tree.BuildCost
@@ -173,6 +180,17 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 
 	totalJobCost := a.sumJobCosts(tree)
 
+	regionID := int32(0)
+	regionName := ""
+	if params.SystemID != 0 {
+		if sys, ok := a.SDE.Systems[params.SystemID]; ok {
+			regionID = sys.RegionID
+			if r, ok := a.SDE.Regions[regionID]; ok {
+				regionName = r.Name
+			}
+		}
+	}
+
 	return &IndustryAnalysis{
 		TargetTypeID:     params.TypeID,
 		TargetTypeName:   typeInfo.Name,
@@ -187,6 +205,8 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 		MaterialTree:     tree,
 		FlatMaterials:    flatMaterials,
 		SystemCostIndex:  costIndex,
+		RegionID:         regionID,
+		RegionName:       regionName,
 	}, nil
 }
 
@@ -318,13 +338,13 @@ func (a *IndustryAnalyzer) flattenMaterials(root *MaterialNode) []*FlatMaterial 
 
 // collectBaseMaterials recursively collects materials that should be bought.
 func (a *IndustryAnalyzer) collectBaseMaterials(node *MaterialNode, materials map[int32]*FlatMaterial) {
-	// If we should buy this node (not build), add it to the list
+	// If we should buy this node (not build), add it to the list (node.BuyPrice already includes broker)
 	if !node.ShouldBuild || node.IsBase {
 		if existing, ok := materials[node.TypeID]; ok {
 			existing.Quantity += node.Quantity
-			existing.TotalPrice = existing.UnitPrice * float64(existing.Quantity)
+			existing.TotalPrice += node.BuyPrice
+			existing.UnitPrice = existing.TotalPrice / float64(existing.Quantity)
 		} else {
-			unitPrice := a.marketPrices[node.TypeID]
 			volume := 0.0
 			if t, ok := a.SDE.Types[node.TypeID]; ok {
 				volume = t.Volume
@@ -333,8 +353,8 @@ func (a *IndustryAnalyzer) collectBaseMaterials(node *MaterialNode, materials ma
 				TypeID:     node.TypeID,
 				TypeName:   node.TypeName,
 				Quantity:   node.Quantity,
-				UnitPrice:  unitPrice,
-				TotalPrice: unitPrice * float64(node.Quantity),
+				UnitPrice:  node.BuyPrice / float64(node.Quantity),
+				TotalPrice: node.BuyPrice,
 				Volume:     volume * float64(node.Quantity),
 			}
 		}

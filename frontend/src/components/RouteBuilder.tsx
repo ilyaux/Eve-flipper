@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { findRoutes } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-import type { RouteResult, ScanParams } from "@/lib/types";
+import type { RouteResult, RouteHop, ScanParams } from "@/lib/types";
+import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
 import {
   TabSettingsPanel,
   SettingsField,
@@ -192,6 +193,7 @@ export function RouteBuilder({ params }: Props) {
           route={selectedRoute}
           onClose={() => setSelectedRoute(null)}
           onCopySystems={copyRouteSystems}
+          salesTaxPercent={params.sales_tax_percent ?? 0}
         />
       )}
     </div>
@@ -233,14 +235,18 @@ function RouteDetailPopup({
   route,
   onClose,
   onCopySystems,
+  salesTaxPercent = 0,
 }: {
   route: RouteResult;
   onClose: () => void;
   onCopySystems: (route: RouteResult) => void;
+  salesTaxPercent?: number;
 }) {
   const { t } = useI18n();
+  const [execPlanHop, setExecPlanHop] = useState<RouteHop | null>(null);
 
   return (
+    <>
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
       onClick={onClose}
@@ -275,6 +281,16 @@ function RouteDetailPopup({
                   <span className="text-xs font-medium text-eve-text">
                     {hop.StationName || hop.SystemName}
                   </span>
+                  {hop.RegionID != null && hop.RegionID > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setExecPlanHop(hop)}
+                      className="ml-auto px-2 py-0.5 text-[10px] rounded-sm text-eve-dim hover:text-eve-accent border border-eve-border hover:border-eve-accent/30 transition-colors"
+                      title={t("execPlanTitle")}
+                    >
+                      📊 {t("execPlanTitle")}
+                    </button>
+                  )}
                 </div>
 
                 <div className="ml-8 space-y-1 text-xs">
@@ -361,5 +377,17 @@ function RouteDetailPopup({
         </div>
       </div>
     </div>
+
+    <ExecutionPlannerPopup
+      open={execPlanHop !== null}
+      onClose={() => setExecPlanHop(null)}
+      typeID={execPlanHop?.TypeID ?? 0}
+      typeName={execPlanHop?.TypeName ?? ""}
+      regionID={execPlanHop?.RegionID ?? 0}
+      defaultQuantity={execPlanHop?.Units ?? 100}
+      isBuy={true}
+      salesTaxPercent={salesTaxPercent}
+    />
+    </>
   );
 }
