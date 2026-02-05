@@ -24,8 +24,8 @@ const config: Config = {
         },
       },
       fontFamily: {
-        eve: ['"Exo 2"', "Consolas", "Monaco", "monospace"],
-        mono: ["Consolas", "Monaco", "Courier New", "monospace"],
+        eve: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Consolas", "Monaco", "monospace"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Consolas", "Monaco", "monospace"],
       },
       boxShadow: {
         "eve-glow": "0 0 8px rgba(230, 149, 0, 0.15)",

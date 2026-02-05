@@ -31,9 +31,32 @@ jobs:
           npm run build
 
       - name: Cross-compile
+        env:
+          ESI_CLIENT_ID: ${{ secrets.ESI_CLIENT_ID }}
+          ESI_CLIENT_SECRET: ${{ secrets.ESI_CLIENT_SECRET }}
+          ESI_CALLBACK_URL: ${{ secrets.ESI_CALLBACK_URL }}
         run: |
+          # Fail fast if required secrets are missing to avoid broken security releases
+          if [ -z "${ESI_CLIENT_ID}" ] || [ -z "${ESI_CLIENT_SECRET}" ] || [ -z "${ESI_CALLBACK_URL}" ]; then
+            echo "ERROR: ESI_CLIENT_ID / ESI_CLIENT_SECRET / ESI_CALLBACK_URL GitHub Secrets must be set for release builds."
+            exit 1
+          fi
+
           VERSION=${GITHUB_REF_NAME}
           LDFLAGS="-s -w -X main.version=${VERSION}"
+
+          # Inject EVE SSO defaults (client ID / secret / callback) into release binaries.
+          # For local/source builds these stay empty unless provided via env.
+          if [ -n "${ESI_CLIENT_ID}" ]; then
+            LDFLAGS="$LDFLAGS -X main.defaultESIClientID=${ESI_CLIENT_ID}"
+          fi
+          if [ -n "${ESI_CLIENT_SECRET}" ]; then
+            LDFLAGS="$LDFLAGS -X main.defaultESIClientSecret=${ESI_CLIENT_SECRET}"
+          fi
+          if [ -n "${ESI_CALLBACK_URL}" ]; then
+            LDFLAGS="$LDFLAGS -X main.defaultESICallbackURL=${ESI_CALLBACK_URL}"
+          fi
+
           for target in \
             "windows amd64 .exe" \
             "linux amd64 " \
@@ -51,3 +74,7 @@ jobs:
         with:
           generate_release_notes: true
           files: eve-flipper-*
+          # Tags like v1.4.1-rc1 → draft + prerelease (internal testing)
+          # Tags like v1.4.1     → normal public release
+          draft: ${{ contains(github.ref_name, '-rc') }}
+          prerelease: ${{ contains(github.ref_name, '-rc') }}

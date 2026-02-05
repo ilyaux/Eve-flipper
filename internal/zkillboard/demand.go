@@ -101,8 +101,19 @@ func (d *DemandAnalyzer) GetHotZones(limit int) ([]RegionHotZone, error) {
 	results := make(chan result, len(regions))
 	var wg sync.WaitGroup
 
-	// Process in batches to avoid overwhelming the API
+	// Process in batches to avoid overwhelming the API.
+	// Batch size is dynamic based on total regions, but capped conservatively
+	// to avoid hitting zKillboard rate limits.
 	batchSize := 10
+	if len(regions) > 40 {
+		batchSize = len(regions) / 4 // ~25% of regions in parallel
+		if batchSize < 10 {
+			batchSize = 10
+		}
+		if batchSize > 20 {
+			batchSize = 20
+		}
+	}
 	for i := 0; i < len(regions); i += batchSize {
 		end := i + batchSize
 		if end > len(regions) {
@@ -139,9 +150,9 @@ func (d *DemandAnalyzer) GetHotZones(limit int) ([]RegionHotZone, error) {
 			}(regionID)
 		}
 
-		// Wait a bit between batches
+		// Small pause between batches to play nice with the API
 		if i+batchSize < len(regions) {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(250 * time.Millisecond)
 		}
 	}
 

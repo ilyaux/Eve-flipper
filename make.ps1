@@ -10,7 +10,27 @@ $Version  = & git describe --tags --always --dirty 2>$null
 if (-not $Version) { $Version = "dev" }
 $LdFlags  = "-s -w -X main.version=$Version"
 
+function Load-DotEnv {
+    # Load variables from .env in repo root (if present) into the current process
+    $envPath = Join-Path $PSScriptRoot ".env"
+    if (Test-Path $envPath) {
+        Get-Content $envPath | ForEach-Object {
+            $line = $_.Trim()
+            if (-not $line -or $line.StartsWith("#")) { return }
+            if ($line -notmatch "=") { return }
+            $parts = $line.Split("=", 2)
+            $key = $parts[0].Trim()
+            $value = $parts[1].Trim()
+            if ($key) {
+                # Set environment variable for current process
+                Set-Item -Path "Env:$key" -Value $value
+            }
+        }
+    }
+}
+
 function Build {
+    Load-DotEnv
     Write-Host "Building frontend ($Version)..." -ForegroundColor Cyan
     Push-Location frontend
     $env:VITE_APP_VERSION = $Version
@@ -47,6 +67,7 @@ function Frontend {
 }
 
 function Cross {
+    Load-DotEnv
     Write-Host "Building frontend ($Version)..." -ForegroundColor Cyan
     Push-Location frontend
     $env:VITE_APP_VERSION = $Version

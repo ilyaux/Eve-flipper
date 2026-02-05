@@ -19,6 +19,7 @@ import { getConfig, updateConfig, scan, scanMultiRegion, scanContracts, getWatch
 import { useI18n } from "./lib/i18n";
 import { formatISK } from "./lib/format";
 import type { AuthStatus, ContractResult, FlipResult, ScanParams } from "./lib/types";
+import logo from "./assets/logo.svg";
 
 type Tab = "radius" | "region" | "contracts" | "station" | "route" | "industry" | "demand";
 
@@ -260,6 +261,11 @@ function App() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
+            <img
+              src={logo}
+              alt="EVE Flipper logo"
+              className="w-4 h-4 sm:w-4 sm:h-4"
+            />
             <h1 className="text-base sm:text-lg font-semibold text-eve-accent tracking-wide uppercase">
               {t("appTitle")}
             </h1>

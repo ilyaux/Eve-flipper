@@ -1794,6 +1794,10 @@ func (s *Server) handleDemandOpportunities(w http.ResponseWriter, r *http.Reques
 }
 
 // handleDemandRefresh forces a refresh of demand data for all regions.
+// The refresh now runs in the background so that the HTTP request returns
+// quickly and does not block other scans or the UI. Results are written
+// to the demand cache as they arrive, and subsequent /hotzones requests
+// will start using fresh data once available.
 func (s *Server) handleDemandRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.isReady() {
 		writeError(w, 503, "SDE not loaded yet")
@@ -1809,37 +1813,39 @@ func (s *Server) handleDemandRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear in-memory cache first to force fresh API calls
-	analyzer.ClearCache()
-	log.Printf("[Demand] Cache cleared, starting refresh...")
+	// Kick off background refresh
+	go func() {
+		// Clear in-memory cache first to force fresh API calls
+		analyzer.ClearCache()
+		log.Printf("[Demand] Cache cleared, starting background refresh...")
 
-	// Refresh synchronously (zkillboard rate limiting will pace requests)
-	zones, err := analyzer.GetHotZones(0) // 0 = no limit
-	if err != nil {
-		log.Printf("[Demand] Refresh failed: %v", err)
-		writeError(w, 500, fmt.Sprintf("refresh failed: %v", err))
-		return
-	}
+		zones, err := analyzer.GetHotZones(0) // 0 = no limit
+		if err != nil {
+			log.Printf("[Demand] Background refresh failed: %v", err)
+			return
+		}
 
-	// Cache all results to database
-	for _, z := range zones {
-		s.db.SaveDemandRegion(&db.DemandRegion{
-			RegionID:      z.RegionID,
-			RegionName:    z.RegionName,
-			HotScore:      z.HotScore,
-			Status:        z.Status,
-			KillsToday:    z.KillsToday,
-			KillsBaseline: z.KillsBaseline,
-			ISKDestroyed:  z.ISKDestroyed,
-			ActivePlayers: z.ActivePlayers,
-			TopShips:      z.TopShips,
-		})
-	}
-	log.Printf("[Demand] Refreshed %d regions", len(zones))
+		// Cache all results to database
+		for _, z := range zones {
+			if err := s.db.SaveDemandRegion(&db.DemandRegion{
+				RegionID:      z.RegionID,
+				RegionName:    z.RegionName,
+				HotScore:      z.HotScore,
+				Status:        z.Status,
+				KillsToday:    z.KillsToday,
+				KillsBaseline: z.KillsBaseline,
+				ISKDestroyed:  z.ISKDestroyed,
+				ActivePlayers: z.ActivePlayers,
+				TopShips:      z.TopShips,
+			}); err != nil {
+				log.Printf("[Demand] Failed to save region %d: %v", z.RegionID, err)
+			}
+		}
+		log.Printf("[Demand] Background refresh completed: %d regions", len(zones))
+	}()
 
 	writeJSON(w, map[string]interface{}{
-		"status":  "refreshed",
-		"message": fmt.Sprintf("Refreshed %d regions", len(zones)),
-		"count":   len(zones),
+		"status":  "started",
+		"message": "Demand refresh started in background",
 	})
 }

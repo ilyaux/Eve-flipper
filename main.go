@@ -20,10 +20,71 @@ import (
 
 var version = "dev"
 
+// defaultESIClientID and defaultESIClientSecret are populated for official
+// release builds via -ldflags (see .github/workflows/release.yml). For local
+// development and source builds they stay empty so SSO is effectively
+// disabled unless ESI_CLIENT_ID / ESI_CLIENT_SECRET are provided via env.
+var defaultESIClientID = ""
+var defaultESIClientSecret = ""
+var defaultESICallbackURL = "http://localhost:13370/api/auth/callback"
+
+// loadDotEnv loads environment variables from a local .env file so that
+// double-clicked binaries (without a shell) can still use ESI_* settings.
+// Order of lookup:
+//   1) ./.env (current working directory)
+//   2) <binary-dir>/.env
+// Existing OS env vars are NOT overridden.
+func loadDotEnv() {
+	paths := []string{".env"}
+
+	if exePath, err := os.Executable(); err == nil {
+		if exeDir := filepath.Dir(exePath); exeDir != "" {
+			paths = append(paths, filepath.Join(exeDir, ".env"))
+		}
+	}
+
+	seen := make(map[string]bool)
+
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			l := strings.TrimSpace(line)
+			if l == "" || strings.HasPrefix(l, "#") {
+				continue
+			}
+			parts := strings.SplitN(l, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			if key == "" {
+				continue
+			}
+			if os.Getenv(key) == "" {
+				os.Setenv(key, val)
+			}
+		}
+	}
+}
+
 //go:embed frontend/dist/*
 var frontendFS embed.FS
 
 func main() {
+	// Load .env for double-clicked binaries / local builds. This is a no-op
+	// when the file is absent, and never overrides existing OS env vars.
+	loadDotEnv()
+
 	port := flag.Int("port", 13370, "HTTP server port")
 	host := flag.String("host", "127.0.0.1", "Host to bind to (use 0.0.0.0 to allow LAN/remote access)")
 	flag.Parse()
@@ -50,12 +111,21 @@ func main() {
 
 	esiClient := esi.NewClient(database)
 
-	// ESI SSO config (from env vars or defaults)
-	ssoConfig := &auth.SSOConfig{
-		ClientID:     envOrDefault("ESI_CLIENT_ID", "4aa8473d2a53457b92e368e823edcb1b"),
-		ClientSecret: envOrDefault("ESI_CLIENT_SECRET", "eat_qHE5tc6su6yTdKMIvsmMDDEFruV55GOo_3xtaoY"),
-		CallbackURL:  envOrDefault("ESI_CALLBACK_URL", "http://localhost:13370/api/auth/callback"),
-		Scopes:       "esi-location.read_location.v1 esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1 esi-wallet.read_character_wallet.v1 esi-assets.read_assets.v1 esi-markets.structure_markets.v1 esi-markets.read_character_orders.v1",
+	// ESI SSO config (from env vars or injected defaults for official builds).
+	clientID := envOrDefault("ESI_CLIENT_ID", defaultESIClientID)
+	clientSecret := envOrDefault("ESI_CLIENT_SECRET", defaultESIClientSecret)
+	callbackURL := envOrDefault("ESI_CALLBACK_URL", defaultESICallbackURL)
+
+	var ssoConfig *auth.SSOConfig
+	if clientID != "" && clientSecret != "" {
+		ssoConfig = &auth.SSOConfig{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			CallbackURL:  callbackURL,
+			Scopes:       "esi-location.read_location.v1 esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1 esi-wallet.read_character_wallet.v1 esi-assets.read_assets.v1 esi-markets.structure_markets.v1 esi-markets.read_character_orders.v1",
+		}
+	} else {
+		logger.Info("SSO", "EVE SSO not configured (missing ESI_CLIENT_ID / ESI_CLIENT_SECRET)")
 	}
 	sessions := auth.NewSessionStore(database.SqlDB())
 
