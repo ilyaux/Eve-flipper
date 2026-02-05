@@ -135,10 +135,15 @@ func (s *Scanner) findBestTrades(idx *orderIndex, fromSystemID int32, params Rou
 
 			ppj := profit / float64(jumps)
 
+			regionID := int32(0)
+			if sys, ok := s.SDE.Systems[fromSystemID]; ok {
+				regionID = sys.RegionID
+			}
 			candidates = append(candidates, candidate{
 				hop: RouteHop{
 					SystemName:     s.systemName(fromSystemID),
 					SystemID:       fromSystemID,
+					RegionID:       regionID,
 					LocationID:     sell.LocationID,
 					DestSystemID:   buySystemID,
 					DestSystemName: s.systemName(buySystemID),

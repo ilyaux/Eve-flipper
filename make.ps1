@@ -93,14 +93,14 @@ function ShowHelp {
 Usage: .\make.ps1 <command>
 
 Commands:
-  build      Build frontend + backend into single .exe
-  run        Build and run the backend
-  test       Run all Go tests
-  frontend   Install deps and build frontend
-  cross      Cross-compile for Windows, Linux, macOS
-  clean      Remove build artifacts
-  all        Test + frontend + cross-compile
-  help       Show this help
+  build        Build frontend + backend into single .exe (Go embeds frontend)
+  run          Build and run the backend
+  test         Run all Go tests
+  frontend     Install deps and build frontend
+  cross        Cross-compile for Windows, Linux, macOS
+  clean        Remove build artifacts
+  all          Test + frontend + cross-compile
+  help         Show this help
 "@ -ForegroundColor Yellow
 }
 

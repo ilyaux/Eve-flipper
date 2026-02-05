@@ -11,23 +11,23 @@ import (
 
 // StationTrade represents a same-station flip opportunity (buy via buy order, sell via sell order).
 type StationTrade struct {
-	TypeID          int32   `json:"TypeID"`
-	TypeName        string  `json:"TypeName"`
-	Volume          float64 `json:"Volume"`
-	BuyPrice        float64 `json:"BuyPrice"`  // highest buy order price (we sell to this)
-	SellPrice       float64 `json:"SellPrice"` // lowest sell order price (we buy from this)
-	Spread          float64 `json:"Spread"`    // SellPrice - BuyPrice
-	MarginPercent   float64 `json:"MarginPercent"`
-	ProfitPerUnit   float64 `json:"ProfitPerUnit"`
-	DailyVolume     int64   `json:"DailyVolume"`
-	BuyOrderCount   int     `json:"BuyOrderCount"`
-	SellOrderCount  int     `json:"SellOrderCount"`
-	BuyVolume       int32   `json:"BuyVolume"`  // total volume of buy orders
-	SellVolume      int32   `json:"SellVolume"` // total volume of sell orders
-	TotalProfit     float64 `json:"TotalProfit"`
-	ROI             float64 `json:"ROI"` // profit / investment * 100
-	StationName     string  `json:"StationName"`
-	StationID       int64   `json:"StationID"`
+	TypeID         int32   `json:"TypeID"`
+	TypeName       string  `json:"TypeName"`
+	Volume         float64 `json:"Volume"`
+	BuyPrice       float64 `json:"BuyPrice"`  // highest buy order price (we sell to this)
+	SellPrice      float64 `json:"SellPrice"` // lowest sell order price (we buy from this)
+	Spread         float64 `json:"Spread"`    // SellPrice - BuyPrice
+	MarginPercent  float64 `json:"MarginPercent"`
+	ProfitPerUnit  float64 `json:"ProfitPerUnit"`
+	DailyVolume    int64   `json:"DailyVolume"`
+	BuyOrderCount  int     `json:"BuyOrderCount"`
+	SellOrderCount int     `json:"SellOrderCount"`
+	BuyVolume      int32   `json:"BuyVolume"`  // total volume of buy orders
+	SellVolume     int32   `json:"SellVolume"` // total volume of sell orders
+	TotalProfit    float64 `json:"TotalProfit"`
+	ROI            float64 `json:"ROI"` // profit / investment * 100
+	StationName    string  `json:"StationName"`
+	StationID      int64   `json:"StationID"`
 
 	// --- EVE Guru style metrics ---
 	CapitalRequired float64 `json:"CapitalRequired"` // Sum of all buy orders ISK
@@ -56,6 +56,13 @@ type StationTrade struct {
 	// Risk flags
 	IsExtremePriceFlag bool `json:"IsExtremePriceFlag"` // Anomalous price detected
 	IsHighRiskFlag     bool `json:"IsHighRiskFlag"`     // SDS >= 50
+
+	// Execution-plan derived (expected fill prices from order book depth)
+	ExpectedBuyPrice  float64 `json:"ExpectedBuyPrice,omitempty"`
+	ExpectedSellPrice float64 `json:"ExpectedSellPrice,omitempty"`
+	ExpectedProfit    float64 `json:"ExpectedProfit,omitempty"`
+	SlippageBuyPct    float64 `json:"SlippageBuyPct,omitempty"`
+	SlippageSellPct   float64 `json:"SlippageSellPct,omitempty"`
 }
 
 // stationTypeKey uniquely identifies a station+type combination for order grouping.
@@ -177,22 +184,21 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 			continue
 		}
 
-		// Skip absurd spreads — if buy is less than 1% of sell, it's a junk buy order
+		// Skip absurd spreads — if bid is less than 1% of ask, junk
 		if highestBuy.Price < lowestSell.Price*0.01 {
 			continue
 		}
 
-		// Station trading: you PLACE a buy order (competing with existing buy orders)
-		// and PLACE a sell order (competing with existing sell orders).
-		// Buy cost = highestBuy.Price (what you offer to buy at) + broker fee
-		// Sell revenue = lowestSell.Price (what you list to sell at) - sales tax - broker fee
-		buyAt := highestBuy.Price
-		sellAt := lowestSell.Price
-		if sellAt <= buyAt {
+		// Station trading = market making: we PLACE a buy order (at bid) and a sell order (at ask).
+		// When our buy is hit we pay the bid; when our sell is hit we receive the ask.
+		// Profit = spread (ask - bid) minus fees. We need ask > bid (always true) and spread > fees.
+		costToBuy := highestBuy.Price       // we place our buy at bid; when filled we pay this
+		revenueFromSell := lowestSell.Price // we place our sell at ask; when filled we receive this
+		if revenueFromSell <= costToBuy {
 			continue // no spread
 		}
-		effectiveSell := sellAt * taxMult * brokerMult
-		effectiveBuy := buyAt * (1 + params.BrokerFee/100)
+		effectiveBuy := costToBuy * (1 + params.BrokerFee/100)
+		effectiveSell := revenueFromSell * taxMult * brokerMult
 		profitPerUnit := effectiveSell - effectiveBuy
 
 		if profitPerUnit <= 0 {
@@ -233,20 +239,19 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 		ci := CalcCI(append(g.buyOrders, g.sellOrders...))
 		obds := CalcOBDS(g.buyOrders, g.sellOrders, capitalRequired)
 
-		// NowROI = profit per unit / cost per unit * 100
-		capitalPerUnit := capitalRequired / float64(totalBuyVol)
+		// NowROI = profit per unit / our cost per unit (ask) * 100
 		nowROI := 0.0
-		if capitalPerUnit > 0 {
-			nowROI = profitPerUnit / capitalPerUnit * 100
+		if costToBuy > 0 {
+			nowROI = profitPerUnit / costToBuy * 100
 		}
 
 		results = append(results, StationTrade{
 			TypeID:          typeID,
 			TypeName:        itemType.Name,
 			Volume:          itemType.Volume,
-			BuyPrice:        buyAt,
-			SellPrice:       sellAt,
-			Spread:          sellAt - buyAt,
+			BuyPrice:        costToBuy,                   // highest buy (we place our buy here; when filled we pay bid)
+			SellPrice:       revenueFromSell,             // lowest sell (we place our sell here; when filled we receive ask)
+			Spread:          revenueFromSell - costToBuy, // ask - bid
 			MarginPercent:   sanitizeFloat(margin),
 			ProfitPerUnit:   sanitizeFloat(profitPerUnit),
 			BuyOrderCount:   len(g.buyOrders),
@@ -275,6 +280,35 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 	limit := EffectiveMaxResults(params.MaxResults, DefaultMaxResults)
 	if len(results) > limit {
 		results = results[:limit]
+	}
+
+	// Expected fill prices from execution plan — per unit of volume.
+	// Use a small reference quantity (1000) to get expected avg prices and slippage,
+	// then store expected profit per unit = (expected sell price - expected buy price).
+	const refQtyForExpected = int32(1000)
+	for i := range results {
+		r := &results[i]
+		key := stationTypeKey{r.StationID, r.TypeID}
+		if g, ok := orderGroups[key]; ok {
+			qty := refQtyForExpected
+			if r.SellVolume < qty {
+				qty = r.SellVolume
+			}
+			if r.BuyVolume < qty {
+				qty = r.BuyVolume
+			}
+			if qty > 0 {
+				planBuy := ComputeExecutionPlan(g.sellOrders, qty, true)
+				planSell := ComputeExecutionPlan(g.buyOrders, qty, false)
+				r.ExpectedBuyPrice = planBuy.ExpectedPrice
+				r.ExpectedSellPrice = planSell.ExpectedPrice
+				r.SlippageBuyPct = planBuy.SlippagePercent
+				r.SlippageSellPct = planSell.SlippagePercent
+				if r.ExpectedBuyPrice > 0 && r.ExpectedSellPrice > 0 {
+					r.ExpectedProfit = r.ExpectedSellPrice - r.ExpectedBuyPrice // per unit
+				}
+			}
+		}
 	}
 
 	// Fill station names (prefetch all unique station IDs)
@@ -338,9 +372,9 @@ func applyStationTradeFilters(results []StationTrade, params StationTradeParams)
 		if params.MaxSDS > 0 && r.SDS > params.MaxSDS {
 			continue
 		}
-		// Price limit filter
+		// Price limit filter: don't place buy order above historical low + 10%
 		if params.LimitBuyToPriceLow && r.PriceLow > 0 {
-			maxBuyPrice := r.PriceLow * 1.1 // 10% above historical low
+			maxBuyPrice := r.PriceLow * 1.1
 			if r.BuyPrice > maxBuyPrice {
 				continue
 			}

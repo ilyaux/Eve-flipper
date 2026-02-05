@@ -29,10 +29,10 @@ type RegionOpportunities struct {
 	RegionName     string             `json:"region_name"`
 	Status         string             `json:"status"`
 	HotScore       float64            `json:"hot_score"`
-	SecurityClass  string             `json:"security_class"`   // "highsec", "lowsec", "nullsec"
-	SecurityBlocks []string           `json:"security_blocks"`  // ["high", "low", "null"] for display
-	JumpsFromJita  int                `json:"jumps_from_jita"`  // Distance from Jita
-	MainSystem     string             `json:"main_system"`      // Main hub/system name
+	SecurityClass  string             `json:"security_class"`  // "highsec", "lowsec", "nullsec"
+	SecurityBlocks []string           `json:"security_blocks"` // ["high", "low", "null"] for display
+	JumpsFromJita  int                `json:"jumps_from_jita"` // Distance from Jita
+	MainSystem     string             `json:"main_system"`     // Main hub/system name
 	Ships          []TradeOpportunity `json:"ships"`
 	Modules        []TradeOpportunity `json:"modules"`
 	Ammo           []TradeOpportunity `json:"ammo"`
@@ -50,22 +50,22 @@ var commonPvPModules = []struct {
 	{3831, "Medium Shield Extender II", "module"},
 	{2281, "Damage Control II", "module"},
 	{2048, "Adaptive Invulnerability Field II", "module"},
-	
+
 	// Armor modules
 	{11269, "1600mm Steel Plates II", "module"},
 	{11295, "Energized Adaptive Nano Membrane II", "module"},
 	{20353, "Damage Control II", "module"},
-	
+
 	// Tackle
 	{5443, "Warp Disruptor II", "module"},
 	{5439, "Warp Scrambler II", "module"},
 	{4405, "Stasis Webifier II", "module"},
-	
+
 	// Propulsion
 	{12076, "50MN Microwarpdrive II", "module"},
 	{12084, "500MN Microwarpdrive II", "module"},
 	{12068, "10MN Afterburner II", "module"},
-	
+
 	// Weapon upgrades
 	{22291, "Gyrostabilizer II", "module"},
 	{10190, "Ballistic Control System II", "module"},
@@ -89,7 +89,7 @@ var commonAmmo = []struct {
 	{243, "Null L", "ammo"},
 	{247, "Null M", "ammo"},
 	{239, "Null S", "ammo"},
-	
+
 	// Projectile ammo
 	{2203, "EMP L", "ammo"},
 	{2205, "EMP M", "ammo"},
@@ -100,7 +100,7 @@ var commonAmmo = []struct {
 	{12774, "Barrage L", "ammo"},
 	{12776, "Barrage M", "ammo"},
 	{12772, "Barrage S", "ammo"},
-	
+
 	// Laser crystals
 	{12820, "Scorch L", "ammo"},
 	{12822, "Scorch M", "ammo"},
@@ -108,13 +108,13 @@ var commonAmmo = []struct {
 	{12826, "Conflagration L", "ammo"},
 	{12828, "Conflagration M", "ammo"},
 	{12824, "Conflagration S", "ammo"},
-	
+
 	// Missiles
 	{24513, "Caldari Navy Scourge Heavy Missile", "ammo"},
 	{24519, "Caldari Navy Mjolnir Heavy Missile", "ammo"},
 	{27361, "Fury Heavy Missile", "ammo"},
 	{2629, "Nova Rage Torpedo", "ammo"},
-	
+
 	// Drones
 	{2456, "Hobgoblin II", "ammo"},
 	{2454, "Hammerhead II", "ammo"},
@@ -122,10 +122,10 @@ var commonAmmo = []struct {
 	{28209, "Warrior II", "ammo"},
 	{28211, "Valkyrie II", "ammo"},
 	{28213, "Berserker II", "ammo"},
-	
+
 	// Nanite paste
 	{28668, "Nanite Repair Paste", "ammo"},
-	
+
 	// Cap boosters
 	{11283, "Cap Booster 800", "ammo"},
 	{263, "Cap Booster 400", "ammo"},
@@ -140,23 +140,23 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 	if err != nil {
 		return nil, err
 	}
-	
+
 	zone := d.analyzeRegion(regionID, stats)
 	if zone == nil {
 		return nil, nil
 	}
-	
+
 	result := &RegionOpportunities{
 		RegionID:   regionID,
 		RegionName: zone.RegionName,
 		Status:     zone.Status,
 		HotScore:   zone.HotScore,
 	}
-	
+
 	// Collect all type IDs we need prices for
 	typeIDs := make(map[int32]struct{})
 	shipKills := make(map[int32]int) // typeID -> kills
-	
+
 	// Get top ships from zkillboard stats
 	for _, list := range stats.TopLists {
 		if list.Type == "shipType" {
@@ -168,7 +168,7 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 			}
 		}
 	}
-	
+
 	// Add common modules and ammo
 	for _, m := range commonPvPModules {
 		typeIDs[m.TypeID] = struct{}{}
@@ -176,19 +176,19 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 	for _, a := range commonAmmo {
 		typeIDs[a.TypeID] = struct{}{}
 	}
-	
+
 	// Convert to slice
 	typeIDSlice := make([]int32, 0, len(typeIDs))
 	for id := range typeIDs {
 		typeIDSlice = append(typeIDSlice, id)
 	}
-	
+
 	// Fetch prices in parallel
 	jitaPrices := make(map[int32]priceInfo)
 	regionPrices := make(map[int32]priceInfo)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	
+
 	// Fetch Jita prices
 	wg.Add(1)
 	go func() {
@@ -198,7 +198,7 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 		jitaPrices = prices
 		mu.Unlock()
 	}()
-	
+
 	// Fetch target region prices (only if different from Jita)
 	if regionID != jitaRegionID {
 		wg.Add(1)
@@ -210,15 +210,15 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 			mu.Unlock()
 		}()
 	}
-	
+
 	wg.Wait()
-	
+
 	// Build opportunities
 	// Ships
 	for typeID, kills := range shipKills {
 		jita := jitaPrices[typeID]
 		region := regionPrices[typeID]
-		
+
 		if jita.sellPrice > 0 {
 			opp := buildOpportunity(typeID, "", "ship", kills, jita, region)
 			if opp != nil && opp.ProfitPercent > 5 { // Only show if >5% margin
@@ -226,12 +226,12 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 			}
 		}
 	}
-	
+
 	// Modules
 	for _, m := range commonPvPModules {
 		jita := jitaPrices[m.TypeID]
 		region := regionPrices[m.TypeID]
-		
+
 		if jita.sellPrice > 0 {
 			// Estimate demand based on region activity
 			estimatedKills := int(float64(zone.KillsToday) * 0.5) // ~50% of kills need these
@@ -241,12 +241,12 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 			}
 		}
 	}
-	
+
 	// Ammo
 	for _, a := range commonAmmo {
 		jita := jitaPrices[a.TypeID]
 		region := regionPrices[a.TypeID]
-		
+
 		if jita.sellPrice > 0 {
 			// Ammo is consumed heavily
 			estimatedKills := int(float64(zone.KillsToday) * 100) // ~100 units per kill
@@ -256,7 +256,7 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 			}
 		}
 	}
-	
+
 	// Sort by daily profit
 	sort.Slice(result.Ships, func(i, j int) bool {
 		return result.Ships[i].DailyProfit > result.Ships[j].DailyProfit
@@ -267,7 +267,7 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 	sort.Slice(result.Ammo, func(i, j int) bool {
 		return result.Ammo[i].DailyProfit > result.Ammo[j].DailyProfit
 	})
-	
+
 	// Limit results
 	if len(result.Ships) > 10 {
 		result.Ships = result.Ships[:10]
@@ -278,7 +278,7 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 	if len(result.Ammo) > 10 {
 		result.Ammo = result.Ammo[:10]
 	}
-	
+
 	// Calculate total potential
 	for _, s := range result.Ships {
 		result.TotalPotential += s.DailyProfit
@@ -289,7 +289,7 @@ func (d *DemandAnalyzer) GetRegionOpportunities(regionID int32, esiClient *esi.C
 	for _, a := range result.Ammo {
 		result.TotalPotential += a.DailyProfit
 	}
-	
+
 	return result, nil
 }
 
@@ -300,12 +300,12 @@ type priceInfo struct {
 
 func fetchBestPrices(esiClient *esi.Client, regionID int32, typeIDs []int32) map[int32]priceInfo {
 	prices := make(map[int32]priceInfo)
-	
+
 	orders, err := esiClient.FetchRegionOrders(regionID, "sell")
 	if err != nil {
 		return prices
 	}
-	
+
 	// Find best (lowest) sell price for each type
 	for _, order := range orders {
 		existing, ok := prices[order.TypeID]
@@ -320,7 +320,7 @@ func fetchBestPrices(esiClient *esi.Client, regionID int32, typeIDs []int32) map
 			prices[order.TypeID] = existing
 		}
 	}
-	
+
 	return prices
 }
 
@@ -328,7 +328,7 @@ func buildOpportunity(typeID int32, name string, category string, kills int, jit
 	if jita.sellPrice <= 0 {
 		return nil
 	}
-	
+
 	profitPerUnit := region.sellPrice - jita.sellPrice
 	if profitPerUnit <= 0 {
 		// No profit if region price is lower or equal
@@ -340,13 +340,13 @@ func buildOpportunity(typeID int32, name string, category string, kills int, jit
 			return nil
 		}
 	}
-	
+
 	profitPercent := (profitPerUnit / jita.sellPrice) * 100
 	dailyVolume := kills
 	if dailyVolume < 1 {
 		dailyVolume = 1
 	}
-	
+
 	return &TradeOpportunity{
 		TypeID:        typeID,
 		TypeName:      name,

@@ -45,12 +45,12 @@ func getContractFilters(params ScanParams) (minPrice, maxMargin, minPricedRatio 
 
 // itemPriceData holds market data for an item type.
 type itemPriceData struct {
-	MinSellPrice  float64 // Cheapest sell order price
-	TotalSellVol  int32   // Total volume of sell orders
-	SellOrderCnt  int     // Number of sell orders
-	VWAP          float64 // Volume-weighted average price from history (0 if no history)
-	DailyVolume   float64 // Average daily trading volume
-	HasHistory    bool    // Whether we have reliable history data
+	MinSellPrice float64 // Cheapest sell order price
+	TotalSellVol int32   // Total volume of sell orders
+	SellOrderCnt int     // Number of sell orders
+	VWAP         float64 // Volume-weighted average price from history (0 if no history)
+	DailyVolume  float64 // Average daily trading volume
+	HasHistory   bool    // Whether we have reliable history data
 }
 
 // ScanContracts finds profitable public contracts by comparing contract price to market value.
@@ -211,10 +211,10 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 
 		var marketValue float64
 		var itemCount int32
-		var pricedCount int     // how many item types we could price
-		var totalTypes int      // total included item types (non-BPC)
-		var topItems []string   // for generating title
-		var lowVolumeItems int  // items with suspicious low trading volume
+		var pricedCount int        // how many item types we could price
+		var totalTypes int         // total included item types (non-BPC)
+		var topItems []string      // for generating title
+		var lowVolumeItems int     // items with suspicious low trading volume
 		var highDeviationItems int // items where sell price deviates significantly from VWAP
 
 		hasBPO := false

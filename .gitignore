@@ -9,6 +9,9 @@
 /build/
 /tmp/
 
+# Local clone of GitHub wiki (for editing wiki from repo)
+wiki-repo/
+
 # SDE data cache (large, auto-downloaded)
 /data/
 
@@ -27,9 +30,11 @@ frontend/node_modules/
 # Frontend build output
 frontend/dist/
 
-# Tauri build artifacts (legacy, no longer used)
+# Tauri build artifacts
 frontend/src-tauri/target/
 frontend/src-tauri/gen/schemas/
+# Tauri sidecar (Go server binary, built by make.ps1 server)
+frontend/src-tauri/binaries/
 
 # Air live-reload config
 .air.toml

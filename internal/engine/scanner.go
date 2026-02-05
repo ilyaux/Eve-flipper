@@ -102,11 +102,11 @@ func (s *Scanner) Scan(params ScanParams, progress func(string)) ([]FlipResult, 
 // ScanMultiRegion finds profitable flip opportunities across whole regions.
 func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]FlipResult, error) {
 	minSec := params.MinRouteSecurity
-	
+
 	// If target region is specified, use it directly instead of radius search
 	if params.TargetRegionID > 0 {
 		progress(fmt.Sprintf("Searching target region %d...", params.TargetRegionID))
-		
+
 		// Buy from current system's region (or radius)
 		var buySystemsRadius map[int32]int
 		if minSec > 0 {
@@ -116,11 +116,11 @@ func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]F
 		}
 		buyRegions := s.SDE.Universe.RegionsInSet(buySystemsRadius)
 		buySystems := s.SDE.Universe.SystemsInRegions(buyRegions)
-		
+
 		// Sell only in target region
 		sellRegions := map[int32]bool{params.TargetRegionID: true}
 		sellSystems := s.SDE.Universe.SystemsInRegions(sellRegions)
-		
+
 		progress(fmt.Sprintf("Fetching orders: buy from %d regions, sell to target region...", len(buyRegions)))
 		var sellOrders, buyOrders []esi.MarketOrder
 		var wg sync.WaitGroup
@@ -134,10 +134,10 @@ func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]F
 			buyOrders = s.fetchOrders(sellRegions, "buy", sellSystems)
 		}()
 		wg.Wait()
-		
+
 		return s.calculateResults(params, sellOrders, buyOrders, buySystemsRadius, progress)
 	}
-	
+
 	// Default behavior: search by radius
 	progress("Finding regions by radius...")
 	var buySystemsRadius, sellSystemsRadius map[int32]int
@@ -313,6 +313,14 @@ func (s *Scanner) calculateResults(
 			profitPerJump = totalProfit / float64(totalJumps)
 		}
 
+		buyRegionID := int32(0)
+		if sys, ok := s.SDE.Systems[sell.SystemID]; ok {
+			buyRegionID = sys.RegionID
+		}
+		sellRegionID := int32(0)
+		if sys, ok := s.SDE.Systems[buy.SystemID]; ok {
+			sellRegionID = sys.RegionID
+		}
 		results = append(results, FlipResult{
 			TypeID:          typeID,
 			TypeName:        itemType.Name,
@@ -321,11 +329,13 @@ func (s *Scanner) calculateResults(
 			BuyStation:      "",
 			BuySystemName:   s.systemName(sell.SystemID),
 			BuySystemID:     sell.SystemID,
+			BuyRegionID:     buyRegionID,
 			BuyLocationID:   sell.LocationID,
 			SellPrice:       buy.Price,
 			SellStation:     "",
 			SellSystemName:  s.systemName(buy.SystemID),
 			SellSystemID:    buy.SystemID,
+			SellRegionID:    sellRegionID,
 			SellLocationID:  buy.LocationID,
 			ProfitPerUnit:   profitPerUnit,
 			MarginPercent:   margin,
@@ -337,8 +347,8 @@ func (s *Scanner) calculateResults(
 			BuyJumps:        buyJumps,
 			SellJumps:       sellJumps,
 			TotalJumps:      totalJumps,
-			BuyCompetitors:  sell.OrderCount,  // sell orders at buy station (we compete to buy)
-			SellCompetitors: buy.OrderCount,   // buy orders at sell station (we compete to sell)
+			BuyCompetitors:  sell.OrderCount, // sell orders at buy station (we compete to buy)
+			SellCompetitors: buy.OrderCount,  // buy orders at sell station (we compete to sell)
 		})
 	}
 
@@ -351,6 +361,35 @@ func (s *Scanner) calculateResults(
 	limit := EffectiveMaxResults(params.MaxResults, DefaultMaxResults)
 	if len(results) > limit {
 		results = results[:limit]
+	}
+
+	// Enrich with execution-plan expected prices (same order book, no extra ESI)
+	if len(results) > 0 {
+		progress("Expected fill prices...")
+		type regionTypeKey struct{ regionID, typeID int32 }
+		sellByRT := make(map[regionTypeKey][]esi.MarketOrder)
+		for _, o := range sellOrders {
+			k := regionTypeKey{o.RegionID, o.TypeID}
+			sellByRT[k] = append(sellByRT[k], o)
+		}
+		buyByRT := make(map[regionTypeKey][]esi.MarketOrder)
+		for _, o := range buyOrders {
+			k := regionTypeKey{o.RegionID, o.TypeID}
+			buyByRT[k] = append(buyByRT[k], o)
+		}
+		for i := range results {
+			r := &results[i]
+			planBuy := ComputeExecutionPlan(sellByRT[regionTypeKey{r.BuyRegionID, r.TypeID}], r.UnitsToBuy, true)
+			planSell := ComputeExecutionPlan(buyByRT[regionTypeKey{r.SellRegionID, r.TypeID}], r.UnitsToBuy, false)
+			r.ExpectedBuyPrice = planBuy.ExpectedPrice
+			r.ExpectedSellPrice = planSell.ExpectedPrice
+			r.SlippageBuyPct = planBuy.SlippagePercent
+			r.SlippageSellPct = planSell.SlippagePercent
+			if r.ExpectedBuyPrice > 0 && r.ExpectedSellPrice > 0 {
+				effSell := r.ExpectedSellPrice * taxMult
+				r.ExpectedProfit = (effSell - r.ExpectedBuyPrice) * float64(r.UnitsToBuy)
+			}
+		}
 	}
 
 	// OPT: prefetch station names in parallel (only for top N)
@@ -368,7 +407,7 @@ func (s *Scanner) calculateResults(
 		for i := range results {
 			results[i].BuyStation = s.ESI.StationName(results[i].BuyLocationID)
 			results[i].SellStation = s.ESI.StationName(results[i].SellLocationID)
-			
+
 			// If sell station is unresolved citadel, show system name instead
 			if strings.HasPrefix(results[i].SellStation, "Location ") {
 				if sys, ok := s.SDE.Systems[results[i].SellSystemID]; ok {
@@ -498,8 +537,8 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 
 	// Fetch history concurrently (limited)
 	type histResult struct {
-		idx     int
-		stats   esi.MarketStats
+		idx   int
+		stats esi.MarketStats
 	}
 	ch := make(chan histResult, len(needed))
 	sem := make(chan struct{}, 10) // limit concurrent history requests

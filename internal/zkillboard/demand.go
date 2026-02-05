@@ -26,15 +26,15 @@ type CachedRegionStats struct {
 
 // RegionHotZone represents a region with elevated kill activity.
 type RegionHotZone struct {
-	RegionID       int32   `json:"region_id"`
-	RegionName     string  `json:"region_name"`
-	HotScore       float64 `json:"hot_score"`       // Current vs baseline ratio
-	Status         string  `json:"status"`          // "war", "conflict", "elevated", "normal"
-	KillsToday     int64   `json:"kills_today"`     // Estimated kills in last 24h
-	KillsBaseline  int64   `json:"kills_baseline"`  // Average daily kills (baseline)
-	ISKDestroyed   float64 `json:"isk_destroyed"`   // Total ISK destroyed (all time)
-	ActivePlayers  int     `json:"active_players"`  // Currently active PVP players
-	TopShips       []string `json:"top_ships"`      // Most destroyed ship types
+	RegionID      int32    `json:"region_id"`
+	RegionName    string   `json:"region_name"`
+	HotScore      float64  `json:"hot_score"`      // Current vs baseline ratio
+	Status        string   `json:"status"`         // "war", "conflict", "elevated", "normal"
+	KillsToday    int64    `json:"kills_today"`    // Estimated kills in last 24h
+	KillsBaseline int64    `json:"kills_baseline"` // Average daily kills (baseline)
+	ISKDestroyed  float64  `json:"isk_destroyed"`  // Total ISK destroyed (all time)
+	ActivePlayers int      `json:"active_players"` // Currently active PVP players
+	TopShips      []string `json:"top_ships"`      // Most destroyed ship types
 }
 
 // DemandItem represents an item with high demand due to kills.
@@ -43,8 +43,8 @@ type DemandItem struct {
 	TypeName     string  `json:"type_name"`
 	GroupID      int32   `json:"group_id"`
 	GroupName    string  `json:"group_name"`
-	LossesPerDay int64   `json:"losses_per_day"`   // Estimated daily losses
-	DemandScore  float64 `json:"demand_score"`     // Higher = more demand
+	LossesPerDay int64   `json:"losses_per_day"` // Estimated daily losses
+	DemandScore  float64 `json:"demand_score"`   // Higher = more demand
 	RegionID     int32   `json:"region_id"`
 	RegionName   string  `json:"region_name"`
 }
@@ -88,19 +88,19 @@ func KnownSpaceRegions() []int32 {
 // GetHotZones fetches and analyzes all regions to find war zones.
 func (d *DemandAnalyzer) GetHotZones(limit int) ([]RegionHotZone, error) {
 	regions := KnownSpaceRegions()
-	
+
 	logger.Info("Demand", fmt.Sprintf("Analyzing %d regions for hot zones...", len(regions)))
-	
+
 	// Fetch stats for all regions concurrently (with rate limiting in client)
 	type result struct {
 		regionID int32
 		stats    *RegionStats
 		err      error
 	}
-	
+
 	results := make(chan result, len(regions))
 	var wg sync.WaitGroup
-	
+
 	// Process in batches to avoid overwhelming the API
 	batchSize := 10
 	for i := 0; i < len(regions); i += batchSize {
@@ -108,12 +108,12 @@ func (d *DemandAnalyzer) GetHotZones(limit int) ([]RegionHotZone, error) {
 		if end > len(regions) {
 			end = len(regions)
 		}
-		
+
 		for _, regionID := range regions[i:end] {
 			wg.Add(1)
 			go func(rid int32) {
 				defer wg.Done()
-				
+
 				// Check cache first
 				if cached, ok := d.cache.Load(rid); ok {
 					c := cached.(*CachedRegionStats)
@@ -122,34 +122,34 @@ func (d *DemandAnalyzer) GetHotZones(limit int) ([]RegionHotZone, error) {
 						return
 					}
 				}
-				
+
 				stats, err := d.client.GetRegionStats(rid)
 				if err != nil {
 					results <- result{regionID: rid, err: err}
 					return
 				}
-				
+
 				// Cache the result
 				d.cache.Store(rid, &CachedRegionStats{
 					Stats:     stats,
 					UpdatedAt: time.Now(),
 				})
-				
+
 				results <- result{regionID: rid, stats: stats}
 			}(regionID)
 		}
-		
+
 		// Wait a bit between batches
 		if i+batchSize < len(regions) {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-	
+
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
-	
+
 	// Collect and analyze results
 	var hotZones []RegionHotZone
 	for r := range results {
@@ -157,23 +157,23 @@ func (d *DemandAnalyzer) GetHotZones(limit int) ([]RegionHotZone, error) {
 			logger.Warn("Demand", fmt.Sprintf("Failed to get stats for region %d: %v", r.regionID, r.err))
 			continue
 		}
-		
+
 		zone := d.analyzeRegion(r.regionID, r.stats)
 		if zone != nil {
 			hotZones = append(hotZones, *zone)
 		}
 	}
-	
+
 	// Sort by hot score (descending)
 	sort.Slice(hotZones, func(i, j int) bool {
 		return hotZones[i].HotScore > hotZones[j].HotScore
 	})
-	
+
 	// Limit results
 	if limit > 0 && len(hotZones) > limit {
 		hotZones = hotZones[:limit]
 	}
-	
+
 	logger.Success("Demand", fmt.Sprintf("Found %d hot zones", len(hotZones)))
 	return hotZones, nil
 }
@@ -187,18 +187,18 @@ func (d *DemandAnalyzer) GetSingleRegionStats(regionID int32) (*RegionHotZone, e
 			return d.analyzeRegion(regionID, c.Stats), nil
 		}
 	}
-	
+
 	stats, err := d.client.GetRegionStats(regionID)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Cache the result
 	d.cache.Store(regionID, &CachedRegionStats{
 		Stats:     stats,
 		UpdatedAt: time.Now(),
 	})
-	
+
 	return d.analyzeRegion(regionID, stats), nil
 }
 
@@ -207,7 +207,7 @@ func (d *DemandAnalyzer) analyzeRegion(regionID int32, stats *RegionStats) *Regi
 	if stats == nil || stats.Months == nil {
 		return nil
 	}
-	
+
 	// Get region name
 	regionName := d.regionNames[regionID]
 	if regionName == "" {
@@ -217,36 +217,36 @@ func (d *DemandAnalyzer) analyzeRegion(regionID int32, stats *RegionStats) *Regi
 			regionName = fmt.Sprintf("Region %d", regionID)
 		}
 	}
-	
+
 	// Calculate baseline (average of last 6 months, excluding current)
 	now := time.Now()
 	currentKey := fmt.Sprintf("%d%02d", now.Year(), now.Month())
-	
+
 	var baselineTotal int64
 	var baselineMonths int
-	
+
 	for key, month := range stats.Months {
 		if key == currentKey {
 			continue // Skip current month
 		}
-		
+
 		// Only use last 6 months
 		monthTime := time.Date(month.Year, time.Month(month.Month), 1, 0, 0, 0, 0, time.UTC)
 		if now.Sub(monthTime) > 6*30*24*time.Hour {
 			continue
 		}
-		
+
 		baselineTotal += month.ShipsDestroyed
 		baselineMonths++
 	}
-	
+
 	if baselineMonths == 0 {
 		baselineMonths = 1
 	}
-	
+
 	baselineAvg := float64(baselineTotal) / float64(baselineMonths)
 	baselineDaily := baselineAvg / 30.0 // Average daily kills
-	
+
 	// Get current month stats
 	var currentMonthKills int64
 	var daysPassed int
@@ -254,14 +254,14 @@ func (d *DemandAnalyzer) analyzeRegion(regionID int32, stats *RegionStats) *Regi
 		currentMonthKills = currentMonth.ShipsDestroyed
 		daysPassed = now.Day()
 	}
-	
+
 	if daysPassed == 0 {
 		daysPassed = 1
 	}
-	
+
 	// Estimate current daily rate
 	currentDaily := float64(currentMonthKills) / float64(daysPassed)
-	
+
 	// Calculate hot score (current vs baseline ratio)
 	var hotScore float64
 	if baselineDaily > 0 {
@@ -269,7 +269,7 @@ func (d *DemandAnalyzer) analyzeRegion(regionID int32, stats *RegionStats) *Regi
 	} else if currentDaily > 0 {
 		hotScore = 2.0 // No baseline but has activity
 	}
-	
+
 	// Determine status based on activity ratio
 	// Thresholds adjusted for EVE Online patterns:
 	// - 1.8x+ indicates significant conflict (war)
@@ -283,13 +283,13 @@ func (d *DemandAnalyzer) analyzeRegion(regionID int32, stats *RegionStats) *Regi
 	} else if hotScore >= 1.15 {
 		status = "elevated"
 	}
-	
+
 	// Get active players
 	activePlayers := 0
 	if stats.ActivePVP != nil && stats.ActivePVP.Characters != nil {
 		activePlayers = stats.ActivePVP.Characters.Count
 	}
-	
+
 	// Get top ships
 	var topShips []string
 	for _, list := range stats.TopLists {
@@ -305,7 +305,7 @@ func (d *DemandAnalyzer) analyzeRegion(regionID int32, stats *RegionStats) *Regi
 			break
 		}
 	}
-	
+
 	return &RegionHotZone{
 		RegionID:      regionID,
 		RegionName:    regionName,
@@ -325,18 +325,18 @@ func (d *DemandAnalyzer) GetTopDestroyedShipGroups(regionID int32, limit int) ([
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if stats.Groups == nil {
 		return nil, nil
 	}
-	
+
 	// Convert groups to slice and sort by ships destroyed
 	type groupStat struct {
 		groupID        int32
 		shipsDestroyed int64
 		iskDestroyed   float64
 	}
-	
+
 	var groups []groupStat
 	for _, g := range stats.Groups {
 		groups = append(groups, groupStat{
@@ -345,22 +345,22 @@ func (d *DemandAnalyzer) GetTopDestroyedShipGroups(regionID int32, limit int) ([
 			iskDestroyed:   g.ISKDestroyed,
 		})
 	}
-	
+
 	sort.Slice(groups, func(i, j int) bool {
 		return groups[i].shipsDestroyed > groups[j].shipsDestroyed
 	})
-	
+
 	if limit > 0 && len(groups) > limit {
 		groups = groups[:limit]
 	}
-	
+
 	// Convert to DemandItem
 	regionName := d.regionNames[regionID]
 	items := make([]DemandItem, len(groups))
 	for i, g := range groups {
 		// Estimate daily losses (last month / 30)
 		dailyLosses := g.shipsDestroyed / 30 // Rough estimate
-		
+
 		items[i] = DemandItem{
 			GroupID:      g.groupID,
 			LossesPerDay: dailyLosses,
@@ -369,6 +369,6 @@ func (d *DemandAnalyzer) GetTopDestroyedShipGroups(regionID int32, limit int) ([
 			RegionName:   regionName,
 		}
 	}
-	
+
 	return items, nil
 }

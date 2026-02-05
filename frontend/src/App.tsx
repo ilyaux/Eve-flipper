@@ -361,10 +361,10 @@ function App() {
         {/* Results — all tabs stay mounted to preserve state */}
         <div className="flex-1 min-h-0 flex flex-col p-2">
           <div className={`flex-1 min-h-0 flex flex-col ${tab === "radius" ? "" : "hidden"}`}>
-            <ScanResultsTable results={radiusResults} scanning={scanning && tab === "radius"} progress={tab === "radius" ? progress : ""} />
+            <ScanResultsTable results={radiusResults} scanning={scanning && tab === "radius"} progress={tab === "radius" ? progress : ""} salesTaxPercent={params.sales_tax_percent} />
           </div>
           <div className={`flex-1 min-h-0 flex flex-col ${tab === "region" ? "" : "hidden"}`}>
-            <ScanResultsTable results={regionResults} scanning={scanning && tab === "region"} progress={tab === "region" ? progress : ""} />
+            <ScanResultsTable results={regionResults} scanning={scanning && tab === "region"} progress={tab === "region" ? progress : ""} salesTaxPercent={params.sales_tax_percent} />
           </div>
           <div className={`flex-1 min-h-0 flex flex-col ${tab === "contracts" ? "" : "hidden"}`}>
             {/* Contract-specific settings */}

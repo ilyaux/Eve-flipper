@@ -27,7 +27,7 @@ type Data struct {
 	Types        map[int32]*ItemType    // typeID -> type
 	Stations     map[int64]*Station     // stationID -> station
 	Universe     *graph.Universe
-	Industry     *IndustryData          // blueprints, reprocessing, etc.
+	Industry     *IndustryData // blueprints, reprocessing, etc.
 }
 
 // Region represents an EVE region from the SDE.
@@ -165,11 +165,11 @@ func (d *Data) loadRegions(dir string) error {
 func (d *Data) loadSystems(dir string) error {
 	return readJSONL(dir, "mapSolarSystems", func(raw json.RawMessage) error {
 		var s struct {
-			Key             int32             `json:"_key"`
-			Name            map[string]string `json:"name"`
-			RegionID        int32             `json:"regionID"`
-			Security        float64           `json:"security"`
-			SecurityStatus  float64           `json:"securityStatus"` // alternate SDE field name
+			Key            int32             `json:"_key"`
+			Name           map[string]string `json:"name"`
+			RegionID       int32             `json:"regionID"`
+			Security       float64           `json:"security"`
+			SecurityStatus float64           `json:"securityStatus"` // alternate SDE field name
 		}
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return err

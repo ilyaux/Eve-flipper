@@ -6,6 +6,7 @@ import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { getWatchlist, addToWatchlist, removeFromWatchlist } from "@/lib/api";
 import { useGlobalToast } from "./Toast";
 import { EmptyState, type EmptyReason } from "./EmptyState";
+import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
 
 const VIRTUALIZE_THRESHOLD = 500;
 const ROW_HEIGHT = 36;
@@ -20,6 +21,8 @@ interface Props {
   progress: string;
   /** When true, show "no results" empty state instead of "run scan" */
   scanCompletedWithZero?: boolean;
+  /** Sales tax % for execution plan calculator profit (from params). */
+  salesTaxPercent?: number;
 }
 
 const columnDefs: { key: SortKey; labelKey: TranslationKey; width: string; numeric: boolean }[] = [
@@ -32,6 +35,7 @@ const columnDefs: { key: SortKey; labelKey: TranslationKey; width: string; numer
   { key: "UnitsToBuy", labelKey: "colUnitsToBuy", width: "min-w-[80px]", numeric: true },
   { key: "BuyOrderRemain", labelKey: "colAcceptQty", width: "min-w-[80px]", numeric: true },
   { key: "TotalProfit", labelKey: "colProfit", width: "min-w-[120px]", numeric: true },
+  { key: "ExpectedProfit", labelKey: "colExpectedProfit", width: "min-w-[100px]", numeric: true },
   { key: "ProfitPerJump", labelKey: "colProfitPerJump", width: "min-w-[110px]", numeric: true },
   { key: "TotalJumps", labelKey: "colJumps", width: "min-w-[60px]", numeric: true },
   { key: "DailyVolume", labelKey: "colDailyVolume", width: "min-w-[80px]", numeric: true },
@@ -83,7 +87,7 @@ function VirtualRow({
     <div
       style={style}
       onContextMenu={(e) => handleContextMenu(e, row)}
-      className={`grid grid-cols-[32px_32px_180px_110px_150px_110px_150px_80px_80px_80px_120px_110px_60px_80px_70px_70px_70px] gap-0 border-b border-eve-border/50 hover:bg-eve-accent/5 transition-colors ${compactMode ? "text-xs" : "text-sm"} ${
+      className={`grid grid-cols-[32px_32px_180px_110px_150px_110px_150px_80px_80px_80px_120px_100px_110px_60px_80px_70px_70px_70px] gap-0 border-b border-eve-border/50 hover:bg-eve-accent/5 transition-colors ${compactMode ? "text-xs" : "text-sm"} ${
         isPinned ? "bg-eve-accent/10 border-l-2 border-l-eve-accent" : isSelected ? "bg-eve-accent/5" : index % 2 === 0 ? "bg-eve-panel" : "bg-[#161616]"
       }`}
     >
@@ -118,7 +122,7 @@ function VirtualRow({
   );
 }
 
-export function ScanResultsTable({ results, scanning, progress, scanCompletedWithZero }: Props) {
+export function ScanResultsTable({ results, scanning, progress, scanCompletedWithZero, salesTaxPercent }: Props) {
   const { t } = useI18n();
   const emptyReason: EmptyReason = scanCompletedWithZero ? "no_results" : "no_scan_yet";
   const { addToast } = useGlobalToast();
@@ -143,6 +147,9 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: FlipResult } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Execution plan popup (from context menu)
+  const [execPlanRow, setExecPlanRow] = useState<FlipResult | null>(null);
 
   // Virtual list (when 500+ rows) and compact mode
   const [compactMode, setCompactMode] = useState(false);
@@ -438,7 +445,7 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
         {useVirtual ? (
           <>
             {/* Virtualized: sticky header */}
-            <div className="shrink-0 grid grid-cols-[32px_32px_180px_110px_150px_110px_150px_80px_80px_80px_120px_110px_60px_80px_70px_70px_70px] gap-0 bg-eve-dark border-b border-eve-border text-[11px] uppercase tracking-wider text-eve-dim font-medium">
+            <div className="shrink-0 grid grid-cols-[32px_32px_180px_110px_150px_110px_150px_80px_80px_80px_120px_100px_110px_60px_80px_70px_70px_70px] gap-0 bg-eve-dark border-b border-eve-border text-[11px] uppercase tracking-wider text-eve-dim font-medium">
               <div className="px-1 py-2" />
               <div className="px-1 py-2" />
               {columnDefs.map((col) => (
@@ -655,9 +662,31 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
                 setContextMenu(null);
               }}
             />
+            {(contextMenu.row.BuyRegionID != null || contextMenu.row.SellRegionID != null) && (
+              <ContextItem
+                label={t("execPlanCalculator")}
+                onClick={() => {
+                  setExecPlanRow(contextMenu.row);
+                  setContextMenu(null);
+                }}
+              />
+            )}
           </div>
         </>
       )}
+
+      <ExecutionPlannerPopup
+        open={execPlanRow !== null}
+        onClose={() => setExecPlanRow(null)}
+        typeID={execPlanRow?.TypeID ?? 0}
+        typeName={execPlanRow?.TypeName ?? ""}
+        regionID={execPlanRow?.BuyRegionID ?? 0}
+        locationID={execPlanRow?.BuyLocationID ?? 0}
+        sellRegionID={execPlanRow?.SellRegionID}
+        sellLocationID={execPlanRow?.SellLocationID ?? 0}
+        defaultQuantity={execPlanRow?.UnitsToBuy ?? 100}
+        salesTaxPercent={salesTaxPercent}
+      />
     </div>
   );
 }

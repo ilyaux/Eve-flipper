@@ -10,10 +10,10 @@ import (
 
 // ANSI color codes
 const (
-	reset   = "\033[0m"
-	bold    = "\033[1m"
-	dim     = "\033[2m"
-	
+	reset = "\033[0m"
+	bold  = "\033[1m"
+	dim   = "\033[2m"
+
 	red     = "\033[31m"
 	green   = "\033[32m"
 	yellow  = "\033[33m"
@@ -29,13 +29,13 @@ func init() {
 	// Check if colors are supported
 	// Windows Terminal, PowerShell 7+, VS Code terminal support colors
 	// Classic cmd.exe does NOT support ANSI by default
-	
+
 	if runtime.GOOS != "windows" {
 		// Unix-like systems generally support colors
 		useColors = true
 		return
 	}
-	
+
 	// On Windows, check for modern terminal indicators
 	// WT_SESSION = Windows Terminal
 	// TERM_PROGRAM = VS Code, etc.
@@ -47,7 +47,7 @@ func init() {
 		useColors = true
 		return
 	}
-	
+
 	// Try to enable VT mode on Windows 10+
 	useColors = enableWindowsVT()
 }
@@ -69,11 +69,14 @@ func Banner(version string) {
 	if version == "" {
 		version = "dev"
 	}
-	
+	pad := 18 - len(version)
+	if pad < 0 {
+		pad = 0
+	}
 	fmt.Println()
 	fmt.Println(colorize(cyan+bold, "  ╔═══════════════════════════════════════╗"))
-	fmt.Println(colorize(cyan+bold, "  ║")+colorize(yellow+bold, "         EVE FLIPPER ")+colorize(dim, version)+colorize(cyan+bold, strings.Repeat(" ", 18-len(version))+"║"))
-	fmt.Println(colorize(cyan+bold, "  ║")+colorize(dim, "      Market Analysis Tool           ")+colorize(cyan+bold, "║"))
+	fmt.Println(colorize(cyan+bold, "  ║") + colorize(yellow+bold, "         EVE FLIPPER ") + colorize(dim, version) + colorize(cyan+bold, strings.Repeat(" ", pad)+"║"))
+	fmt.Println(colorize(cyan+bold, "  ║") + colorize(dim, "      Market Analysis Tool           ") + colorize(cyan+bold, "║"))
 	fmt.Println(colorize(cyan+bold, "  ╚═══════════════════════════════════════╝"))
 	fmt.Println()
 }

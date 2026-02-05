@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"eve-flipper/internal/logger"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -262,6 +263,41 @@ func (d *DB) migrate() error {
 			return fmt.Errorf("migration v5: %w", err)
 		}
 		logger.Info("DB", "Applied migration v5 (demand cache)")
+	}
+
+	// v6: ensure station_results exists (v4 may have failed after ALTER TABLE if columns already existed)
+	if version < 6 {
+		_, err := d.sql.Exec(`
+			CREATE TABLE IF NOT EXISTS station_results (
+				id           INTEGER PRIMARY KEY AUTOINCREMENT,
+				scan_id      INTEGER NOT NULL REFERENCES scan_history(id),
+				type_id      INTEGER,
+				type_name    TEXT,
+				buy_price    REAL,
+				sell_price   REAL,
+				margin       REAL,
+				margin_pct   REAL,
+				volume       REAL,
+				buy_volume   REAL,
+				sell_volume  REAL,
+				station_id   INTEGER,
+				station_name TEXT,
+				cts          REAL,
+				sds          INTEGER,
+				period_roi   REAL,
+				vwap         REAL,
+				pvi          REAL,
+				obds         REAL,
+				bvs_ratio    REAL,
+				dos          REAL
+			);
+			CREATE INDEX IF NOT EXISTS idx_station_scan ON station_results(scan_id);
+			INSERT OR IGNORE INTO schema_version (version) VALUES (6);
+		`)
+		if err != nil {
+			return fmt.Errorf("migration v6: %w", err)
+		}
+		logger.Info("DB", "Applied migration v6 (station_results ensure)")
 	}
 
 	return nil

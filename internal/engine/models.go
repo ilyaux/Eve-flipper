@@ -9,12 +9,14 @@ type FlipResult struct {
 	BuyStation      string
 	BuySystemName   string
 	BuySystemID     int32
-	BuyLocationID   int64 `json:"-"`
+	BuyRegionID     int32 `json:"BuyRegionID"`
+	BuyLocationID   int64 `json:"BuyLocationID,omitempty"`
 	SellPrice       float64
 	SellStation     string
 	SellSystemName  string
 	SellSystemID    int32
-	SellLocationID  int64 `json:"-"`
+	SellRegionID    int32 `json:"SellRegionID"`
+	SellLocationID  int64 `json:"SellLocationID,omitempty"`
 	ProfitPerUnit   float64
 	MarginPercent   float64
 	UnitsToBuy      int32
@@ -30,6 +32,12 @@ type FlipResult struct {
 	PriceTrend      float64 `json:"PriceTrend"`
 	BuyCompetitors  int     `json:"BuyCompetitors"`
 	SellCompetitors int     `json:"SellCompetitors"`
+	// Execution-plan derived (expected fill prices from order book depth)
+	ExpectedBuyPrice  float64 `json:"ExpectedBuyPrice,omitempty"`
+	ExpectedSellPrice float64 `json:"ExpectedSellPrice,omitempty"`
+	ExpectedProfit    float64 `json:"ExpectedProfit,omitempty"`
+	SlippageBuyPct    float64 `json:"SlippageBuyPct,omitempty"`
+	SlippageSellPct   float64 `json:"SlippageSellPct,omitempty"`
 }
 
 // ContractResult represents a profitable public contract compared to market value.
@@ -52,6 +60,7 @@ type RouteHop struct {
 	SystemName     string
 	StationName    string
 	SystemID       int32 `json:"-"`
+	RegionID       int32 `json:"RegionID"` // Market region for execution plan / slippage
 	LocationID     int64 `json:"-"`
 	DestSystemID   int32 `json:"-"`
 	DestSystemName string
@@ -94,12 +103,12 @@ type ScanParams struct {
 	MinMargin       float64
 	SalesTaxPercent float64
 	// Advanced filters
-	MinDailyVolume    int64   // 0 = no filter
-	MaxInvestment     float64 // 0 = no filter (max ISK per position)
-	SecurityFilter    string  // "" = all, "highsec", "lowsec", "nullsec"
-	MinRouteSecurity  float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7 (route must stay in this security)
-	MaxResults        int     // 0 = use default (100)
-	TargetRegionID    int32   // 0 = search all by radius; >0 = search only in this specific region
+	MinDailyVolume   int64   // 0 = no filter
+	MaxInvestment    float64 // 0 = no filter (max ISK per position)
+	SecurityFilter   string  // "" = all, "highsec", "lowsec", "nullsec"
+	MinRouteSecurity float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7 (route must stay in this security)
+	MaxResults       int     // 0 = use default (100)
+	TargetRegionID   int32   // 0 = search all by radius; >0 = search only in this specific region
 
 	// --- Contract-specific filters ---
 	MinContractPrice  float64 // Minimum contract price in ISK (0 = use default 10M)

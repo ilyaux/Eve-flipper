@@ -32,15 +32,15 @@ func NewClient() *Client {
 
 // RegionStats contains kill statistics for a region.
 type RegionStats struct {
-	ID              int32                   `json:"id"`
-	Type            string                  `json:"type"`
-	ShipsDestroyed  int64                   `json:"shipsDestroyed"`
-	ISKDestroyed    float64                 `json:"iskDestroyed"`
-	Months          map[string]*MonthStats  `json:"months"`
-	ActivePVP       *ActivePVP              `json:"activepvp"`
-	TopLists        []TopList               `json:"topLists"`
-	Groups          map[string]*GroupStats  `json:"groups"`
-	Info            *RegionInfo             `json:"info"`
+	ID             int32                  `json:"id"`
+	Type           string                 `json:"type"`
+	ShipsDestroyed int64                  `json:"shipsDestroyed"`
+	ISKDestroyed   float64                `json:"iskDestroyed"`
+	Months         map[string]*MonthStats `json:"months"`
+	ActivePVP      *ActivePVP             `json:"activepvp"`
+	TopLists       []TopList              `json:"topLists"`
+	Groups         map[string]*GroupStats `json:"groups"`
+	Info           *RegionInfo            `json:"info"`
 }
 
 // MonthStats contains monthly kill statistics.
@@ -99,9 +99,9 @@ type RegionInfo struct {
 
 // Killmail represents a single killmail from Zkillboard.
 type Killmail struct {
-	KillmailID   int64         `json:"killmail_id"`
-	KillmailHash string        `json:"zkb.hash"`
-	ZKB          *ZKBInfo      `json:"zkb"`
+	KillmailID   int64    `json:"killmail_id"`
+	KillmailHash string   `json:"zkb.hash"`
+	ZKB          *ZKBInfo `json:"zkb"`
 }
 
 // ZKBInfo contains Zkillboard-specific killmail info.
@@ -121,24 +121,24 @@ type ZKBInfo struct {
 // GetRegionStats fetches kill statistics for a region.
 func (c *Client) GetRegionStats(regionID int32) (*RegionStats, error) {
 	url := fmt.Sprintf("%s/stats/regionID/%d/", baseURL, regionID)
-	
+
 	var stats RegionStats
 	if err := c.getJSON(url, &stats); err != nil {
 		return nil, fmt.Errorf("get region stats %d: %w", regionID, err)
 	}
-	
+
 	return &stats, nil
 }
 
 // GetRecentKills fetches recent killmails for a region.
 func (c *Client) GetRecentKills(regionID int32, pastSeconds int) ([]map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/regionID/%d/pastSeconds/%d/", baseURL, regionID, pastSeconds)
-	
+
 	var kills []map[string]interface{}
 	if err := c.getJSON(url, &kills); err != nil {
 		return nil, fmt.Errorf("get recent kills for region %d: %w", regionID, err)
 	}
-	
+
 	return kills, nil
 }
 
@@ -187,18 +187,18 @@ func (c *Client) getJSON(url string, dst interface{}) error {
 // HealthCheck pings Zkillboard to verify connectivity.
 func (c *Client) HealthCheck() bool {
 	url := baseURL + "/stats/regionID/10000002/" // The Forge - always has data
-	
+
 	req, err := http.NewRequest("HEAD", url, nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("User-Agent", "eve-flipper/1.0")
-	
+
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return false
 	}
 	resp.Body.Close()
-	
+
 	return resp.StatusCode == 200
 }

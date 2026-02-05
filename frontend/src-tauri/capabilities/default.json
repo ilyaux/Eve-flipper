@@ -1,0 +1,18 @@
+{
+  "identifier": "default",
+  "description": "Main window and sidecar permissions",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/eve-flipper-backend",
+          "sidecar": true,
+          "args": ["--port", "13370"]
+        }
+      ]
+    }
+  ]
+}
