@@ -16,7 +16,7 @@ import {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 interface Props {
   params: Record<string, any>;
-  onApply: (params: Record<string, any>) => void;
+  onApply: (params: any) => void;
   tab: string;
   builtinPresets: BuiltinPreset[];
   /** Which edge the dropdown aligns to. Default "left". */

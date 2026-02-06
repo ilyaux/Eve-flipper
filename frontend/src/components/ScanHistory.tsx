@@ -347,7 +347,7 @@ export function ScanHistory({ onLoadResults }: ScanHistoryProps) {
 
 /* ---------- Tab-specific result preview tables ---------- */
 
-type TFn = (key: string, params?: Record<string, unknown>) => string;
+type TFn = (key: any, params?: Record<string, any>) => string;
 
 function renderResultsTable(
   tab: string,

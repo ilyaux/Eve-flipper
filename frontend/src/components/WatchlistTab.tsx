@@ -503,13 +503,15 @@ export function WatchlistTab({ latestResults }: Props) {
       {/* Confirm delete dialog */}
       {confirmDelete && (
         <ConfirmDialog
+          open={true}
           title={t("removeFromWatchlist")}
           message={`${t("watchlistConfirmRemove" as TranslationKey) || "Remove"} "${confirmDelete.name}"?`}
           onConfirm={() => {
             handleRemove(confirmDelete.id);
             setConfirmDelete(null);
           }}
-          onCancel={() => setConfirmDelete(null)}
+          onClose={() => setConfirmDelete(null)}
+          variant="danger"
         />
       )}
     </div>

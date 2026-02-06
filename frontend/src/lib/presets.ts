@@ -1,5 +1,3 @@
-import type { ScanParams } from "./types";
-
 const STORAGE_KEY = "eve-flipper-presets";
 
 export type PresetTab = "flipper" | "region" | "contracts" | "route" | "station";
