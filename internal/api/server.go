@@ -2591,7 +2591,28 @@ func (s *Server) handleCorpDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dashboard, err := corp.BuildDashboard(provider)
+	// Fetch adjusted prices for ISK estimation (mining ores, industry products).
+	// Non-blocking: if prices fail, dashboard still works with zero ISK estimates.
+	var prices corp.PriceMap
+	if provider.IsDemo() && s.demoCorpProvider != nil {
+		prices = s.demoCorpProvider.DemoPrices()
+	} else {
+		s.mu.RLock()
+		ia := s.industryAnalyzer
+		s.mu.RUnlock()
+		if ia != nil {
+			if adjusted, err := s.esi.GetAllAdjustedPrices(ia.IndustryCache); err == nil {
+				prices = make(corp.PriceMap, len(adjusted))
+				for k, v := range adjusted {
+					prices[k] = v
+				}
+			} else {
+				log.Printf("[CORP] Failed to fetch adjusted prices: %v (ISK estimates will be zero)", err)
+			}
+		}
+	}
+
+	dashboard, err := corp.BuildDashboard(provider, prices)
 	if err != nil {
 		writeError(w, 500, fmt.Sprintf("dashboard build failed: %v", err))
 		return

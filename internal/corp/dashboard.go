@@ -4,38 +4,109 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
+// PriceMap maps typeID → estimated ISK value per unit (adjusted price or market price).
+// Passed into BuildDashboard from the API layer which has access to ESI/SDE price data.
+type PriceMap map[int32]float64
+
 // BuildDashboard aggregates raw data from a CorpDataProvider into a CorpDashboard.
-func BuildDashboard(provider CorpDataProvider) (*CorpDashboard, error) {
+// prices may be nil (ISK estimates will fall back to zero).
+func BuildDashboard(provider CorpDataProvider, prices PriceMap) (*CorpDashboard, error) {
 	info := provider.GetInfo()
 	isDemo := provider.IsDemo()
 
-	wallets, err := provider.GetWallets()
-	if err != nil {
-		return nil, err
+	// ---- Parallel fetch of all data sources ----
+	var (
+		wallets      []CorpWalletDivision
+		walletsErr   error
+		allJournal   []CorpJournalEntry // aggregated across all 7 divisions
+		members      []CorpMember
+		industryJobs []CorpIndustryJob
+		miningLedger []CorpMiningEntry
+		orders       []CorpMarketOrder
+	)
+
+	var wg sync.WaitGroup
+
+	// Wallets
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wallets, walletsErr = provider.GetWallets()
+	}()
+
+	// Journal — fetch ALL 7 divisions in parallel and merge
+	var journalMu sync.Mutex
+	for div := 1; div <= 7; div++ {
+		wg.Add(1)
+		go func(d int) {
+			defer wg.Done()
+			entries, err := provider.GetJournal(d, 90)
+			if err != nil || len(entries) == 0 {
+				return
+			}
+			journalMu.Lock()
+			allJournal = append(allJournal, entries...)
+			journalMu.Unlock()
+		}(div)
 	}
+
+	// Members
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		members, _ = provider.GetMembers()
+	}()
+
+	// Industry
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		industryJobs, _ = provider.GetIndustryJobs()
+	}()
+
+	// Mining
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		miningLedger, _ = provider.GetMiningLedger()
+	}()
+
+	// Orders
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		orders, _ = provider.GetOrders()
+	}()
+
+	wg.Wait()
+
+	if walletsErr != nil {
+		return nil, walletsErr
+	}
+
+	// Deduplicate journal entries (same entry may appear in multiple division fetches
+	// if the provider returns corp-wide entries). Deduplicate by entry ID.
+	allJournal = deduplicateJournal(allJournal)
 
 	totalBalance := 0.0
 	for _, w := range wallets {
 		totalBalance += w.Balance
 	}
 
-	// Fetch journal for master wallet (division 1) for financial overview
-	journal, _ := provider.GetJournal(1, 90)
-	members, _ := provider.GetMembers()
-	industryJobs, _ := provider.GetIndustryJobs()
-	miningLedger, _ := provider.GetMiningLedger()
-	orders, _ := provider.GetOrders()
-
 	now := time.Now().UTC()
 	day7ago := now.AddDate(0, 0, -7).Format("2006-01-02")
 	day30ago := now.AddDate(0, 0, -30).Format("2006-01-02")
 
-	// ---- Revenue / Expenses ----
+	// ---- Revenue / Expenses (from aggregated journal) ----
 	var rev7, exp7, rev30, exp30 float64
-	for _, e := range journal {
+	for _, e := range allJournal {
+		if len(e.Date) < 10 {
+			continue
+		}
 		dateOnly := e.Date[:10]
 		if dateOnly >= day30ago {
 			if e.Amount > 0 {
@@ -54,22 +125,22 @@ func BuildDashboard(provider CorpDataProvider) (*CorpDashboard, error) {
 	}
 
 	// ---- Income by source ----
-	incomeBySource := computeIncomeBySource(journal, day30ago)
+	incomeBySource := computeIncomeBySource(allJournal, day30ago)
 
 	// ---- Daily P&L ----
-	dailyPnL := computeDailyPnL(journal, 90, now)
+	dailyPnL := computeDailyPnL(allJournal, 90, now)
 
-	// ---- Top Contributors ----
-	topContributors := computeTopContributors(journal, members, day30ago)
+	// ---- Top Contributors (from journal: who generates ISK for the corp) ----
+	topContributors := computeTopContributors(allJournal, members, day30ago)
 
-	// ---- Member Summary ----
-	memberSummary := computeMemberSummary(members, now)
+	// ---- Member Summary (hybrid: journal-based categorization + ship fallback) ----
+	memberSummary := computeMemberSummary(members, allJournal, now)
 
-	// ---- Industry Summary ----
-	industrySummary := computeIndustrySummary(industryJobs, now)
+	// ---- Industry Summary (with ISK estimation) ----
+	industrySummary := computeIndustrySummary(industryJobs, prices, now)
 
-	// ---- Mining Summary ----
-	miningSummary := computeMiningSummary(miningLedger)
+	// ---- Mining Summary (with ISK estimation) ----
+	miningSummary := computeMiningSummary(miningLedger, prices)
 
 	// ---- Market Summary ----
 	marketSummary := computeMarketSummary(orders)
@@ -95,28 +166,48 @@ func BuildDashboard(provider CorpDataProvider) (*CorpDashboard, error) {
 	}, nil
 }
 
+// deduplicateJournal removes duplicate journal entries by ID.
+func deduplicateJournal(entries []CorpJournalEntry) []CorpJournalEntry {
+	seen := make(map[int64]bool, len(entries))
+	result := make([]CorpJournalEntry, 0, len(entries))
+	for _, e := range entries {
+		if !seen[e.ID] {
+			seen[e.ID] = true
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // ============================================================
 // Income breakdown by source
 // ============================================================
 
 // refTypeCategory maps ESI ref_types to dashboard categories.
 var refTypeCategory = map[string]string{
-	"bounty_prizes":                   "bounties",
-	"agent_mission_reward":            "bounties",
-	"market_transaction":              "market",
-	"market_escrow":                   "market",
-	"brokers_fee":                     "market",
-	"transaction_tax":                 "taxes",
-	"planetary_interaction":           "pi",
-	"industry_job_tax":                "industry",
-	"reprocessing_tax":                "industry",
-	"insurance":                       "srp",
-	"moon_mining_extraction_tax":      "mining",
-	"contract_price":                  "market",
-	"player_donation":                 "other",
-	"corporation_account_withdrawal":  "other",
-	"office_rental_fee":               "taxes",
-	"jump_clone_activation_fee":       "taxes",
+	"bounty_prizes":                  "bounties",
+	"agent_mission_reward":           "bounties",
+	"agent_mission_time_bonus_reward": "bounties",
+	"market_transaction":             "market",
+	"market_escrow":                  "market",
+	"brokers_fee":                    "market",
+	"transaction_tax":                "taxes",
+	"planetary_interaction":          "pi",
+	"planetary_export_tax":           "pi",
+	"planetary_import_tax":           "pi",
+	"industry_job_tax":               "industry",
+	"manufacturing":                  "industry",
+	"reprocessing_tax":               "industry",
+	"insurance":                      "srp",
+	"moon_mining_extraction_tax":     "mining",
+	"contract_price":                 "market",
+	"contract_reward":                "market",
+	"player_donation":                "other",
+	"corporation_account_withdrawal": "other",
+	"office_rental_fee":              "taxes",
+	"jump_clone_activation_fee":      "taxes",
+	"war_fee":                        "srp",
+	"project_discovery":              "bounties",
 }
 
 var categoryLabels = map[string]string{
@@ -135,7 +226,7 @@ func computeIncomeBySource(journal []CorpJournalEntry, since string) []IncomeSou
 	totalIncome := 0.0
 
 	for _, e := range journal {
-		if e.Date[:10] < since {
+		if len(e.Date) < 10 || e.Date[:10] < since {
 			continue
 		}
 		cat := refTypeCategory[e.RefType]
@@ -188,6 +279,9 @@ func computeDailyPnL(journal []CorpJournalEntry, days int, now time.Time) []Dail
 	}
 
 	for _, e := range journal {
+		if len(e.Date) < 10 {
+			continue
+		}
 		dateOnly := e.Date[:10]
 		entry, ok := dailyMap[dateOnly]
 		if !ok {
@@ -229,7 +323,7 @@ func computeTopContributors(journal []CorpJournalEntry, members []CorpMember, si
 	contrib := make(map[int64]float64)
 	contribRefTypes := make(map[int64]map[string]float64) // charID -> refType -> total ISK
 	for _, e := range journal {
-		if e.Date[:10] < since || e.Amount <= 0 {
+		if len(e.Date) < 10 || e.Date[:10] < since || e.Amount <= 0 {
 			continue
 		}
 		contrib[e.FirstPartyID] += e.Amount
@@ -312,6 +406,8 @@ func categorizeMember(refTypes map[string]float64) string {
 			categoryScores["trader"] += amount
 		case "industry":
 			categoryScores["industrialist"] += amount
+		case "pi":
+			categoryScores["industrialist"] += amount
 		default:
 			categoryScores["other"] += amount
 		}
@@ -330,14 +426,17 @@ func categorizeMember(refTypes map[string]float64) string {
 }
 
 // ============================================================
-// Member Summary
+// Member Summary — hybrid: journal-based + ship-type fallback
 // ============================================================
 
-func computeMemberSummary(members []CorpMember, now time.Time) MemberSummary {
+func computeMemberSummary(members []CorpMember, journal []CorpJournalEntry, now time.Time) MemberSummary {
 	s := MemberSummary{TotalMembers: len(members)}
 
 	day7 := now.AddDate(0, 0, -7)
 	day30 := now.AddDate(0, 0, -30)
+
+	// Build journal-based categorization map: charID -> category
+	journalCats := journalBasedCategories(journal)
 
 	for _, m := range members {
 		if m.LastLogin == "" {
@@ -362,18 +461,37 @@ func computeMemberSummary(members []CorpMember, now time.Time) MemberSummary {
 			s.Inactive30d++
 		}
 
-		// Categorize by ship type (rough heuristic)
+		// First try journal-based categorization (more accurate)
+		if cat, ok := journalCats[m.CharacterID]; ok {
+			switch cat {
+			case "miner":
+				s.Miners++
+			case "ratter":
+				s.Ratters++
+			case "trader":
+				s.Traders++
+			case "industrialist":
+				s.Industrialists++
+			case "pvper":
+				s.PvPers++
+			default:
+				s.Other++
+			}
+			continue
+		}
+
+		// Fallback: categorize by ship type (rough heuristic)
 		shipName := strings.ToLower(m.ShipName)
 		switch {
-		case containsAny(shipName, "hulk", "covetor", "procurer", "venture", "retriever", "skiff", "orca"):
+		case containsAny(shipName, "hulk", "covetor", "procurer", "venture", "retriever", "skiff", "orca", "rorqual"):
 			s.Miners++
-		case containsAny(shipName, "ishtar", "vexor", "myrmidon", "dominix", "rattlesnake", "gila", "tengu"):
+		case containsAny(shipName, "ishtar", "vexor", "myrmidon", "dominix", "rattlesnake", "gila", "tengu", "marauder", "paladin", "golem", "vargur", "kronos"):
 			s.Ratters++
-		case containsAny(shipName, "iteron", "badger", "tayra", "epithal", "noctis", "rorqual"):
+		case containsAny(shipName, "iteron", "badger", "tayra", "epithal", "noctis", "porpoise"):
 			s.Industrialists++
 		case containsAny(shipName, "capsule", "impairor", "ibis", "velator", "reaper"):
-			s.Traders++ // capsule/noob ship = probably a trader/alt
-		case containsAny(shipName, "sabre", "muninn", "scimitar", "rifter", "hurricane", "drake", "cerberus"):
+			s.Traders++
+		case containsAny(shipName, "sabre", "muninn", "scimitar", "rifter", "hurricane", "drake", "cerberus", "eagle", "onyx", "flycatcher", "interdictor"):
 			s.PvPers++
 		default:
 			s.Other++
@@ -381,6 +499,55 @@ func computeMemberSummary(members []CorpMember, now time.Time) MemberSummary {
 	}
 
 	return s
+}
+
+// journalBasedCategories analyzes journal entries to determine each member's primary role.
+// Returns charID -> role string.
+func journalBasedCategories(journal []CorpJournalEntry) map[int64]string {
+	// Track ISK by category per character
+	charCats := make(map[int64]map[string]float64)
+	for _, e := range journal {
+		if e.Amount <= 0 || e.FirstPartyID <= 0 {
+			continue
+		}
+		cat := refTypeCategory[e.RefType]
+		if cat == "" {
+			continue
+		}
+		if charCats[e.FirstPartyID] == nil {
+			charCats[e.FirstPartyID] = make(map[string]float64)
+		}
+		role := ""
+		switch cat {
+		case "bounties":
+			role = "ratter"
+		case "mining":
+			role = "miner"
+		case "market":
+			role = "trader"
+		case "industry", "pi":
+			role = "industrialist"
+		}
+		if role != "" {
+			charCats[e.FirstPartyID][role] += e.Amount
+		}
+	}
+
+	result := make(map[int64]string, len(charCats))
+	for charID, cats := range charCats {
+		best := ""
+		bestAmount := 0.0
+		for cat, amount := range cats {
+			if amount > bestAmount {
+				best = cat
+				bestAmount = amount
+			}
+		}
+		if best != "" {
+			result[charID] = best
+		}
+	}
+	return result
 }
 
 func containsAny(s string, substrs ...string) bool {
@@ -393,10 +560,10 @@ func containsAny(s string, substrs ...string) bool {
 }
 
 // ============================================================
-// Industry Summary
+// Industry Summary — with ISK estimation from price map
 // ============================================================
 
-func computeIndustrySummary(jobs []CorpIndustryJob, now time.Time) IndustrySummary {
+func computeIndustrySummary(jobs []CorpIndustryJob, prices PriceMap, now time.Time) IndustrySummary {
 	s := IndustrySummary{}
 	day30 := now.AddDate(0, 0, -30).Format(time.RFC3339)
 
@@ -426,9 +593,21 @@ func computeIndustrySummary(jobs []CorpIndustryJob, now time.Time) IndustrySumma
 	}
 
 	for _, pe := range productRuns {
+		// Estimate ISK value from price map
+		if prices != nil {
+			if p, ok := prices[pe.TypeID]; ok && p > 0 {
+				pe.EstimatedISK = p * float64(pe.Runs)
+			}
+		}
+		s.ProductionValue += pe.EstimatedISK
 		s.TopProducts = append(s.TopProducts, *pe)
 	}
+
+	// Sort by estimated ISK descending (or runs if no prices)
 	sort.Slice(s.TopProducts, func(i, j int) bool {
+		if s.TopProducts[i].EstimatedISK != s.TopProducts[j].EstimatedISK {
+			return s.TopProducts[i].EstimatedISK > s.TopProducts[j].EstimatedISK
+		}
 		return s.TopProducts[i].Runs > s.TopProducts[j].Runs
 	})
 	if len(s.TopProducts) > 10 {
@@ -439,10 +618,10 @@ func computeIndustrySummary(jobs []CorpIndustryJob, now time.Time) IndustrySumma
 }
 
 // ============================================================
-// Mining Summary
+// Mining Summary — with ISK estimation from price map
 // ============================================================
 
-func computeMiningSummary(entries []CorpMiningEntry) MiningSummary {
+func computeMiningSummary(entries []CorpMiningEntry, prices PriceMap) MiningSummary {
 	s := MiningSummary{}
 
 	minerSet := make(map[int64]bool)
@@ -466,17 +645,26 @@ func computeMiningSummary(entries []CorpMiningEntry) MiningSummary {
 	s.ActiveMiners = len(minerSet)
 
 	for _, oe := range oreMap {
+		// Estimate ISK from price map (adjusted price per unit)
+		if prices != nil {
+			if p, ok := prices[oe.TypeID]; ok && p > 0 {
+				oe.EstimatedISK = p * float64(oe.Quantity)
+			}
+		}
+		s.EstimatedISK += oe.EstimatedISK
 		s.TopOres = append(s.TopOres, *oe)
 	}
+
+	// Sort by ISK descending (or volume if no prices)
 	sort.Slice(s.TopOres, func(i, j int) bool {
+		if s.TopOres[i].EstimatedISK != s.TopOres[j].EstimatedISK {
+			return s.TopOres[i].EstimatedISK > s.TopOres[j].EstimatedISK
+		}
 		return s.TopOres[i].Quantity > s.TopOres[j].Quantity
 	})
 	if len(s.TopOres) > 10 {
 		s.TopOres = s.TopOres[:10]
 	}
-
-	// Rough ISK estimate: ~10 ISK per unit average (simplified)
-	s.EstimatedISK = float64(s.TotalVolume30d) * 10
 
 	return s
 }

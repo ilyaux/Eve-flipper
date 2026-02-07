@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -283,22 +284,48 @@ func (c *Client) GetJSON(url string, dst interface{}) error {
 	return lastErr
 }
 
-// GetPaginated fetches all pages from a paginated ESI endpoint.
+// GetPaginated fetches all pages from a paginated ESI endpoint (unauthenticated).
 func (c *Client) GetPaginated(url string) ([]json.RawMessage, error) {
+	return c.getPaginatedInternal(url, "")
+}
+
+// AuthGetPaginated fetches all pages from a paginated ESI endpoint with an access token.
+// Required for authenticated endpoints like corp journal and corp orders.
+func (c *Client) AuthGetPaginated(url, accessToken string) ([]json.RawMessage, error) {
+	return c.getPaginatedInternal(url, accessToken)
+}
+
+// getPaginatedInternal is the shared implementation for paginated fetches.
+// If accessToken is non-empty, it is sent as a Bearer token.
+func (c *Client) getPaginatedInternal(url, accessToken string) ([]json.RawMessage, error) {
 	c.sem <- struct{}{}
 
-	req, err := http.NewRequest("GET", url+"&page=1", nil)
+	sep := "&"
+	if !strings.Contains(url, "?") {
+		sep = "?"
+	}
+	req, err := http.NewRequest("GET", url+sep+"page=1", nil)
 	if err != nil {
 		<-c.sem
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "eve-flipper/1.0 (github.com)")
 	req.Header.Set("Accept", "application/json")
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		<-c.sem
 		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		<-c.sem
+		return nil, fmt.Errorf("ESI paginated %d: %s", resp.StatusCode, string(body))
 	}
 
 	totalPages := 1
@@ -325,10 +352,15 @@ func (c *Client) GetPaginated(url string) ([]json.RawMessage, error) {
 	results := make(chan pageResult, totalPages-1)
 	for p := 2; p <= totalPages; p++ {
 		go func(pageNum int) {
+			pageURL := fmt.Sprintf("%s%spage=%d", url, sep, pageNum)
 			var data []json.RawMessage
-			pageURL := fmt.Sprintf("%s&page=%d", url, pageNum)
-			err := c.GetJSON(pageURL, &data)
-			results <- pageResult{page: pageNum, data: data, err: err}
+			var fetchErr error
+			if accessToken != "" {
+				fetchErr = c.AuthGetJSON(pageURL, accessToken, &data)
+			} else {
+				fetchErr = c.GetJSON(pageURL, &data)
+			}
+			results <- pageResult{page: pageNum, data: data, err: fetchErr}
 		}(p)
 	}
 
@@ -337,6 +369,7 @@ func (c *Client) GetPaginated(url string) ([]json.RawMessage, error) {
 	for i := 0; i < totalPages-1; i++ {
 		r := <-results
 		if r.err != nil {
+			log.Printf("[ESI] Paginated page %d failed: %v", r.page, r.err)
 			continue
 		}
 		all = append(all, r.data...)

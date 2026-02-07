@@ -191,10 +191,11 @@ type IndustrySummary struct {
 
 // ProductEntry represents a product being manufactured.
 type ProductEntry struct {
-	TypeID   int32  `json:"type_id"`
-	TypeName string `json:"type_name"`
-	Runs     int32  `json:"runs"`
-	Jobs     int    `json:"jobs"`
+	TypeID       int32   `json:"type_id"`
+	TypeName     string  `json:"type_name"`
+	Runs         int32   `json:"runs"`
+	Jobs         int     `json:"jobs"`
+	EstimatedISK float64 `json:"estimated_isk,omitempty"` // runs × adjusted price
 }
 
 // MiningSummary holds aggregated mining stats.
@@ -207,9 +208,10 @@ type MiningSummary struct {
 
 // OreEntry represents a mined ore type.
 type OreEntry struct {
-	TypeID   int32  `json:"type_id"`
-	TypeName string `json:"type_name"`
-	Quantity int64  `json:"quantity"`
+	TypeID       int32   `json:"type_id"`
+	TypeName     string  `json:"type_name"`
+	Quantity     int64   `json:"quantity"`
+	EstimatedISK float64 `json:"estimated_isk,omitempty"` // quantity × adjusted price
 }
 
 // MarketSummary holds aggregated market order stats.

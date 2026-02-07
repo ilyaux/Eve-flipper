@@ -28,6 +28,45 @@ func NewDemoCorpProvider() *DemoCorpProvider {
 
 func (d *DemoCorpProvider) IsDemo() bool { return true }
 
+// DemoPrices returns a PriceMap with approximate adjusted prices for demo items.
+func (d *DemoCorpProvider) DemoPrices() PriceMap {
+	prices := make(PriceMap)
+	// Ore prices
+	for _, ore := range miningOres {
+		prices[ore.typeID] = ore.iskPerUnit
+	}
+	// Industry product prices (approximate)
+	for _, prod := range industryProducts {
+		switch prod.productName {
+		case "Drake":
+			prices[prod.productID] = 55_000_000
+		case "Muninn":
+			prices[prod.productID] = 220_000_000
+		case "Sabre":
+			prices[prod.productID] = 55_000_000
+		case "Scimitar":
+			prices[prod.productID] = 275_000_000
+		case "Rifter":
+			prices[prod.productID] = 450_000
+		case "Hurricane":
+			prices[prod.productID] = 70_000_000
+		case "Noctis":
+			prices[prod.productID] = 50_000_000
+		case "Antimatter Charge S":
+			prices[prod.productID] = 50
+		case "Scourge Heavy Missile":
+			prices[prod.productID] = 300
+		case "100MN Afterburner II":
+			prices[prod.productID] = 4_500_000
+		}
+	}
+	// Trade item prices
+	for _, item := range tradeItems {
+		prices[item.typeID] = (item.minPrice + item.maxPrice) / 2
+	}
+	return prices
+}
+
 func (d *DemoCorpProvider) GetInfo() CorpInfo {
 	return CorpInfo{
 		CorporationID: 98000042,
@@ -597,20 +636,21 @@ func (d *DemoCorpProvider) GetIndustryJobs() ([]CorpIndustryJob, error) {
 // ============================================================
 
 var miningOres = []struct {
-	typeID int32
-	name   string
+	typeID   int32
+	name     string
+	iskPerUnit float64 // approximate adjusted price for demo ISK estimation
 }{
-	{1230, "Veldspar"},
-	{1228, "Scordite"},
-	{1224, "Kernite"},
-	{1232, "Omber"},
-	{1227, "Dark Ochre"},
-	{1226, "Spodumain"},
-	{1223, "Bistot"},
-	{1229, "Crokite"},
-	{11396, "Mercoxit"},
-	{46676, "Rakovene"},
-	{46678, "Bezdnacine"},
+	{1230, "Veldspar", 4.5},
+	{1228, "Scordite", 8.0},
+	{1224, "Kernite", 45.0},
+	{1232, "Omber", 35.0},
+	{1227, "Dark Ochre", 80.0},
+	{1226, "Spodumain", 120.0},
+	{1223, "Bistot", 150.0},
+	{1229, "Crokite", 180.0},
+	{11396, "Mercoxit", 14000.0},
+	{46676, "Rakovene", 200.0},
+	{46678, "Bezdnacine", 250.0},
 }
 
 func (d *DemoCorpProvider) GetMiningLedger() ([]CorpMiningEntry, error) {

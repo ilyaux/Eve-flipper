@@ -840,12 +840,14 @@ export interface ProductEntry {
   type_name: string;
   runs: number;
   jobs: number;
+  estimated_isk?: number;
 }
 
 export interface OreEntry {
   type_id: number;
   type_name: string;
   quantity: number;
+  estimated_isk?: number;
 }
 
 export interface IndustrySummary {

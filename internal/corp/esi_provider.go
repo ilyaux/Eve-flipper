@@ -98,7 +98,7 @@ func (e *ESICorpProvider) fetchDivisionNames() map[int]string {
 
 func (e *ESICorpProvider) GetJournal(division int, days int) ([]CorpJournalEntry, error) {
 	url := fmt.Sprintf("https://esi.evetech.net/latest/corporations/%d/wallets/%d/journal/?datasource=tranquility", e.corporationID, division)
-	rawPages, err := e.client.GetPaginated(url)
+	rawPages, err := e.client.AuthGetPaginated(url, e.accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("corp journal div %d: %w", division, err)
 	}
@@ -372,7 +372,7 @@ func (e *ESICorpProvider) GetMiningLedger() ([]CorpMiningEntry, error) {
 
 func (e *ESICorpProvider) GetOrders() ([]CorpMarketOrder, error) {
 	url := fmt.Sprintf("https://esi.evetech.net/latest/corporations/%d/orders/?datasource=tranquility", e.corporationID)
-	rawPages, err := e.client.GetPaginated(url)
+	rawPages, err := e.client.AuthGetPaginated(url, e.accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("corp orders: %w", err)
 	}

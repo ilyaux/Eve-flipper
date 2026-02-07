@@ -191,6 +191,52 @@ function OverviewSection({
         </div>
       </div>
 
+      {/* Industry + Mining + Market summary cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Industry */}
+        <button onClick={() => setTab("industry")} className="bg-eve-panel border border-eve-border rounded-sm p-4 text-left hover:border-eve-accent/50 transition-colors">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("corpIndustry")}</div>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-lg font-bold text-eve-accent">{dashboard.industry_summary.active_jobs}</div>
+              <div className="text-[10px] text-eve-dim">{t("corpActiveJobs")}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-bold text-eve-profit">{formatIsk(dashboard.industry_summary.production_value)} ISK</div>
+              <div className="text-[10px] text-eve-dim">{t("corpCompletedJobs")}: {dashboard.industry_summary.completed_jobs_30d}</div>
+            </div>
+          </div>
+        </button>
+        {/* Mining */}
+        <button onClick={() => setTab("mining")} className="bg-eve-panel border border-eve-border rounded-sm p-4 text-left hover:border-eve-accent/50 transition-colors">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("corpMining")}</div>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-lg font-bold text-eve-accent">{dashboard.mining_summary.active_miners}</div>
+              <div className="text-[10px] text-eve-dim">{t("corpActiveMiners")}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-bold text-eve-profit">{formatIsk(dashboard.mining_summary.estimated_isk)} ISK</div>
+              <div className="text-[10px] text-eve-dim">{dashboard.mining_summary.total_volume_30d.toLocaleString()} units</div>
+            </div>
+          </div>
+        </button>
+        {/* Market */}
+        <button onClick={() => setTab("market")} className="bg-eve-panel border border-eve-border rounded-sm p-4 text-left hover:border-eve-accent/50 transition-colors">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("corpMarket")}</div>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-lg font-bold text-eve-accent">{dashboard.market_summary.unique_traders}</div>
+              <div className="text-[10px] text-eve-dim">{t("corpUniqueTraders")}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-bold text-eve-profit">{formatIsk(dashboard.market_summary.total_sell_value)} ISK</div>
+              <div className="text-[10px] text-eve-dim">{dashboard.market_summary.active_buy_orders + dashboard.market_summary.active_sell_orders} {t("corpOrders").toLowerCase()}</div>
+            </div>
+          </div>
+        </button>
+      </div>
+
       {/* Top Contributors */}
       <div className="bg-eve-panel border border-eve-border rounded-sm p-4">
         <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-3">{t("corpTopContributors")}</div>
@@ -708,6 +754,26 @@ function IndustrySection({
           </div>
         )}
       </div>
+
+      {/* Top Products */}
+      {ind.top_products && ind.top_products.length > 0 && (
+        <div className="bg-eve-panel border border-eve-border rounded-sm p-4">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-3">{t("corpTopProducts")}</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {ind.top_products.slice(0, 10).map((p) => (
+              <div key={p.type_id} className="bg-eve-dark/50 border border-eve-border/50 rounded-sm p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <img src={`https://images.evetech.net/types/${p.type_id}/icon?size=32`} alt="" className="w-5 h-5" />
+                  <span className="text-xs text-eve-text font-medium truncate">{p.type_name}</span>
+                </div>
+                <div className="text-xs text-eve-accent font-bold">{p.runs} runs</div>
+                <div className="text-[10px] text-eve-dim">{p.jobs} jobs</div>
+                {p.estimated_isk ? <div className="text-[10px] text-eve-profit font-mono">{formatIsk(p.estimated_isk)} ISK</div> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -733,7 +799,7 @@ function MiningSection({
   const [search, setSearch] = useState("");
   const [days, setDays] = useState(30);
   const [expandedMiner, setExpandedMiner] = useState<number | null>(null);
-  const [sortKey, setSortKey] = useState<"name" | "volume" | "types" | "last">("volume");
+  const [sortKey, setSortKey] = useState<"name" | "volume" | "types" | "isk" | "last">("volume");
   const [sortAsc, setSortAsc] = useState(false);
 
   useEffect(() => {
@@ -753,17 +819,30 @@ function MiningSection({
     return list;
   }, [entries, cutoff]);
 
+  // Build ore ISK lookup from mining summary top_ores (which now have estimated_isk)
+  const oreIskPerUnit = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const ore of mining.top_ores) {
+      if (ore.estimated_isk && ore.quantity > 0) {
+        m.set(ore.type_id, ore.estimated_isk / ore.quantity);
+      }
+    }
+    return m;
+  }, [mining.top_ores]);
+
   // Aggregate by miner
   const minerAgg = useMemo(() => {
-    const map = new Map<number, { id: number; name: string; volume: number; types: Set<string>; lastDate: string }>();
+    const map = new Map<number, { id: number; name: string; volume: number; isk: number; types: Set<string>; lastDate: string }>();
     filteredEntries.forEach(e => {
+      const unitIsk = oreIskPerUnit.get(e.type_id) || 0;
       const existing = map.get(e.character_id);
       if (existing) {
         existing.volume += e.quantity;
+        existing.isk += e.quantity * unitIsk;
         existing.types.add(e.type_name);
         if (e.date > existing.lastDate) existing.lastDate = e.date;
       } else {
-        map.set(e.character_id, { id: e.character_id, name: e.character_name || `Miner ${e.character_id}`, volume: e.quantity, types: new Set([e.type_name]), lastDate: e.date });
+        map.set(e.character_id, { id: e.character_id, name: e.character_name || `Miner ${e.character_id}`, volume: e.quantity, isk: e.quantity * unitIsk, types: new Set([e.type_name]), lastDate: e.date });
       }
     });
     let miners = Array.from(map.values());
@@ -777,12 +856,13 @@ function MiningSection({
         case "name": cmp = a.name.localeCompare(b.name); break;
         case "volume": cmp = a.volume - b.volume; break;
         case "types": cmp = a.types.size - b.types.size; break;
+        case "isk": cmp = a.isk - b.isk; break;
         case "last": cmp = a.lastDate.localeCompare(b.lastDate); break;
       }
       return sortAsc ? cmp : -cmp;
     });
     return miners;
-  }, [filteredEntries, search, sortKey, sortAsc]);
+  }, [filteredEntries, oreIskPerUnit, search, sortKey, sortAsc]);
 
   // Daily volume trend
   const dailyTrend = useMemo(() => {
@@ -848,6 +928,7 @@ function MiningSection({
                   <SortHeader label={t("corpMiner")} field="name" />
                   <SortHeader label={t("corpTotalVolumeMined")} field="volume" />
                   <SortHeader label={t("corpTypesMined")} field="types" />
+                  <SortHeader label="Est. ISK" field="isk" />
                   <SortHeader label={t("corpLastActive")} field="last" />
                 </tr>
               </thead>
@@ -862,6 +943,7 @@ function MiningSection({
                     </td>
                     <td className="px-2 py-1.5 text-eve-accent font-mono text-right">{m.volume.toLocaleString()}</td>
                     <td className="px-2 py-1.5 text-eve-dim text-right">{m.types.size}</td>
+                    <td className="px-2 py-1.5 text-eve-profit font-mono text-right">{m.isk > 0 ? formatIsk(m.isk) : "—"}</td>
                     <td className="px-2 py-1.5 text-eve-dim">{m.lastDate}</td>
                   </tr>
                 ))}
@@ -882,21 +964,26 @@ function MiningSection({
                   <th className="px-2 py-1.5 text-left">Date</th>
                   <th className="px-2 py-1.5 text-left">{t("corpOreType")}</th>
                   <th className="px-2 py-1.5 text-right">{t("corpQuantity")}</th>
+                  <th className="px-2 py-1.5 text-right">Est. ISK</th>
                 </tr>
               </thead>
               <tbody>
-                {minerEntries.slice(0, 100).map((e, i) => (
-                  <tr key={i} className="border-t border-eve-border/30">
-                    <td className="px-2 py-1 text-eve-dim">{e.date}</td>
-                    <td className="px-2 py-1 text-eve-text">
-                      <div className="flex items-center gap-1.5">
-                        <img src={`https://images.evetech.net/types/${e.type_id}/icon?size=32`} alt="" className="w-4 h-4" />
-                        {e.type_name}
-                      </div>
-                    </td>
-                    <td className="px-2 py-1 text-eve-accent text-right font-mono">{e.quantity.toLocaleString()}</td>
-                  </tr>
-                ))}
+                {minerEntries.slice(0, 100).map((e, i) => {
+                  const unitIsk = oreIskPerUnit.get(e.type_id) || 0;
+                  return (
+                    <tr key={i} className="border-t border-eve-border/30">
+                      <td className="px-2 py-1 text-eve-dim">{e.date}</td>
+                      <td className="px-2 py-1 text-eve-text">
+                        <div className="flex items-center gap-1.5">
+                          <img src={`https://images.evetech.net/types/${e.type_id}/icon?size=32`} alt="" className="w-4 h-4" />
+                          {e.type_name}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 text-eve-accent text-right font-mono">{e.quantity.toLocaleString()}</td>
+                      <td className="px-2 py-1 text-eve-profit text-right font-mono">{unitIsk > 0 ? formatIsk(e.quantity * unitIsk) : "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
