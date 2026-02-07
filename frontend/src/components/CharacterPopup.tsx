@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Modal } from "./Modal";
-import { getCharacterInfo, getUndercuts, getPortfolioPnL } from "../lib/api";
+import { getCharacterInfo, getUndercuts, getPortfolioPnL, getPortfolioOptimization, type OptimizerResult } from "../lib/api";
 import { useI18n, type TranslationKey } from "../lib/i18n";
-import type { CharacterInfo, CharacterOrder, HistoricalOrder, PortfolioPnL, ItemPnL, UndercutStatus, WalletTransaction } from "../lib/types";
+import type { CharacterInfo, CharacterOrder, HistoricalOrder, PortfolioPnL, ItemPnL, StationPnL, UndercutStatus, WalletTransaction, AssetStats, AllocationSuggestion } from "../lib/types";
 
 interface CharacterPopupProps {
   open: boolean;
@@ -11,7 +11,7 @@ interface CharacterPopupProps {
   characterName: string;
 }
 
-type CharTab = "overview" | "orders" | "history" | "transactions" | "pnl" | "risk";
+type CharTab = "overview" | "orders" | "history" | "transactions" | "pnl" | "risk" | "optimizer";
 
 export function CharacterPopup({ open, onClose, characterId, characterName }: CharacterPopupProps) {
   const { t } = useI18n();
@@ -72,6 +72,7 @@ export function CharacterPopup({ open, onClose, characterId, characterName }: Ch
             <TabBtn active={tab === "transactions"} onClick={() => setTab("transactions")} label={`${t("charTransactions")} (${data?.transactions?.length ?? 0})`} />
             <TabBtn active={tab === "pnl"} onClick={() => setTab("pnl")} label={t("charPnlTab")} />
             <TabBtn active={tab === "risk"} onClick={() => setTab("risk")} label={t("charRiskTab")} />
+            <TabBtn active={tab === "optimizer"} onClick={() => setTab("optimizer")} label={t("charOptimizerTab")} />
           </div>
           {/* Refresh button */}
           <button
@@ -130,6 +131,9 @@ export function CharacterPopup({ open, onClose, characterId, characterName }: Ch
                   formatIsk={formatIsk}
                   t={t}
                 />
+              )}
+              {tab === "optimizer" && (
+                <OptimizerTab formatIsk={formatIsk} t={t} />
               )}
             </>
           )}
@@ -247,8 +251,9 @@ function PnLTab({ formatIsk, t }: PnLTabProps) {
   const [data, setData] = useState<PortfolioPnL | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chartMode, setChartMode] = useState<"daily" | "cumulative">("daily");
+  const [chartMode, setChartMode] = useState<"daily" | "cumulative" | "drawdown">("daily");
   const [itemView, setItemView] = useState<"profit" | "loss">("profit");
+  const [bottomView, setBottomView] = useState<"items" | "stations">("items");
 
   useEffect(() => {
     setLoading(true);
@@ -359,11 +364,39 @@ function PnLTab({ formatIsk, t }: PnLTabProps) {
         />
       </div>
 
+      {/* Summary cards row 3: Sharpe, Max DD, Profit Factor, Expectancy */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard
+          label={t("pnlSharpeRatio")}
+          value={(summary.sharpe_ratio ?? 0) !== 0 ? (summary.sharpe_ratio ?? 0).toFixed(2) : "—"}
+          subvalue={t("pnlSharpeHint")}
+          color={(summary.sharpe_ratio ?? 0) > 1 ? "text-eve-profit" : (summary.sharpe_ratio ?? 0) > 0 ? "text-eve-accent" : "text-eve-error"}
+        />
+        <StatCard
+          label={t("pnlMaxDrawdown")}
+          value={(summary.max_drawdown_isk ?? 0) > 0 ? `-${formatIsk(summary.max_drawdown_isk ?? 0)} ISK` : "—"}
+          subvalue={(summary.max_drawdown_pct ?? 0) > 0 ? `-${(summary.max_drawdown_pct ?? 0).toFixed(1)}% (${summary.max_drawdown_days ?? 0}d)` : undefined}
+          color="text-eve-error"
+        />
+        <StatCard
+          label={t("pnlProfitFactor")}
+          value={(summary.profit_factor ?? 0) > 0 ? (summary.profit_factor ?? 0).toFixed(2) : "—"}
+          subvalue={t("pnlProfitFactorHint")}
+          color={(summary.profit_factor ?? 0) >= 1.5 ? "text-eve-profit" : (summary.profit_factor ?? 0) >= 1 ? "text-eve-accent" : "text-eve-error"}
+        />
+        <StatCard
+          label={t("pnlExpectancy")}
+          value={`${(summary.expectancy_per_trade ?? 0) >= 0 ? "+" : ""}${formatIsk(summary.expectancy_per_trade ?? 0)} ISK`}
+          subvalue={t("pnlExpectancyHint")}
+          color={(summary.expectancy_per_trade ?? 0) >= 0 ? "text-eve-profit" : "text-eve-error"}
+        />
+      </div>
+
       {/* Daily P&L Chart */}
       <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
         <div className="flex items-center justify-between mb-3">
           <div className="text-[10px] text-eve-dim uppercase tracking-wider">
-            {chartMode === "daily" ? t("pnlDailyChart") : t("pnlCumulativeChart")}
+            {chartMode === "daily" ? t("pnlDailyChart") : chartMode === "cumulative" ? t("pnlCumulativeChart") : t("pnlDrawdownChart")}
           </div>
           <div className="flex gap-1">
             <button
@@ -386,43 +419,84 @@ function PnLTab({ formatIsk, t }: PnLTabProps) {
             >
               {t("pnlCumulativeChart")}
             </button>
+            <button
+              onClick={() => setChartMode("drawdown")}
+              className={`px-2 py-0.5 text-[10px] rounded-sm border transition-colors ${
+                chartMode === "drawdown"
+                  ? "bg-red-500/20 border-red-500 text-red-400"
+                  : "bg-eve-dark border-eve-border text-eve-dim hover:text-eve-text"
+              }`}
+            >
+              {t("pnlDrawdownChart")}
+            </button>
           </div>
         </div>
         <PnLChart data={data.daily_pnl} mode={chartMode} formatIsk={formatIsk} />
       </div>
 
-      {/* Top Items */}
+      {/* Top Items / Station Breakdown */}
       <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] text-eve-dim uppercase tracking-wider">{t("pnlTopItems")}</div>
-          <div className="flex gap-1">
+          <div className="flex gap-2">
             <button
-              onClick={() => setItemView("profit")}
+              onClick={() => setBottomView("items")}
               className={`px-2 py-0.5 text-[10px] rounded-sm border transition-colors ${
-                itemView === "profit"
-                  ? "bg-emerald-500/20 border-emerald-500 text-emerald-400"
+                bottomView === "items"
+                  ? "bg-eve-accent/20 border-eve-accent text-eve-accent"
                   : "bg-eve-dark border-eve-border text-eve-dim hover:text-eve-text"
               }`}
             >
-              {t("pnlTopProfit")} ({profitItems.length})
+              {t("pnlTopItems")}
             </button>
             <button
-              onClick={() => setItemView("loss")}
+              onClick={() => setBottomView("stations")}
               className={`px-2 py-0.5 text-[10px] rounded-sm border transition-colors ${
-                itemView === "loss"
-                  ? "bg-red-500/20 border-red-500 text-red-400"
+                bottomView === "stations"
+                  ? "bg-eve-accent/20 border-eve-accent text-eve-accent"
                   : "bg-eve-dark border-eve-border text-eve-dim hover:text-eve-text"
               }`}
             >
-              {t("pnlTopLoss")} ({lossItems.length})
+              {t("pnlStationBreakdown")} ({data.top_stations?.length ?? 0})
             </button>
           </div>
+          {bottomView === "items" && (
+            <div className="flex gap-1">
+              <button
+                onClick={() => setItemView("profit")}
+                className={`px-2 py-0.5 text-[10px] rounded-sm border transition-colors ${
+                  itemView === "profit"
+                    ? "bg-emerald-500/20 border-emerald-500 text-emerald-400"
+                    : "bg-eve-dark border-eve-border text-eve-dim hover:text-eve-text"
+                }`}
+              >
+                {t("pnlTopProfit")} ({profitItems.length})
+              </button>
+              <button
+                onClick={() => setItemView("loss")}
+                className={`px-2 py-0.5 text-[10px] rounded-sm border transition-colors ${
+                  itemView === "loss"
+                    ? "bg-red-500/20 border-red-500 text-red-400"
+                    : "bg-eve-dark border-eve-border text-eve-dim hover:text-eve-text"
+                }`}
+              >
+                {t("pnlTopLoss")} ({lossItems.length})
+              </button>
+            </div>
+          )}
         </div>
-        <PnLItemsTable
-          items={itemView === "profit" ? profitItems : lossItems}
-          formatIsk={formatIsk}
-          t={t}
-        />
+        {bottomView === "items" ? (
+          <PnLItemsTable
+            items={itemView === "profit" ? profitItems : lossItems}
+            formatIsk={formatIsk}
+            t={t}
+          />
+        ) : (
+          <PnLStationsTable
+            stations={data.top_stations ?? []}
+            formatIsk={formatIsk}
+            t={t}
+          />
+        )}
       </div>
     </div>
   );
@@ -436,12 +510,14 @@ function PnLChart({
   formatIsk,
 }: {
   data: PortfolioPnL["daily_pnl"];
-  mode: "daily" | "cumulative";
+  mode: "daily" | "cumulative" | "drawdown";
   formatIsk: (v: number) => string;
 }) {
   if (data.length === 0) return null;
 
-  const values = data.map((d) => (mode === "daily" ? d.net_pnl : d.cumulative_pnl));
+  const values = data.map((d) =>
+    mode === "daily" ? d.net_pnl : mode === "cumulative" ? d.cumulative_pnl : (d.drawdown_pct ?? 0)
+  );
   const maxAbs = Math.max(...values.map(Math.abs), 1);
 
   // For cumulative mode, compute range from min to max.
@@ -468,7 +544,35 @@ function PnLChart({
     <div className="relative">
       {/* Chart area */}
       <div className="relative" style={{ height: chartHeight }}>
-        {mode === "daily" ? (
+        {mode === "drawdown" ? (
+          /* Drawdown mode: all bars go downward from top (0%) */
+          <div className="flex items-start justify-center gap-px h-full">
+            {sampled.map((entry, i) => {
+              const val = sampledValues[i]; // always <= 0
+              const absMin = Math.max(...values.map((v) => Math.abs(v)), 1);
+              const barH = Math.max(1, (Math.abs(val) / absMin) * (chartHeight - 8));
+              return (
+                <div
+                  key={entry.date}
+                  className="relative group"
+                  style={{ width: barWidth, height: chartHeight }}
+                >
+                  <div
+                    className="bg-red-500/60 hover:bg-red-400/80 transition-colors rounded-b-[1px]"
+                    style={{ width: barWidth, height: barH }}
+                  />
+                  {/* Tooltip */}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10 pointer-events-none">
+                    <div className="bg-eve-dark border border-eve-border rounded px-2 py-1 text-[10px] whitespace-nowrap shadow-lg">
+                      <div className="text-eve-dim">{entry.date}</div>
+                      <div className="text-red-400">{val.toFixed(1)}%</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : mode === "daily" ? (
           /* Daily mode: bars grow from the center line */
           <div className="flex items-end justify-center gap-px h-full">
             {sampled.map((entry, i) => {
@@ -591,11 +695,15 @@ function PnLChart({
       {/* Y-axis labels */}
       <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between pointer-events-none" style={{ width: 0 }}>
         <span className="text-[9px] text-eve-dim -translate-x-full pr-1">
-          +{formatIsk(mode === "daily" ? maxAbs : maxVal)}
+          {mode === "drawdown" ? "0%" : `+${formatIsk(mode === "daily" ? maxAbs : maxVal)}`}
         </span>
-        <span className="text-[9px] text-eve-dim -translate-x-full pr-1">0</span>
         <span className="text-[9px] text-eve-dim -translate-x-full pr-1">
-          {mode === "daily" ? `-${formatIsk(maxAbs)}` : `${formatIsk(minVal)}`}
+          {mode === "drawdown" ? "" : "0"}
+        </span>
+        <span className="text-[9px] text-eve-dim -translate-x-full pr-1">
+          {mode === "drawdown"
+            ? `${Math.min(...values).toFixed(1)}%`
+            : mode === "daily" ? `-${formatIsk(maxAbs)}` : `${formatIsk(minVal)}`}
         </span>
       </div>
     </div>
@@ -684,6 +792,600 @@ function PnLItemsTable({
           {t("andMore", { count: items.length - 20 })}
         </div>
       )}
+    </div>
+  );
+}
+
+// --- P&L Stations Table ---
+
+function PnLStationsTable({
+  stations,
+  formatIsk,
+  t,
+}: {
+  stations: StationPnL[];
+  formatIsk: (v: number) => string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  if (stations.length === 0) {
+    return <div className="text-center text-eve-dim text-xs py-4">{t("pnlNoData")}</div>;
+  }
+
+  const maxAbsPnl = Math.max(...stations.map((s) => Math.abs(s.net_pnl)), 1);
+
+  return (
+    <div className="border border-eve-border rounded-sm overflow-hidden">
+      <table className="w-full text-xs">
+        <thead className="bg-eve-panel">
+          <tr className="text-eve-dim">
+            <th className="px-3 py-2 text-left">{t("pnlStationName")}</th>
+            <th className="px-3 py-2 text-right">{t("pnlStationPnl")}</th>
+            <th className="px-3 py-2 text-right">{t("pnlStationBought")}</th>
+            <th className="px-3 py-2 text-right">{t("pnlStationSold")}</th>
+            <th className="px-3 py-2 text-right">{t("pnlStationTxns")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stations.map((st) => {
+            const isProfit = st.net_pnl >= 0;
+            const barPct = (Math.abs(st.net_pnl) / maxAbsPnl) * 100;
+
+            return (
+              <tr key={st.location_id} className="border-t border-eve-border/50 hover:bg-eve-panel/50">
+                <td className="px-3 py-2 text-eve-text max-w-[220px] truncate" title={st.location_name}>
+                  {st.location_name || `#${st.location_id}`}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <div className="w-16 h-1.5 bg-eve-dark rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${isProfit ? "bg-emerald-500" : "bg-red-500"}`}
+                        style={{ width: `${barPct}%` }}
+                      />
+                    </div>
+                    <span className={isProfit ? "text-eve-profit" : "text-eve-error"}>
+                      {isProfit ? "+" : ""}{formatIsk(st.net_pnl)}
+                    </span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right text-eve-dim">{formatIsk(st.total_bought)}</td>
+                <td className="px-3 py-2 text-right text-eve-dim">{formatIsk(st.total_sold)}</td>
+                <td className="px-3 py-2 text-right text-eve-dim">{st.transactions}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// --- Optimizer Tab ---
+
+type OptPeriod = 30 | 90 | 180;
+
+interface OptimizerTabProps {
+  formatIsk: (v: number) => string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}
+
+function OptimizerTab({ formatIsk, t }: OptimizerTabProps) {
+  const [period, setPeriod] = useState<OptPeriod>(90);
+  const [result, setResult] = useState<OptimizerResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setFetchError(null);
+    getPortfolioOptimization(period)
+      .then(setResult)
+      .catch((e) => setFetchError(e.message))
+      .finally(() => setLoading(false));
+  }, [period]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full text-eve-dim text-xs">
+        <span className="inline-block w-4 h-4 border-2 border-eve-accent/40 border-t-eve-accent rounded-full animate-spin mr-2" />
+        {t("optLoading")}
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-xs space-y-2">
+        <div className="text-eve-error">{fetchError}</div>
+      </div>
+    );
+  }
+
+  // Diagnostic view: show details when optimization can't run.
+  if (result && !result.ok) {
+    const diag = result.diagnostic;
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-xs space-y-4 px-4">
+        <div className="text-eve-dim text-sm">{t("optNoData")}</div>
+
+        {diag ? (
+          <div className="bg-eve-panel border border-eve-border rounded-sm p-4 max-w-lg w-full space-y-3">
+            <div className="text-[10px] text-eve-accent uppercase tracking-wider mb-2">{t("optDiagTitle")}</div>
+
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[11px]">
+              <span className="text-eve-dim">{t("optDiagTotalTxns")}</span>
+              <span className="text-eve-text text-right">{diag.total_transactions}</span>
+              <span className="text-eve-dim">{t("optDiagWithinLookback")}</span>
+              <span className="text-eve-text text-right">{diag.within_lookback}</span>
+              <span className="text-eve-dim">{t("optDiagUniqueDays")}</span>
+              <span className={`text-right ${diag.unique_days < diag.min_days_required ? "text-eve-error" : "text-eve-text"}`}>
+                {diag.unique_days}
+              </span>
+              <span className="text-eve-dim">{t("optDiagUniqueItems")}</span>
+              <span className="text-eve-text text-right">{diag.unique_items}</span>
+              <span className="text-eve-dim">{t("optDiagQualified")}</span>
+              <span className={`text-right font-bold ${diag.qualified_items < 2 ? "text-eve-error" : "text-eve-profit"}`}>
+                {diag.qualified_items} / {t("optDiagMinRequired", { n: 2 })}
+              </span>
+              <span className="text-eve-dim">{t("optDiagMinDays")}</span>
+              <span className="text-eve-accent text-right">{diag.min_days_required} {t("optDiagDays")}</span>
+            </div>
+
+            {diag.top_items && diag.top_items.length > 0 && (
+              <div>
+                <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1.5 mt-2">{t("optDiagTopItems")}</div>
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-eve-dim border-b border-eve-border">
+                      <th className="text-left py-1 font-normal">{t("optAssetName")}</th>
+                      <th className="text-right py-1 font-normal">{t("optDiagDays")}</th>
+                      <th className="text-right py-1 font-normal">{t("optDiagTxnCount")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diag.top_items.map((item) => (
+                      <tr key={item.type_id} className="border-b border-eve-border/30">
+                        <td className="py-1 text-eve-text">{item.type_name || `#${item.type_id}`}</td>
+                        <td className={`py-1 text-right ${item.trading_days >= diag.min_days_required ? "text-eve-profit" : "text-eve-error"}`}>
+                          {item.trading_days}d
+                        </td>
+                        <td className="py-1 text-right text-eve-dim">{item.transactions}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="text-[10px] text-eve-dim text-center mt-2 border-t border-eve-border pt-2">
+              {t("optDiagExplanation")}
+            </div>
+          </div>
+        ) : (
+          <div className="text-[10px] max-w-md text-center text-eve-dim">{t("optNoDataHint")}</div>
+        )}
+      </div>
+    );
+  }
+
+  if (!result || !result.ok) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-eve-dim text-xs space-y-2">
+        <div>{t("optNoData")}</div>
+        <div className="text-[10px] max-w-md text-center">{t("optNoDataHint")}</div>
+      </div>
+    );
+  }
+
+  const data = result.data;
+
+  return (
+    <div className="space-y-4">
+      {/* Header + Period selector */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs text-eve-dim uppercase tracking-wider">{t("optTitle")}</div>
+          <div className="text-[10px] text-eve-dim mt-0.5">{t("optDesc")}</div>
+        </div>
+        <div className="flex gap-1">
+          {([30, 90, 180] as OptPeriod[]).map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-2.5 py-1 text-[10px] rounded-sm border transition-colors ${
+                period === p
+                  ? "bg-eve-accent/20 border-eve-accent text-eve-accent"
+                  : "bg-eve-panel border-eve-border text-eve-dim hover:text-eve-text hover:border-eve-accent/50"
+              }`}
+            >
+              {t(`optPeriod${p}d` as TranslationKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Portfolio comparison cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optCurrentPortfolio")}</div>
+          <div className="text-lg font-bold text-eve-text">{data.current_sharpe.toFixed(2)}</div>
+          <div className="text-xs text-eve-dim">{t("optSharpe")}</div>
+        </div>
+        <div className="bg-eve-panel border border-eve-accent/30 rounded-sm p-3">
+          <div className="text-[10px] text-eve-accent uppercase tracking-wider mb-1">{t("optOptimalPortfolio")}</div>
+          <div className="text-lg font-bold text-eve-accent">{data.optimal_sharpe.toFixed(2)}</div>
+          <div className="text-xs text-eve-dim">{t("optSharpe")}</div>
+        </div>
+        <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optMinVarPortfolio")}</div>
+          <div className="text-lg font-bold text-eve-text">{data.min_var_sharpe.toFixed(2)}</div>
+          <div className="text-xs text-eve-dim">{t("optSharpe")}</div>
+        </div>
+      </div>
+
+      {/* Diversification metrics */}
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard
+          label={t("optHHI")}
+          value={data.hhi.toFixed(3)}
+          subvalue={t("optHHIHint")}
+          color={data.hhi < 0.15 ? "text-eve-profit" : data.hhi < 0.25 ? "text-eve-accent" : "text-eve-error"}
+        />
+        <StatCard
+          label={t("optDivRatio")}
+          value={data.diversification_ratio.toFixed(2)}
+          subvalue={t("optDivRatioHint")}
+          color={data.diversification_ratio > 1.2 ? "text-eve-profit" : "text-eve-accent"}
+        />
+      </div>
+
+      {/* Efficient Frontier */}
+      {data.efficient_frontier && data.efficient_frontier.length > 0 && (
+        <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optFrontier")}</div>
+          <div className="text-[9px] text-eve-dim mb-2">{t("optFrontierHint")}</div>
+          <EfficientFrontierChart
+            frontier={data.efficient_frontier}
+            currentWeights={data.current_weights}
+            optimalWeights={data.optimal_weights}
+            minVarWeights={data.min_var_weights}
+            means={data.assets.map((a) => a.avg_daily_pnl)}
+            covApprox={data.correlation_matrix}
+            assets={data.assets}
+            formatIsk={formatIsk}
+          />
+        </div>
+      )}
+
+      {/* Correlation Matrix */}
+      {data.correlation_matrix && data.assets.length > 1 && (
+        <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optCorrelation")}</div>
+          <div className="text-[9px] text-eve-dim mb-2">{t("optCorrelationHint")}</div>
+          <CorrelationMatrix assets={data.assets} matrix={data.correlation_matrix} />
+        </div>
+      )}
+
+      {/* Asset Table */}
+      <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+        <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("optAssets")}</div>
+        <AssetTable assets={data.assets} currentWeights={data.current_weights} optimalWeights={data.optimal_weights} formatIsk={formatIsk} t={t} />
+      </div>
+
+      {/* Suggestions */}
+      {data.suggestions && data.suggestions.filter((s) => s.action !== "hold").length > 0 && (
+        <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("optSuggestions")}</div>
+          <SuggestionsPanel suggestions={data.suggestions} t={t} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Efficient Frontier Chart (CSS-based scatter plot) ---
+
+function EfficientFrontierChart({
+  frontier,
+  currentWeights,
+  optimalWeights,
+  minVarWeights,
+  means,
+  assets,
+  formatIsk,
+}: {
+  frontier: { risk: number; return: number }[];
+  currentWeights: number[];
+  optimalWeights: number[];
+  minVarWeights: number[];
+  means: number[];
+  covApprox: number[][];
+  assets: AssetStats[];
+  formatIsk: (v: number) => string;
+}) {
+  const chartW = 600;
+  const chartH = 140;
+
+  const allRisks = frontier.map((p) => p.risk);
+  const allReturns = frontier.map((p) => p.return);
+
+  const minRisk = Math.min(...allRisks) * 0.9;
+  const maxRisk = Math.max(...allRisks) * 1.1 || 1;
+  const minRet = Math.min(...allReturns) * 1.1;
+  const maxRet = Math.max(...allReturns) * 1.1 || 1;
+
+  const scaleX = (r: number) => ((r - minRisk) / (maxRisk - minRisk)) * chartW;
+  const scaleY = (ret: number) => chartH - ((ret - minRet) / (maxRet - minRet)) * chartH;
+
+  // Compute portfolio positions.
+  const portRet = (w: number[]) => w.reduce((s, wi, i) => s + wi * means[i], 0);
+  const portRisk = (w: number[]) => {
+    // Approximate: use frontier's closest return point.
+    const r = portRet(w);
+    const closest = frontier.reduce((a, b) => Math.abs(a.return - r) < Math.abs(b.return - r) ? a : b);
+    return closest.risk;
+  };
+
+  // Individual assets.
+  const assetPoints = assets.map((a) => ({ risk: a.volatility, ret: a.avg_daily_pnl, name: a.type_name }));
+
+  return (
+    <div className="relative overflow-hidden" style={{ height: chartH + 20 }}>
+      <svg width={chartW} height={chartH + 20} className="w-full" viewBox={`0 0 ${chartW} ${chartH + 20}`}>
+        {/* Frontier curve */}
+        <polyline
+          fill="none"
+          stroke="#58a6ff"
+          strokeWidth={2}
+          opacity={0.6}
+          points={frontier.map((p) => `${scaleX(p.risk)},${scaleY(p.return)}`).join(" ")}
+        />
+
+        {/* Individual assets as small dots */}
+        {assetPoints.map((a, i) => (
+          <circle
+            key={i}
+            cx={scaleX(a.risk)}
+            cy={scaleY(a.ret)}
+            r={3}
+            fill="#8b949e"
+            opacity={0.5}
+          >
+            <title>{a.name}: risk={formatIsk(a.risk)}, return={formatIsk(a.ret)}</title>
+          </circle>
+        ))}
+
+        {/* Current portfolio */}
+        <circle cx={scaleX(portRisk(currentWeights))} cy={scaleY(portRet(currentWeights))} r={6} fill="#f0883e" stroke="#f0883e" strokeWidth={2}>
+          <title>Current Portfolio</title>
+        </circle>
+
+        {/* Optimal portfolio */}
+        <circle cx={scaleX(portRisk(optimalWeights))} cy={scaleY(portRet(optimalWeights))} r={6} fill="#58a6ff" stroke="#58a6ff" strokeWidth={2}>
+          <title>Optimal (Max Sharpe)</title>
+        </circle>
+
+        {/* Min-var portfolio */}
+        <circle cx={scaleX(portRisk(minVarWeights))} cy={scaleY(portRet(minVarWeights))} r={5} fill="#3fb950" stroke="#3fb950" strokeWidth={2}>
+          <title>Minimum Variance</title>
+        </circle>
+      </svg>
+
+      {/* Legend */}
+      <div className="flex gap-4 justify-center mt-1 text-[9px]">
+        <div className="flex items-center gap-1">
+          <div className="w-2 h-2 rounded-full bg-[#f0883e]" />
+          <span className="text-eve-dim">Current</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-2 h-2 rounded-full bg-[#58a6ff]" />
+          <span className="text-eve-dim">Optimal</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-2 h-2 rounded-full bg-[#3fb950]" />
+          <span className="text-eve-dim">Min Var</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-2 h-2 rounded-full bg-[#8b949e] opacity-50" />
+          <span className="text-eve-dim">Assets</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Correlation Matrix Heatmap ---
+
+function CorrelationMatrix({ assets, matrix }: { assets: AssetStats[]; matrix: number[][] }) {
+  if (assets.length === 0) return null;
+
+  const cellSize = Math.min(28, Math.floor(600 / assets.length));
+
+  const corrColor = (v: number) => {
+    if (v >= 0.5) return "bg-emerald-500/80";
+    if (v >= 0.2) return "bg-emerald-500/40";
+    if (v >= -0.2) return "bg-eve-dim/20";
+    if (v >= -0.5) return "bg-red-500/40";
+    return "bg-red-500/80";
+  };
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="inline-flex flex-col gap-px">
+        {/* Header row */}
+        <div className="flex gap-px items-end" style={{ marginLeft: cellSize * 3 }}>
+          {assets.map((a, j) => (
+            <div
+              key={j}
+              className="text-[8px] text-eve-dim truncate text-center"
+              style={{ width: cellSize }}
+              title={a.type_name}
+            >
+              {a.type_name.slice(0, 4)}
+            </div>
+          ))}
+        </div>
+        {/* Matrix rows */}
+        {assets.map((rowAsset, i) => (
+          <div key={i} className="flex gap-px items-center">
+            <div
+              className="text-[8px] text-eve-dim truncate text-right pr-1"
+              style={{ width: cellSize * 3 }}
+              title={rowAsset.type_name}
+            >
+              {rowAsset.type_name.slice(0, 12)}
+            </div>
+            {matrix[i].map((val, j) => (
+              <div
+                key={j}
+                className={`flex items-center justify-center text-[8px] font-mono rounded-[2px] ${corrColor(val)} ${
+                  i === j ? "ring-1 ring-eve-accent/30" : ""
+                }`}
+                style={{ width: cellSize, height: cellSize }}
+                title={`${rowAsset.type_name} × ${assets[j].type_name}: ${val.toFixed(2)}`}
+              >
+                {assets.length <= 10 ? val.toFixed(1) : ""}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Asset Table ---
+
+function AssetTable({
+  assets,
+  currentWeights,
+  optimalWeights,
+  formatIsk,
+  t,
+}: {
+  assets: AssetStats[];
+  currentWeights: number[];
+  optimalWeights: number[];
+  formatIsk: (v: number) => string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div className="border border-eve-border rounded-sm overflow-hidden">
+      <table className="w-full text-xs">
+        <thead className="bg-eve-panel">
+          <tr className="text-eve-dim">
+            <th className="px-3 py-2 text-left">{t("optAssetName")}</th>
+            <th className="px-3 py-2 text-right">{t("optCurrentPct")}</th>
+            <th className="px-3 py-2 text-right">{t("optOptimalPct")}</th>
+            <th className="px-3 py-2 text-right">{t("optAssetPnL")}</th>
+            <th className="px-3 py-2 text-right">{t("optAssetSharpe")}</th>
+            <th className="px-3 py-2 text-right">{t("optAssetVol")}</th>
+            <th className="px-3 py-2 text-right">{t("optAssetDays")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {assets.map((asset, i) => {
+            return (
+              <tr key={asset.type_id} className="border-t border-eve-border/50 hover:bg-eve-panel/50">
+                <td className="px-3 py-2 text-eve-text">
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={`https://images.evetech.net/types/${asset.type_id}/icon?size=32`}
+                      alt=""
+                      className="w-5 h-5"
+                    />
+                    <span className="truncate max-w-[160px]">{asset.type_name || `#${asset.type_id}`}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right text-eve-text">
+                  <div className="flex items-center justify-end gap-1">
+                    <div className="w-12 h-1.5 bg-eve-dark rounded-full overflow-hidden">
+                      <div className="h-full rounded-full bg-[#f0883e]" style={{ width: `${currentWeights[i] * 100}%` }} />
+                    </div>
+                    <span>{(currentWeights[i] * 100).toFixed(1)}%</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex items-center justify-end gap-1">
+                    <div className="w-12 h-1.5 bg-eve-dark rounded-full overflow-hidden">
+                      <div className="h-full rounded-full bg-eve-accent" style={{ width: `${optimalWeights[i] * 100}%` }} />
+                    </div>
+                    <span className="text-eve-accent">{(optimalWeights[i] * 100).toFixed(1)}%</span>
+                  </div>
+                </td>
+                <td className={`px-3 py-2 text-right ${asset.total_pnl >= 0 ? "text-eve-profit" : "text-eve-error"}`}>
+                  {asset.total_pnl >= 0 ? "+" : ""}{formatIsk(asset.total_pnl)}
+                </td>
+                <td className={`px-3 py-2 text-right ${(asset.sharpe_ratio ?? 0) > 1 ? "text-eve-profit" : (asset.sharpe_ratio ?? 0) > 0 ? "text-eve-text" : "text-eve-error"}`}>
+                  {(asset.sharpe_ratio ?? 0).toFixed(2)}
+                </td>
+                <td className="px-3 py-2 text-right text-eve-dim">{formatIsk(asset.volatility)}</td>
+                <td className="px-3 py-2 text-right text-eve-dim">{asset.trading_days}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// --- Suggestions Panel ---
+
+function SuggestionsPanel({
+  suggestions,
+  t,
+}: {
+  suggestions: AllocationSuggestion[];
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  const actionable = suggestions.filter((s) => s.action !== "hold");
+  if (actionable.length === 0) return null;
+
+  const reasonLabels: Record<string, TranslationKey> = {
+    high_sharpe: "optReasonHighSharpe",
+    diversification: "optReasonDiversification",
+    negative_returns: "optReasonNegativeReturns",
+    poor_risk_adjusted: "optReasonPoorRiskAdjusted",
+    overweight: "optReasonOverweight",
+  };
+
+  return (
+    <div className="space-y-1.5">
+      {actionable.map((s) => {
+        const isIncrease = s.action === "increase";
+        return (
+          <div
+            key={s.type_id}
+            className={`flex items-center gap-3 px-3 py-2 rounded-sm border text-xs ${
+              isIncrease
+                ? "bg-emerald-500/5 border-emerald-500/20"
+                : "bg-red-500/5 border-red-500/20"
+            }`}
+          >
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${isIncrease ? "text-emerald-400" : "text-red-400"}`}>
+              {isIncrease ? t("optIncrease") : t("optDecrease")}
+            </span>
+            <img
+              src={`https://images.evetech.net/types/${s.type_id}/icon?size=32`}
+              alt=""
+              className="w-5 h-5"
+            />
+            <span className="text-eve-text font-medium truncate max-w-[150px]">{s.type_name}</span>
+            <span className="text-eve-dim">
+              {s.current_pct.toFixed(1)}% → {s.optimal_pct.toFixed(1)}%
+            </span>
+            <span className={`font-mono ${isIncrease ? "text-emerald-400" : "text-red-400"}`}>
+              {s.delta_pct >= 0 ? "+" : ""}{s.delta_pct.toFixed(1)}%
+            </span>
+            {s.reason && (
+              <span className="text-eve-dim text-[10px] ml-auto">
+                {t(reasonLabels[s.reason] || ("optReasonOverweight" as TranslationKey))}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -778,15 +1480,31 @@ function RiskTab({ characterId, data, formatIsk, t }: RiskTabProps) {
         />
         <StatCard
           label={t("charRiskVar99")}
-          value={`-${formatIsk(var99)} ISK`}
-          subvalue={t("charRiskVar99Hint")}
-          color="text-eve-warning"
+          value={
+            risk.var_99_reliable === false
+              ? "—"
+              : `-${formatIsk(var99)} ISK`
+          }
+          subvalue={
+            risk.var_99_reliable === false
+              ? t("charRiskVar99Unreliable", { min: 30 })
+              : t("charRiskVar99Hint")
+          }
+          color={risk.var_99_reliable === false ? "text-eve-dim" : "text-eve-warning"}
         />
         <StatCard
           label={t("charRiskEs99")}
-          value={`-${formatIsk(es99)} ISK`}
-          subvalue={t("charRiskEs99Hint")}
-          color="text-eve-warning"
+          value={
+            risk.var_99_reliable === false
+              ? "—"
+              : `-${formatIsk(es99)} ISK`
+          }
+          subvalue={
+            risk.var_99_reliable === false
+              ? t("charRiskEs99Unreliable", { min: 30 })
+              : t("charRiskEs99Hint")
+          }
+          color={risk.var_99_reliable === false ? "text-eve-dim" : "text-eve-warning"}
         />
       </div>
 

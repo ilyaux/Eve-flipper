@@ -113,7 +113,7 @@ function OrderSideBlock({
  * Station Trading Execution Calculator.
  * One station: place BUY order at effective price, place SELL order at effective price.
  * Shows fill curve, slippage, optional TWAP-style slice suggestion.
- * Future: Kyle's λ, quadratic impact, history-calibrated λ.
+ * Impact model: Amihud illiquidity, σ√(Q/V) square-root law, volume-based TWAP slicing.
  */
 export function StationTradingExecutionCalculator({
   open,
@@ -239,7 +239,7 @@ export function StationTradingExecutionCalculator({
           />
         </div>
 
-        {/* Impact from history (Kyle's λ, √V, TWAP n*) — collapsed by default */}
+        {/* Impact from history (Amihud, σ, TWAP slices) — collapsed by default */}
         {(planBuy?.impact || planSell?.impact) && (() => {
           const imp = planBuy?.impact ?? planSell?.impact!;
           const p = imp.params;
@@ -257,36 +257,39 @@ export function StationTradingExecutionCalculator({
               <table className="w-full text-sm">
                 <tbody className="text-eve-text">
                   <tr className="border-b border-eve-border">
-                    <td className="px-3 py-1.5 text-eve-dim w-44">Kyle's λ (ΔP = λ×Q)</td>
-                    <td className="px-3 py-1.5 font-mono">{p.lambda.toExponential(4)}</td>
+                    <td className="px-3 py-1.5 text-eve-dim w-44">{t("execPlanImpactAmihud")}</td>
+                    <td className="px-3 py-1.5 font-mono">{p.amihud.toExponential(4)}</td>
                   </tr>
                   <tr className="border-b border-eve-border">
-                    <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactLambdaHuman")}</td>
+                    <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactAmihudHuman")}</td>
                   </tr>
                   <tr className="border-b border-eve-border">
-                    <td className="px-3 py-1.5 text-eve-dim w-44">η (ΔP = η×√Q)</td>
-                    <td className="px-3 py-1.5 font-mono">{p.eta.toFixed(4)}</td>
-                  </tr>
-                  <tr className="border-b border-eve-border">
-                    <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactEtaHuman")}</td>
-                  </tr>
-                  <tr className="border-b border-eve-border">
-                    <td className="px-3 py-1.5 text-eve-dim w-44">σ² (daily returns)</td>
-                    <td className="px-3 py-1.5 font-mono">{p.sigma_sq.toExponential(4)}</td>
+                    <td className="px-3 py-1.5 text-eve-dim w-44">{t("execPlanImpactSigmaLabel")}</td>
+                    <td className="px-3 py-1.5 font-mono">{(p.sigma * 100).toFixed(2)}%</td>
                   </tr>
                   <tr className="border-b border-eve-border">
                     <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactSigmaHuman")}</td>
                   </tr>
                   <tr className="border-b border-eve-border">
+                    <td className="px-3 py-1.5 text-eve-dim w-44">{t("execPlanImpactAvgVolume")}</td>
+                    <td className="px-3 py-1.5 font-mono">{Math.round(p.avg_daily_volume).toLocaleString()}</td>
+                  </tr>
+                  <tr className="border-b border-eve-border">
+                    <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactAvgVolumeHuman")}</td>
+                  </tr>
+                  <tr className="border-b border-eve-border">
                     <td className="px-3 py-1.5 text-eve-dim w-44">{t("execPlanImpactForQ")}</td>
-                    <td className="px-3 py-1.5 font-mono text-eve-accent">≈ {formatISK(imp.recommended_impact)}</td>
+                    <td className="px-3 py-1.5 font-mono text-eve-accent">
+                      ≈ {imp.recommended_impact_pct.toFixed(2)}%
+                      {imp.recommended_impact_isk > 0 && <span className="text-eve-dim ml-2">({formatISK(imp.recommended_impact_isk)})</span>}
+                    </td>
                   </tr>
                   <tr className="border-b border-eve-border">
                     <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactForQHuman")}</td>
                   </tr>
                   <tr>
-                    <td className="px-3 py-1.5 text-eve-dim w-44">n* (TWAP)</td>
-                    <td className="px-3 py-1.5 font-mono">{imp.optimal_slices_twap} {t("execPlanSlices")}</td>
+                    <td className="px-3 py-1.5 text-eve-dim w-44">{t("execPlanImpactTwapLabel")}</td>
+                    <td className="px-3 py-1.5 font-mono">{imp.optimal_slices} {t("execPlanSlices")}</td>
                   </tr>
                   <tr>
                     <td colSpan={2} className="px-3 py-0.5 pb-1.5 text-[10px] text-eve-dim italic">{t("execPlanImpactTwapHuman")}</td>

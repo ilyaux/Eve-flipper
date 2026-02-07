@@ -1,4 +1,4 @@
-import type { AppConfig, AppStatus, AuthStatus, CharacterInfo, ContractResult, DemandRegionResponse, DemandRegionsResponse, ExecutionPlanResult, FlipResult, HotZonesResponse, PortfolioPnL, RegionOpportunities, RouteResult, ScanParams, ScanRecord, StationInfo, StationTrade, UndercutStatus, WatchlistItem } from "./types";
+import type { AppConfig, AppStatus, AuthStatus, CharacterInfo, ContractResult, DemandRegionResponse, DemandRegionsResponse, ExecutionPlanResult, FlipResult, HotZonesResponse, OptimizerDiagnostic, PortfolioPnL, PortfolioOptimization, RegionOpportunities, RouteResult, ScanParams, ScanRecord, StationInfo, StationTrade, UndercutStatus, WatchlistItem } from "./types";
 
 const BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:13370";
 
@@ -49,7 +49,10 @@ async function streamNdjson<T>(
     throw new Error(errMsg);
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) {
+    throw new Error("Response body is null");
+  }
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let results: T[] = [];
@@ -340,6 +343,25 @@ export async function getPortfolioPnL(days: number = 30): Promise<PortfolioPnL> 
   return handleResponse<PortfolioPnL>(res);
 }
 
+export type OptimizerResult =
+  | { ok: true; data: PortfolioOptimization }
+  | { ok: false; diagnostic: OptimizerDiagnostic | null };
+
+export async function getPortfolioOptimization(days: number = 90): Promise<OptimizerResult> {
+  const res = await fetch(`${BASE}/api/auth/portfolio/optimize?days=${days}`);
+  if (res.ok) {
+    const data: PortfolioOptimization = await res.json();
+    return { ok: true, data };
+  }
+  // Try to extract diagnostic from the 400 response body.
+  try {
+    const body = await res.json();
+    return { ok: false, diagnostic: body.diagnostic ?? null };
+  } catch {
+    return { ok: false, diagnostic: null };
+  }
+}
+
 // --- Industry ---
 
 import type { IndustryParams, IndustryAnalysis, BuildableItem, IndustrySystem, NdjsonIndustryMessage } from "./types";
@@ -367,7 +389,10 @@ export async function analyzeIndustry(
     throw new Error(errMsg);
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) {
+    throw new Error("Response body is null");
+  }
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let result: IndustryAnalysis | null = null;
@@ -455,7 +480,10 @@ export async function refreshDemandData(onProgress?: (msg: string) => void): Pro
     throw new Error(errMsg);
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) {
+    throw new Error("Response body is null");
+  }
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 

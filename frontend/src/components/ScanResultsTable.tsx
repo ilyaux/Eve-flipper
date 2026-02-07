@@ -269,7 +269,7 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
       }
       return true;
     });
-  }, [results, filters]);
+  }, [results, filters, columnDefs]);
 
   // Sort with pinned on top
   const sorted = useMemo(() => {
@@ -402,7 +402,7 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
     addToast(t("copied"), "success", 2000);
   };
 
-  const formatCell = (col: ColumnDef, row: FlipResult): string => {
+  const formatCell = useCallback((col: ColumnDef, row: FlipResult): string => {
     const val = row[col.key];
     if (col.key === "BuyPrice" || col.key === "SellPrice" || col.key === "TotalProfit" || col.key === "ProfitPerJump" || col.key === "DailyProfit") {
       return formatISK(val as number);
@@ -412,9 +412,9 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
       const v = val as number;
       return (v >= 0 ? "+" : "") + v.toFixed(1) + "%";
     }
-    if (typeof val === "number") return val.toLocaleString("ru-RU");
+    if (typeof val === "number") return val.toLocaleString();
     return String(val);
-  };
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -681,18 +681,18 @@ export function ScanResultsTable({ results, scanning, progress, scanCompletedWit
                 if (watchlistIds.has(row.TypeID)) {
                   removeFromWatchlist(row.TypeID)
                     .then(setWatchlist)
-                    .then(() => addToast(t("watchlistRemoved" as any) || "Removed from watchlist", "success", 2000))
-                    .catch(() => addToast(t("watchlistError" as any) || "Operation failed", "error", 3000));
+                    .then(() => addToast(t("watchlistRemoved"), "success", 2000))
+                    .catch(() => addToast(t("watchlistError"), "error", 3000));
                 } else {
                   addToWatchlist(row.TypeID, row.TypeName)
                     .then((r) => {
                       setWatchlist(r.items);
                       addToast(r.inserted
-                        ? (t("watchlistItemAdded" as any) || "Added to watchlist")
-                        : (t("watchlistAlready" as any) || "Already in watchlist"),
+                        ? t("watchlistItemAdded")
+                        : t("watchlistAlready"),
                         r.inserted ? "success" : "info", 2000);
                     })
-                    .catch(() => addToast(t("watchlistError" as any) || "Operation failed", "error", 3000));
+                    .catch(() => addToast(t("watchlistError"), "error", 3000));
                 }
                 setContextMenu(null);
               }}

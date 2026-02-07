@@ -173,22 +173,23 @@ export interface DepthLevel {
   volume_filled: number;
 }
 
-/** Calibrated market impact params (Kyle's λ, η from history). */
+/** Calibrated market impact params (Amihud illiquidity, σ from history). */
 export interface ImpactParams {
-  lambda: number;
-  eta: number;
-  sigma_sq: number;
+  amihud: number;
   sigma: number;
+  sigma_sq: number;
+  avg_daily_volume: number;
   days_used: number;
   valid: boolean;
 }
 
-/** Impact estimate for a quantity: ΔP (linear/√V) and TWAP n*. */
+/** Impact estimate for a quantity: ΔP% (linear/√V) and TWAP slices. */
 export interface ImpactEstimate {
-  linear_impact: number;
-  sqrt_impact: number;
-  recommended_impact: number;
-  optimal_slices_twap: number;
+  linear_impact_pct: number;
+  sqrt_impact_pct: number;
+  recommended_impact_pct: number;
+  recommended_impact_isk: number;
+  optimal_slices: number;
   params: ImpactParams;
 }
 
@@ -332,6 +333,7 @@ export interface CharacterRiskSummary {
   window_days: number;
   capacity_multiplier: number;
   low_sample?: boolean;
+  var_99_reliable?: boolean;
 }
 
 // --- Undercut Monitor Types ---
@@ -450,6 +452,7 @@ export interface DailyPnLEntry {
   sell_total: number;
   net_pnl: number;
   cumulative_pnl: number;
+  drawdown_pct: number;
   transactions: number;
 }
 
@@ -467,6 +470,25 @@ export interface PortfolioPnLStats {
   total_bought: number;
   total_sold: number;
   roi_percent: number;
+  // Enhanced analytics
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  max_drawdown_isk: number;
+  max_drawdown_days: number;
+  calmar_ratio: number;
+  profit_factor: number;
+  avg_win: number;
+  avg_loss: number;
+  expectancy_per_trade: number;
+}
+
+export interface StationPnL {
+  location_id: number;
+  location_name: string;
+  total_bought: number;
+  total_sold: number;
+  net_pnl: number;
+  transactions: number;
 }
 
 export interface ItemPnL {
@@ -487,6 +509,68 @@ export interface PortfolioPnL {
   daily_pnl: DailyPnLEntry[];
   summary: PortfolioPnLStats;
   top_items: ItemPnL[];
+  top_stations: StationPnL[];
+}
+
+// --- Portfolio Optimizer Types ---
+
+export interface AssetStats {
+  type_id: number;
+  type_name: string;
+  avg_daily_pnl: number;
+  volatility: number;
+  sharpe_ratio: number;
+  current_weight: number;
+  total_invested: number;
+  total_pnl: number;
+  trading_days: number;
+}
+
+export interface FrontierPoint {
+  risk: number;
+  return: number;
+}
+
+export interface AllocationSuggestion {
+  type_id: number;
+  type_name: string;
+  action: "increase" | "decrease" | "hold";
+  current_pct: number;
+  optimal_pct: number;
+  delta_pct: number;
+  reason: string;
+}
+
+export interface PortfolioOptimization {
+  assets: AssetStats[];
+  correlation_matrix: number[][];
+  current_weights: number[];
+  optimal_weights: number[];
+  min_var_weights: number[];
+  efficient_frontier: FrontierPoint[];
+  diversification_ratio: number;
+  current_sharpe: number;
+  optimal_sharpe: number;
+  min_var_sharpe: number;
+  hhi: number;
+  suggestions: AllocationSuggestion[];
+}
+
+export interface DiagnosticItem {
+  type_id: number;
+  type_name: string;
+  trading_days: number;
+  transactions: number;
+}
+
+export interface OptimizerDiagnostic {
+  total_transactions: number;
+  within_lookback: number;
+  unique_days: number;
+  unique_items: number;
+  qualified_items: number;
+  min_days_required: number;
+  top_items: DiagnosticItem[];
 }
 
 // --- Demand / War Tracker Types ---

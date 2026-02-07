@@ -15,10 +15,13 @@ import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { useGlobalToast } from "./components/Toast";
 import { Modal } from "./components/Modal";
 import { CharacterPopup } from "./components/CharacterPopup";
-import { getConfig, updateConfig, scan, scanMultiRegion, scanContracts, getWatchlist, getAuthStatus, logout as apiLogout, getLoginUrl, getStatus } from "./lib/api";
+import { getConfig, updateConfig, scan, scanMultiRegion, scanContracts, getWatchlist } from "./lib/api";
 import { useI18n } from "./lib/i18n";
 import { formatISK } from "./lib/format";
-import type { AuthStatus, ContractResult, FlipResult, RouteResult, ScanParams, StationTrade } from "./lib/types";
+import { useAuth } from "./lib/useAuth";
+import { useVersionCheck } from "./lib/useVersionCheck";
+import { useEsiStatus } from "./lib/useEsiStatus";
+import type { ContractResult, FlipResult, RouteResult, ScanParams, StationTrade } from "./lib/types";
 import logo from "./assets/logo.svg";
 
 type Tab = "radius" | "region" | "contracts" | "station" | "route" | "industry" | "demand";
@@ -50,7 +53,9 @@ function App() {
     setTabRaw(t);
     try { localStorage.setItem("eve-flipper-active-tab", t); } catch { /* ignore */ }
   }, []);
-  const [authStatus, setAuthStatus] = useState<AuthStatus>({ logged_in: false });
+  const { authStatus, loginPolling, handleLogin, handleLogout } = useAuth();
+  const { appVersion, latestVersion, hasUpdate } = useVersionCheck();
+  const { esiAvailable } = useEsiStatus();
 
   const [radiusResults, setRadiusResults] = useState<FlipResult[]>([]);
   const [regionResults, setRegionResults] = useState<FlipResult[]>([]);
@@ -64,15 +69,8 @@ function App() {
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCharacter, setShowCharacter] = useState(false);
-  const [loginPolling, setLoginPolling] = useState(false);
-  const [esiAvailable, setEsiAvailable] = useState<boolean | null>(null); // null = loading
-  const appVersion = import.meta.env.VITE_APP_VERSION || "dev";
-
-  const [latestVersion, setLatestVersion] = useState<string | null>(null);
-  const [hasUpdate, setHasUpdate] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
-  const scanTabRef = useRef<Tab>(tab);
   const { addToast } = useGlobalToast();
 
   const [contractScanCompleted, setContractScanCompleted] = useState(false);
@@ -144,34 +142,6 @@ function App() {
 
   useKeyboardShortcuts(shortcuts);
 
-  // Check for newer GitHub release (only for non-dev builds)
-  useEffect(() => {
-    if (!appVersion || appVersion === "dev") return;
-
-    const controller = new AbortController();
-    const fetchLatest = async () => {
-      try {
-        const res = await fetch("https://api.github.com/repos/ilyaux/Eve-flipper/releases/latest", {
-          signal: controller.signal,
-        });
-        if (!res.ok) return;
-        const data = await res.json() as { tag_name?: string };
-        if (!data.tag_name) return;
-        const latest = String(data.tag_name).replace(/^v/i, "");
-        const current = String(appVersion).replace(/^v/i, "");
-        setLatestVersion(latest);
-        if (isVersionNewer(latest, current)) {
-          setHasUpdate(true);
-        }
-      } catch {
-        // ignore network / API errors
-      }
-    };
-
-    fetchLatest();
-    return () => controller.abort();
-  }, [appVersion]);
-
   // Load config on mount
   useEffect(() => {
     getConfig()
@@ -187,74 +157,6 @@ function App() {
         });
       })
       .catch(() => {});
-    getAuthStatus().then(setAuthStatus).catch(() => {});
-  }, []);
-
-  // Poll ESI status
-  useEffect(() => {
-    let mounted = true;
-    const checkEsi = async () => {
-      try {
-        const status = await getStatus();
-        if (mounted) setEsiAvailable(status.esi_ok);
-      } catch {
-        if (mounted) setEsiAvailable(false);
-      }
-    };
-    checkEsi();
-    const interval = setInterval(checkEsi, 5000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
-
-  const handleLogout = useCallback(async () => {
-    await apiLogout();
-    setAuthStatus({ logged_in: false });
-  }, []);
-
-  // Open EVE SSO login in system browser (Tauri) or same window (web)
-  const handleLogin = useCallback(async () => {
-    const baseUrl = getLoginUrl();
-    // Detect Tauri runtime
-    const isTauri = !!(window as any).__TAURI_INTERNALS__;
-    if (isTauri) {
-      // Pass ?desktop=1 so the backend knows to show a "close tab" page
-      // instead of redirecting back to /
-      const url = baseUrl + "?desktop=1";
-      try {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(url);
-      } catch {
-        // Fallback if plugin fails
-        window.open(url, "_blank");
-      }
-    } else {
-      // In regular browser, navigate in same window.
-      // Backend will redirect back to / after auth completes.
-      window.location.href = baseUrl;
-      return;
-    }
-    // Start polling for auth completion (Tauri only)
-    setLoginPolling(true);
-    const poll = setInterval(async () => {
-      try {
-        const status = await getAuthStatus();
-        if (status.logged_in) {
-          clearInterval(poll);
-          setAuthStatus(status);
-          setLoginPolling(false);
-        }
-      } catch {
-        // ignore, keep polling
-      }
-    }, 2000);
-    // Stop polling after 5 minutes
-    setTimeout(() => {
-      clearInterval(poll);
-      setLoginPolling(false);
-    }, 5 * 60 * 1000);
   }, []);
 
   // Save config on param change (debounced)
@@ -274,7 +176,6 @@ function App() {
     }
 
     const currentTab = tab;
-    scanTabRef.current = currentTab;
     const controller = new AbortController();
     abortRef.current = controller;
     setScanning(true);
@@ -666,16 +567,3 @@ function TabButton({
 }
 
 export default App;
-
-function isVersionNewer(latest: string, current: string): boolean {
-  const la = latest.split(".").map((n) => parseInt(n, 10) || 0);
-  const ca = current.split(".").map((n) => parseInt(n, 10) || 0);
-  const len = Math.max(la.length, ca.length);
-  for (let i = 0; i < len; i++) {
-    const lv = la[i] ?? 0;
-    const cv = ca[i] ?? 0;
-    if (lv > cv) return true;
-    if (lv < cv) return false;
-  }
-  return false;
-}

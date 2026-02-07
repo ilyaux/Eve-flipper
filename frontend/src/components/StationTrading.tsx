@@ -683,18 +683,18 @@ export function StationTrading({ params, onChange, isLoggedIn = false, loadedRes
                 if (watchlistIds.has(row.TypeID)) {
                   removeFromWatchlist(row.TypeID)
                     .then(setWatchlist)
-                    .then(() => addToast(t("watchlistRemoved" as any) || "Removed from watchlist", "success", 2000))
-                    .catch(() => addToast(t("watchlistError" as any) || "Operation failed", "error", 3000));
+                    .then(() => addToast(t("watchlistRemoved"), "success", 2000))
+                    .catch(() => addToast(t("watchlistError"), "error", 3000));
                 } else {
                   addToWatchlist(row.TypeID, row.TypeName)
                     .then((r) => {
                       setWatchlist(r.items);
                       addToast(r.inserted
-                        ? (t("watchlistItemAdded" as any) || "Added to watchlist")
-                        : (t("watchlistAlready" as any) || "Already in watchlist"),
+                        ? t("watchlistItemAdded")
+                        : t("watchlistAlready"),
                         r.inserted ? "success" : "info", 2000);
                     })
-                    .catch(() => addToast(t("watchlistError" as any) || "Operation failed", "error", 3000));
+                    .catch(() => addToast(t("watchlistError"), "error", 3000));
                 }
                 setContextMenu(null);
               }}
