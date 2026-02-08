@@ -9,6 +9,9 @@ type Universe struct {
 	SystemRegion map[int32]int32
 	// SystemSecurity maps systemID -> security (0.0 null to 1.0 highsec); highsec >= 0.45
 	SystemSecurity map[int32]float64
+	// pathCacheMu is an LRU cache for ShortestPath results.
+	// Initialized lazily via InitPathCache().
+	pathCacheMu *pathCache
 }
 
 // NewUniverse creates an empty Universe with initialized maps.

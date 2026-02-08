@@ -307,7 +307,7 @@ func countTightSpreadOrders(orders []esi.MarketOrder) int {
 //     compression already; kept at lower weight to avoid double-counting.
 func CalcCTS(spreadROI, obds, drvi float64, ci, sds int, dailyVolume float64) float64 {
 	// Normalize each component to 0-100 scale
-	roiScore := normalize(spreadROI, 0, 100) * 100         // Higher spread ROI = better
+	roiScore := normalize(spreadROI, 0, 300) * 100         // Higher spread ROI = better (300% cap for lowsec/null)
 	obdsScore := normalize(obds, 0, 2) * 100               // Higher depth = better
 	pviScore := 100 - normalize(drvi, 0, 50)*100           // Lower volatility = better
 	ciScore := 100 - normalize(float64(ci), 0, 100)*100   // Lower competition = better

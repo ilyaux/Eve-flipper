@@ -122,6 +122,9 @@ func Load(dataDir string) (*Data, error) {
 	}
 	data.Industry = industry
 
+	// Initialize BFS path cache now that the universe graph is fully loaded.
+	data.Universe.InitPathCache()
+
 	logger.Section("SDE Statistics")
 	logger.Stats("Regions", len(data.Regions))
 	logger.Stats("Systems", len(data.Systems))

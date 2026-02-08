@@ -258,10 +258,10 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 		ci := CalcCI(append(g.buyOrders, g.sellOrders...))
 		obds := CalcOBDS(g.buyOrders, g.sellOrders, capitalRequired)
 
-		// NowROI = profit per unit / our cost per unit (ask) * 100
+		// NowROI = profit per unit / effective cost per unit (including broker fee) * 100
 		nowROI := 0.0
-		if costToBuy > 0 {
-			nowROI = profitPerUnit / costToBuy * 100
+		if effectiveBuy > 0 {
+			nowROI = profitPerUnit / effectiveBuy * 100
 		}
 
 		results = append(results, StationTrade{
@@ -526,9 +526,18 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 		// sell throughput is lower.
 		results[idx].SellUnitsPerDay = dailyVol
 		if results[idx].BuyVolume > 0 && results[idx].SellVolume > 0 {
-			// Adjust by supply ratio: if there are fewer sell orders, sell throughput is lower
+			// Adjust by supply ratio: if there are fewer sell orders, sell throughput is lower.
+			// ratio = sellVol / (buyVol + sellVol), range [0, 1].
+			// When ratio = 0.5 (balanced book), sellUnitsPerDay ≈ dailyVol.
+			// When ratio < 0.5 (sell-scarce), sellUnitsPerDay < dailyVol.
+			// When ratio > 0.5 (sell-heavy), sellUnitsPerDay still capped at dailyVol
+			// because actual throughput cannot exceed historical daily volume.
 			supplyRatio := float64(results[idx].SellVolume) / float64(results[idx].BuyVolume+results[idx].SellVolume)
-			results[idx].SellUnitsPerDay = dailyVol * supplyRatio * 2 // *2 because ratio is 0-1 centered at 0.5
+			adjusted := dailyVol * supplyRatio / 0.5 // normalize so ratio=0.5 → 1.0×
+			if adjusted > dailyVol {
+				adjusted = dailyVol // cap: can't sell more than market actually trades
+			}
+			results[idx].SellUnitsPerDay = adjusted
 		}
 
 		// B v S Ratio
