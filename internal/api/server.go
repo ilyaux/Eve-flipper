@@ -1957,6 +1957,9 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 		BrokerFee          float64 `json:"broker_fee"`
 		SalesTaxPercent    float64 `json:"sales_tax_percent"`
 		MaxDepth           int     `json:"max_depth"`
+		OwnBlueprint       *bool   `json:"own_blueprint"`    // nil → true (default)
+		BlueprintCost      float64 `json:"blueprint_cost"`
+		BlueprintIsBPO     bool    `json:"blueprint_is_bpo"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1993,6 +1996,9 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 		BrokerFee:          req.BrokerFee,
 		SalesTaxPercent:    req.SalesTaxPercent,
 		MaxDepth:           req.MaxDepth,
+		OwnBlueprint:       req.OwnBlueprint == nil || *req.OwnBlueprint,
+		BlueprintCost:      req.BlueprintCost,
+		BlueprintIsBPO:     req.BlueprintIsBPO,
 	}
 
 	// Use NDJSON streaming for progress
@@ -2638,10 +2644,16 @@ func (s *Server) handlePLEXDashboard(w http.ResponseWriter, r *http.Request) {
 		nes.OmegaPLEX = v
 	}
 
-	log.Printf("[API] PLEX Dashboard: salesTax=%.1f, brokerFee=%.1f, nes=%+v", salesTax, brokerFee, nes)
+	// Omega USD price for ISK/USD comparison (0 = skip)
+	var omegaUSD float64
+	if v, err := strconv.ParseFloat(q.Get("omega_usd"), 64); err == nil && v > 0 {
+		omegaUSD = v
+	}
+
+	log.Printf("[API] PLEX Dashboard: salesTax=%.1f, brokerFee=%.1f, nes=%+v, omegaUSD=%.2f", salesTax, brokerFee, nes, omegaUSD)
 
 	// Check cache (5 min TTL, keyed by user params)
-	cacheKey := fmt.Sprintf("%.2f_%.2f_%d_%d_%d", salesTax, brokerFee, nes.ExtractorPLEX, nes.MPTCPLEX, nes.OmegaPLEX)
+	cacheKey := fmt.Sprintf("%.2f_%.2f_%d_%d_%d_%.2f", salesTax, brokerFee, nes.ExtractorPLEX, nes.MPTCPLEX, nes.OmegaPLEX, omegaUSD)
 	s.plexCacheMu.RLock()
 	if s.plexCache != nil && s.plexCacheKey == cacheKey && time.Since(s.plexCacheTime) < 5*time.Minute {
 		cached := s.plexCache
@@ -2695,6 +2707,49 @@ func (s *Server) handlePLEXDashboard(w http.ResponseWriter, r *http.Request) {
 		histCh <- histResult{entries, err}
 	}()
 
+	// Fetch related item histories for fill-time estimation (parallelized)
+	// MPTC (34133) is not tradable on the regular market → ESI returns 400 for history.
+	historyTypes := []int32{engine.SkillExtractorTypeID, engine.LargeSkillInjTypeID}
+	type relHistResult struct {
+		typeID  int32
+		entries []esi.HistoryEntry
+	}
+	relHistCh := make(chan relHistResult, len(historyTypes))
+	for _, tid := range historyTypes {
+		go func(t int32) {
+			entries, err := s.esi.FetchMarketHistory(engine.JitaRegionID, t)
+			if err != nil {
+				log.Printf("[PLEX] Failed to fetch history for type %d: %v", t, err)
+				relHistCh <- relHistResult{t, nil}
+				return
+			}
+			relHistCh <- relHistResult{t, entries}
+		}(tid)
+	}
+
+	// Fetch cross-hub orders: 3 items × 3 non-Jita regions = 9 ESI calls (parallelized)
+	// Jita orders are already in relatedOrders, so we only need Amarr, Dodixie, Rens.
+	crossHubRegions := []int32{10000043, 10000032, 10000030} // Amarr, Dodixie, Rens
+	type crossHubResult struct {
+		typeID   int32
+		regionID int32
+		orders   []esi.MarketOrder
+	}
+	crossCh := make(chan crossHubResult, len(relatedTypes)*len(crossHubRegions))
+	for _, tid := range relatedTypes {
+		for _, rid := range crossHubRegions {
+			go func(t, r int32) {
+				orders, err := s.esi.FetchRegionOrdersByType(r, t)
+				if err != nil {
+					log.Printf("[PLEX] Failed to fetch cross-hub type %d region %d: %v", t, r, err)
+					crossCh <- crossHubResult{t, r, nil}
+					return
+				}
+				crossCh <- crossHubResult{t, r, orders}
+			}(tid, rid)
+		}
+	}
+
 	// Collect results
 	plexRes := <-plexCh
 	if plexRes.err != nil {
@@ -2715,10 +2770,39 @@ func (s *Server) handlePLEXDashboard(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[PLEX] Failed to fetch history: %v", histRes.err)
 	}
 
-	log.Printf("[PLEX] Global orders: %d, history: %d, related types: %d",
-		len(plexRes.orders), len(history), len(relatedOrders))
+	relatedHistory := make(map[int32][]esi.HistoryEntry)
+	for range historyTypes {
+		res := <-relHistCh
+		if res.entries != nil {
+			relatedHistory[res.typeID] = res.entries
+		}
+	}
 
-	dashboard := engine.ComputePLEXDashboard(plexRes.orders, relatedOrders, history, salesTax, brokerFee, nes)
+	// Collect cross-hub orders: typeID → regionID → orders
+	crossHubOrders := make(map[int32]map[int32][]esi.MarketOrder)
+	for range relatedTypes {
+		for range crossHubRegions {
+			res := <-crossCh
+			if res.orders != nil {
+				if crossHubOrders[res.typeID] == nil {
+					crossHubOrders[res.typeID] = make(map[int32][]esi.MarketOrder)
+				}
+				crossHubOrders[res.typeID][res.regionID] = res.orders
+			}
+		}
+	}
+	// Also include Jita orders in cross-hub map for comparison
+	for tid, orders := range relatedOrders {
+		if crossHubOrders[tid] == nil {
+			crossHubOrders[tid] = make(map[int32][]esi.MarketOrder)
+		}
+		crossHubOrders[tid][engine.JitaRegionID] = orders
+	}
+
+	log.Printf("[PLEX] Global orders: %d, history: %d, related types: %d, related histories: %d, cross-hub types: %d",
+		len(plexRes.orders), len(history), len(relatedOrders), len(relatedHistory), len(crossHubOrders))
+
+	dashboard := engine.ComputePLEXDashboard(plexRes.orders, relatedOrders, history, relatedHistory, salesTax, brokerFee, nes, omegaUSD, crossHubOrders)
 
 	// Store in cache
 	s.plexCacheMu.Lock()

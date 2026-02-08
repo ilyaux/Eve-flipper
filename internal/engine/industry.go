@@ -24,6 +24,9 @@ type IndustryParams struct {
 	ReprocessingYield   float64 // Reprocessing efficiency (0-1, e.g., 0.50 for 50%)
 	IncludeReprocessing bool    // Whether to consider reprocessing ore as alternative
 	MaxDepth            int     // Max recursion depth (default 10)
+	OwnBlueprint        bool    // true = user owns BP (default), false = must buy
+	BlueprintCost       float64 // ISK cost of blueprint (BPO or BPC)
+	BlueprintIsBPO      bool    // true = BPO (amortize over runs), false = BPC (one-time)
 }
 
 // MaterialNode represents a node in the production tree.
@@ -69,9 +72,10 @@ type IndustryAnalysis struct {
 	TotalJobCost      float64         `json:"total_job_cost"`     // Sum of all job installation costs
 	MaterialTree      *MaterialNode   `json:"material_tree"`
 	FlatMaterials     []*FlatMaterial `json:"flat_materials"` // Flattened list of base materials
-	SystemCostIndex   float64         `json:"system_cost_index"`
-	RegionID          int32           `json:"region_id"`   // Market region for execution plan
-	RegionName        string          `json:"region_name"` // Optional display name
+	SystemCostIndex        float64         `json:"system_cost_index"`
+	RegionID               int32           `json:"region_id"`   // Market region for execution plan
+	RegionName             string          `json:"region_name"` // Optional display name
+	BlueprintCostIncluded  float64         `json:"blueprint_cost_included"` // BP cost added to build cost
 }
 
 // FlatMaterial is a simplified material for the shopping list.
@@ -179,6 +183,17 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 		optimalCost = tree.BuyPrice
 	}
 
+	// Blueprint acquisition cost (user doesn't own it)
+	var bpCostIncluded float64
+	if !params.OwnBlueprint && params.BlueprintCost > 0 {
+		if params.BlueprintIsBPO {
+			bpCostIncluded = params.BlueprintCost / float64(params.Runs)
+		} else {
+			bpCostIncluded = params.BlueprintCost
+		}
+		optimalCost += bpCostIncluded
+	}
+
 	savings := marketBuyPrice - optimalCost
 	savingsPercent := 0.0
 	if marketBuyPrice > 0 {
@@ -235,9 +250,10 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 		TotalJobCost:      totalJobCost,
 		MaterialTree:      tree,
 		FlatMaterials:     flatMaterials,
-		SystemCostIndex:   costIndex,
-		RegionID:          regionID,
-		RegionName:        regionName,
+		SystemCostIndex:        costIndex,
+		RegionID:               regionID,
+		RegionName:             regionName,
+		BlueprintCostIncluded:  bpCostIncluded,
 	}, nil
 }
 

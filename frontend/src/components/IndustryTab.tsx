@@ -91,6 +91,9 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
   const [structureBonus, setStructureBonus] = useState(1);
   const [brokerFee, setBrokerFee] = useState(3);
   const [salesTaxPercent, setSalesTaxPercent] = useState(8);
+  const [ownBlueprint, setOwnBlueprint] = useState(true);
+  const [blueprintCost, setBlueprintCost] = useState(0);
+  const [blueprintIsBPO, setBlueprintIsBPO] = useState(true);
 
   // Analysis state
   const [analyzing, setAnalyzing] = useState(false);
@@ -202,6 +205,9 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
       broker_fee: brokerFee,
       sales_tax_percent: salesTaxPercent,
       max_depth: 10,
+      own_blueprint: ownBlueprint,
+      blueprint_cost: ownBlueprint ? 0 : blueprintCost,
+      blueprint_is_bpo: blueprintIsBPO,
     };
 
     try {
@@ -330,6 +336,52 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
             </div>
           </details>
 
+          {/* Blueprint ownership */}
+          <div className="mt-3 pt-3 border-t border-eve-border/30">
+            <label className="flex items-center gap-2 cursor-pointer text-xs">
+              <input
+                type="checkbox"
+                checked={ownBlueprint}
+                onChange={(e) => setOwnBlueprint(e.target.checked)}
+                className="accent-eve-accent"
+              />
+              <span className="text-eve-text">{t("industryOwnBlueprint")}</span>
+            </label>
+            {!ownBlueprint && (
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-eve-dim text-xs">{t("industryBlueprintCost")}</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={blueprintCost || ""}
+                    onChange={(e) => setBlueprintCost(parseFloat(e.target.value) || 0)}
+                    className="w-32 px-1.5 py-0.5 bg-eve-input border border-eve-border rounded-sm text-xs text-eve-text font-mono"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setBlueprintIsBPO(true)}
+                    className={`px-2 py-0.5 text-[10px] font-semibold rounded-sm border transition-colors ${blueprintIsBPO ? "border-eve-accent bg-eve-accent/10 text-eve-accent" : "border-eve-border text-eve-dim hover:text-eve-text"}`}
+                  >
+                    {t("industryBPO")}
+                  </button>
+                  <button
+                    onClick={() => setBlueprintIsBPO(false)}
+                    className={`px-2 py-0.5 text-[10px] font-semibold rounded-sm border transition-colors ${!blueprintIsBPO ? "border-eve-accent bg-eve-accent/10 text-eve-accent" : "border-eve-border text-eve-dim hover:text-eve-text"}`}
+                  >
+                    {t("industryBPC")}
+                  </button>
+                </div>
+                {blueprintIsBPO && blueprintCost > 0 && runs > 0 && (
+                  <span className="text-[10px] text-eve-dim italic">
+                    ≈ {formatISK(blueprintCost / runs)} / run
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Analyze Button */}
           <div className="mt-4 pt-3 border-t border-eve-border/30 flex items-center gap-4 flex-wrap">
             <button
@@ -368,7 +420,9 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
             <SummaryCard
               label={t("industryBuildCost")}
               value={formatISK(result.optimal_build_cost ?? 0)}
-              subtext={`${t("industryJobCost")}: ${formatISK(result.total_job_cost ?? 0)}`}
+              subtext={result.blueprint_cost_included > 0
+                ? `${t("industryJobCost")}: ${formatISK(result.total_job_cost ?? 0)} · ${t("industryBPCostIncluded")}: ${formatISK(result.blueprint_cost_included)}`
+                : `${t("industryJobCost")}: ${formatISK(result.total_job_cost ?? 0)}`}
               color="text-eve-accent"
             />
             <SummaryCard

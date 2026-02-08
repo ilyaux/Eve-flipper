@@ -377,6 +377,9 @@ export interface IndustryParams {
   broker_fee?: number;
   sales_tax_percent?: number;
   max_depth?: number;
+  own_blueprint?: boolean;
+  blueprint_cost?: number;
+  blueprint_is_bpo?: boolean;
 }
 
 export interface BlueprintInfo {
@@ -431,6 +434,7 @@ export interface IndustryAnalysis {
   system_cost_index: number;
   region_id: number;
   region_name?: string;
+  blueprint_cost_included: number;
 }
 
 export type NdjsonIndustryMessage =
@@ -657,6 +661,7 @@ export interface PLEXGlobalPrice {
   volume_24h: number;
   buy_orders: number;
   sell_orders: number;
+  percentile_90d: number;
 }
 
 export interface ArbitragePath {
@@ -671,6 +676,11 @@ export interface ArbitragePath {
   viable: boolean;
   no_data: boolean;
   detail: string;
+  break_even_plex: number;
+  est_minutes: number;
+  isk_per_hour: number;
+  slippage_pct: number;
+  adjusted_profit_isk: number;
 }
 
 export interface SPFarmResult {
@@ -705,6 +715,9 @@ export interface SPFarmResult {
   instant_sell_revenue_isk: number;
   instant_sell_profit_isk: number;
   instant_sell_roi: number;
+  instant_sell_profit_plus5: number;
+  instant_sell_roi_plus5: number;
+  break_even_plex: number;
 }
 
 export interface PLEXIndicators {
@@ -721,6 +734,8 @@ export interface PLEXIndicators {
   volume_today: number;
   volume_sigma: number;
   ccp_sale_signal: boolean;
+  volatility_20d: number;
+  vol_regime: "low" | "medium" | "high" | "";
 }
 
 export interface PLEXSignal {
@@ -777,6 +792,35 @@ export interface MarketDepthInfo {
   injector_buy_qty: number;
   mptc_sell_qty: number;
   mptc_buy_qty: number;
+  extractor_fill_hours: number;
+  injector_fill_hours: number;
+  mptc_fill_hours: number;
+  plex_fill_hours: number;
+}
+
+export interface InjectionTier {
+  label: string;
+  sp_received: number;
+  isk_per_sp: number;
+  efficiency: number;
+}
+
+export interface OmegaComparison {
+  plex_needed: number;
+  total_isk: number;
+  real_money_usd: number;
+  isk_per_usd: number;
+}
+
+export interface CrossHubArbitrage {
+  item_name: string;
+  type_id: number;
+  best_hub: string;
+  best_price: number;
+  jita_price: number;
+  diff_pct: number;
+  profit_isk: number;
+  viable: boolean;
 }
 
 export interface PLEXDashboard {
@@ -789,6 +833,9 @@ export interface PLEXDashboard {
   market_depth?: MarketDepthInfo | null;
   signal: PLEXSignal;
   history: PricePoint[];
+  injection_tiers?: InjectionTier[] | null;
+  omega_comparison?: OmegaComparison | null;
+  cross_hub?: CrossHubArbitrage[] | null;
 }
 
 // ============================================================

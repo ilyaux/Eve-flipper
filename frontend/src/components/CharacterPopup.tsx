@@ -276,13 +276,15 @@ function OverviewTab({
             </div>
           </div>
           <div className="flex gap-2">
-            {/* Demo button — always available */}
-            <button
-              onClick={() => window.open("/corp/?mode=demo", "_blank")}
-              className="px-3 py-1.5 text-xs font-medium rounded-sm border border-eve-border bg-eve-dark text-eve-dim hover:text-eve-text hover:border-eve-accent/50 transition-colors"
-            >
-              {t("corpDashboardDemo")}
-            </button>
+            {/* Demo button — dev mode only */}
+            {import.meta.env.DEV && (
+              <button
+                onClick={() => window.open("/corp/?mode=demo", "_blank")}
+                className="px-3 py-1.5 text-xs font-medium rounded-sm border border-eve-border bg-eve-dark text-eve-dim hover:text-eve-text hover:border-eve-accent/50 transition-colors"
+              >
+                {t("corpDashboardDemo")}
+              </button>
+            )}
             {/* Live button — only for directors */}
             {!corpRolesLoading && corpRoles?.is_director && (
               <button

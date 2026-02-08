@@ -552,7 +552,7 @@ func TestComputePLEXDashboard_Integration(t *testing.T) {
 	history := generateHistory(90, 4_800_000, 2000, 80_000)
 	nes := NESPrices{ExtractorPLEX: 293, MPTCPLEX: 485, OmegaPLEX: 500}
 
-	dash := ComputePLEXDashboard(plexOrders, related, history, 3.6, 1.0, nes)
+	dash := ComputePLEXDashboard(plexOrders, related, history, nil, 3.6, 1.0, nes, 0, nil)
 
 	// PLEX price
 	if dash.PLEXPrice.SellPrice != 5_000_000 {
@@ -620,7 +620,7 @@ func TestComputePLEXDashboard_NoDataPaths(t *testing.T) {
 	history := generateHistory(30, 5_000_000, 0, 50000)
 	nes := NESPrices{}
 
-	dash := ComputePLEXDashboard(plexOrders, related, history, 0, 0, nes)
+	dash := ComputePLEXDashboard(plexOrders, related, history, nil, 0, 0, nes, 0, nil)
 
 	for _, arb := range dash.Arbitrage {
 		if !arb.NoData {
@@ -641,7 +641,7 @@ func TestComputePLEXDashboard_DefaultTaxes(t *testing.T) {
 	nes := NESPrices{}
 
 	// Pass 0 for tax/broker → should use defaults (3.6 / 1.0)
-	dash := ComputePLEXDashboard(plexOrders, related, history, 0, 0, nes)
+	dash := ComputePLEXDashboard(plexOrders, related, history, nil, 0, 0, nes, 0, nil)
 
 	// The SP farm omega cost should reflect default nesOmega (500)
 	expectedOmega := 500 * 5_000_000.0

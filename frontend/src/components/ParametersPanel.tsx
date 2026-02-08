@@ -65,7 +65,7 @@ export function ParametersPanel({ params, onChange, isLoggedIn = false, tab = "r
           <span className="text-eve-dim text-xs">{expanded ? "▲" : "▼"}</span>
         </button>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <PresetPicker params={params} onApply={onChange} tab={tab} builtinPresets={getPresetsForTab(tab)} />
+          <PresetPicker params={params} onApply={onChange} tab={tab} builtinPresets={getPresetsForTab(tab)} align="right" />
           {help && <TabHelp stepKeys={help.steps} wikiSlug={help.wiki} />}
         </div>
       </div>

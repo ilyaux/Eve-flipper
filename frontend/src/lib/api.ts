@@ -529,6 +529,7 @@ export interface PLEXDashboardParams {
   nesExtractor?: number;
   nesMPTC?: number;
   nesOmega?: number;
+  omegaUSD?: number;
 }
 
 export async function getPLEXDashboard(p?: PLEXDashboardParams, signal?: AbortSignal): Promise<PLEXDashboard> {
@@ -538,6 +539,7 @@ export async function getPLEXDashboard(p?: PLEXDashboardParams, signal?: AbortSi
   if (p?.nesExtractor != null && p.nesExtractor > 0) params.set("nes_extractor", p.nesExtractor.toString());
   if (p?.nesMPTC != null && p.nesMPTC > 0) params.set("nes_mptc", p.nesMPTC.toString());
   if (p?.nesOmega != null && p.nesOmega > 0) params.set("nes_omega", p.nesOmega.toString());
+  if (p?.omegaUSD != null && p.omegaUSD > 0) params.set("omega_usd", p.omegaUSD.toString());
   const qs = params.toString();
   const res = await fetch(`${BASE}/api/plex/dashboard${qs ? "?" + qs : ""}`, { signal });
   return handleResponse<PLEXDashboard>(res);

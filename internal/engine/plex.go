@@ -102,6 +102,43 @@ type PLEXDashboard struct {
 
 	// Market depth info for PLEX arbitrage execution
 	MarketDepth *MarketDepthInfo `json:"market_depth,omitempty"`
+
+	// SP injection diminishing returns (ISK/SP for each SP tier)
+	InjectionTiers []InjectionTier `json:"injection_tiers,omitempty"`
+
+	// PLEX → Omega cost comparison
+	OmegaComparison *OmegaComparison `json:"omega_comparison,omitempty"`
+
+	// Cross-hub arbitrage opportunities
+	CrossHub []CrossHubArbitrage `json:"cross_hub,omitempty"`
+}
+
+// OmegaComparison compares PLEX-based Omega cost vs real-money cost.
+type OmegaComparison struct {
+	PLEXNeeded int     `json:"plex_needed"` // 500
+	TotalISK   float64 `json:"total_isk"`   // 500 * plex sell price
+	RealMoneyUSD float64 `json:"real_money_usd"` // user-provided $ price
+	ISKPerUSD    float64 `json:"isk_per_usd"`    // total_isk / real_money_usd
+}
+
+// CrossHubArbitrage shows price differences for SP-related items across major trade hubs.
+type CrossHubArbitrage struct {
+	ItemName  string  `json:"item_name"`
+	TypeID    int32   `json:"type_id"`
+	BestHub   string  `json:"best_hub"`   // hub with cheapest sell price
+	BestPrice float64 `json:"best_price"` // best sell price
+	JitaPrice float64 `json:"jita_price"` // Jita sell price
+	DiffPct   float64 `json:"diff_pct"`   // (jita - best) / best * 100
+	ProfitISK float64 `json:"profit_isk"` // per unit after fees
+	Viable    bool    `json:"viable"`
+}
+
+// InjectionTier shows how many SP a buyer receives per injector at different SP levels.
+type InjectionTier struct {
+	Label      string  `json:"label"`       // e.g., "< 5M SP"
+	SPReceived int     `json:"sp_received"` // 500000, 400000, 300000, 150000
+	ISKPerSP   float64 `json:"isk_per_sp"`  // injector price / SP received
+	Efficiency float64 `json:"efficiency"`  // SP received / 500000 * 100
 }
 
 // ArbHistoryData provides retroactive arbitrage profitability computed from
@@ -123,17 +160,22 @@ type ArbHistoryPoint struct {
 // MarketDepthInfo holds order-book depth for key items relevant to PLEX arbitrage.
 type MarketDepthInfo struct {
 	PLEXSellDepth5   DepthSummary `json:"plex_sell_depth_5"`  // top 5 PLEX sell levels
-	ExtractorSellQty int32        `json:"extractor_sell_qty"` // total extractor sell volume near best
-	ExtractorBuyQty  int32        `json:"extractor_buy_qty"`  // total extractor buy volume near best
-	InjectorSellQty  int32        `json:"injector_sell_qty"`  // total injector sell volume near best
-	InjectorBuyQty   int32        `json:"injector_buy_qty"`   // total injector buy volume near best
-	MPTCSellQty      int32        `json:"mptc_sell_qty"`      // total MPTC sell volume near best
-	MPTCBuyQty       int32        `json:"mptc_buy_qty"`       // total MPTC buy volume near best
+	ExtractorSellQty int64        `json:"extractor_sell_qty"` // total extractor sell volume near best
+	ExtractorBuyQty  int64        `json:"extractor_buy_qty"`  // total extractor buy volume near best
+	InjectorSellQty  int64        `json:"injector_sell_qty"`  // total injector sell volume near best
+	InjectorBuyQty   int64        `json:"injector_buy_qty"`   // total injector buy volume near best
+	MPTCSellQty      int64        `json:"mptc_sell_qty"`      // total MPTC sell volume near best
+	MPTCBuyQty       int64        `json:"mptc_buy_qty"`       // total MPTC buy volume near best
+	// Time-to-fill estimates (hours to sell 1 unit, based on daily volume)
+	ExtractorFillHours float64 `json:"extractor_fill_hours"`
+	InjectorFillHours  float64 `json:"injector_fill_hours"`
+	MPTCFillHours      float64 `json:"mptc_fill_hours"`
+	PLEXFillHours      float64 `json:"plex_fill_hours"` // hours to sell 100 PLEX
 }
 
 // DepthSummary shows total volume available within a price range.
 type DepthSummary struct {
-	TotalVolume int32   `json:"total_volume"`
+	TotalVolume int64   `json:"total_volume"`
 	BestPrice   float64 `json:"best_price"`
 	WorstPrice  float64 `json:"worst_price"` // worst price in the depth window
 	Levels      int     `json:"levels"`      // distinct price levels
@@ -156,13 +198,14 @@ type OverlayPoint struct {
 
 // PLEXGlobalPrice holds pricing from the Global PLEX Market (region 19000001).
 type PLEXGlobalPrice struct {
-	BuyPrice   float64 `json:"buy_price"`  // highest buy order
-	SellPrice  float64 `json:"sell_price"` // lowest sell order
-	Spread     float64 `json:"spread"`     // sell - buy
-	SpreadPct  float64 `json:"spread_pct"` // (sell - buy) / buy * 100
-	Volume24h  int64   `json:"volume_24h"`
-	BuyOrders  int     `json:"buy_orders"`  // total buy order count
-	SellOrders int     `json:"sell_orders"` // total sell order count
+	BuyPrice      float64 `json:"buy_price"`      // highest buy order
+	SellPrice     float64 `json:"sell_price"`      // lowest sell order
+	Spread        float64 `json:"spread"`          // sell - buy
+	SpreadPct     float64 `json:"spread_pct"`      // (sell - buy) / buy * 100
+	Volume24h     int64   `json:"volume_24h"`
+	BuyOrders     int     `json:"buy_orders"`      // total buy order count
+	SellOrders    int     `json:"sell_orders"`      // total sell order count
+	Percentile90d float64 `json:"percentile_90d"` // what % of 90d prices are below current
 }
 
 // ArbitragePath represents one NES→Market or cross-hub arbitrage route.
@@ -178,6 +221,14 @@ type ArbitragePath struct {
 	Viable       bool    `json:"viable"`  // profit > 0 AND data available
 	NoData       bool    `json:"no_data"` // true when market data was unavailable
 	Detail       string  `json:"detail"`  // human-readable explanation
+	// Break-even: PLEX price at which this path has zero profit (NES paths only; 0 for market/spread)
+	BreakEvenPLEX float64 `json:"break_even_plex"`
+	// ISK/hour estimate (0 for passive spread paths)
+	EstMinutes int     `json:"est_minutes"`
+	ISKPerHour float64 `json:"isk_per_hour"`
+	// Execution slippage for 1 unit (from order book walk)
+	SlippagePct       float64 `json:"slippage_pct"`        // worst-side slippage %
+	AdjustedProfitISK float64 `json:"adjusted_profit_isk"` // profit after slippage
 }
 
 // SPFarmResult holds SP farming profitability per character per month.
@@ -216,6 +267,11 @@ type SPFarmResult struct {
 	InstantSellRevenueISK float64 `json:"instant_sell_revenue_isk"`
 	InstantSellProfitISK  float64 `json:"instant_sell_profit_isk"`
 	InstantSellROI        float64 `json:"instant_sell_roi"`
+	// Instant sell with +5 implants
+	InstantSellProfitPlus5 float64 `json:"instant_sell_profit_plus5"`
+	InstantSellROIPlus5    float64 `json:"instant_sell_roi_plus5"`
+	// Break-even PLEX price where SP farming profit = 0
+	BreakEvenPLEX float64 `json:"break_even_plex"`
 }
 
 // PLEXIndicators holds technical analysis indicators computed from price history.
@@ -242,6 +298,10 @@ type PLEXIndicators struct {
 	VolumeToday   int64   `json:"volume_today"`
 	VolumeSigma   float64 `json:"volume_sigma"`    // std deviations above mean
 	CCPSaleSignal bool    `json:"ccp_sale_signal"` // volume > mean+2σ AND price drop > 3%
+
+	// Volatility index (20-day annualized)
+	Volatility20d float64 `json:"volatility_20d"` // annualized 20-day log-return vol
+	VolRegime     string  `json:"vol_regime"`      // "low", "medium", "high"
 }
 
 // PLEXSignal is the BUY/SELL/HOLD recommendation.
@@ -269,9 +329,12 @@ func ComputePLEXDashboard(
 	plexOrders []esi.MarketOrder, // Global PLEX Market orders (region 19000001)
 	relatedOrders map[int32][]esi.MarketOrder, // typeID → Jita orders (extractor, injector, MPTC)
 	history []esi.HistoryEntry, // PLEX price history
+	relatedHistory map[int32][]esi.HistoryEntry, // typeID → price history (for fill-time estimation)
 	salesTaxPct float64, // user's sales tax %
 	brokerFeePct float64, // user's broker fee %
 	nes NESPrices, // user-configurable NES PLEX prices
+	omegaUSD float64, // real-money Omega price (USD, 0 = skip)
+	crossHubOrders map[int32]map[int32][]esi.MarketOrder, // typeID → regionID → orders (for cross-hub arb)
 ) PLEXDashboard {
 	if salesTaxPct <= 0 {
 		salesTaxPct = 3.6 // Accounting V
@@ -315,18 +378,23 @@ func ComputePLEXDashboard(
 		noData := extractorSell <= 0
 		revenue := extractorSell * netMult
 		profit := revenue - cost
+		// Break-even: revenue / nesPlexCost = PLEX price at zero profit
+		be := safeDiv(revenue, float64(nesExtractor))
 		arbitrage = append(arbitrage, ArbitragePath{
-			Name:         "Skill Extractor (NES → Sell)",
-			Type:         "nes_sell",
-			PLEXCost:     nesExtractor,
-			CostISK:      cost,
-			RevenueGross: extractorSell,
-			RevenueISK:   revenue,
-			ProfitISK:    profit,
-			ROI:          safeDiv(profit, cost) * 100,
-			Viable:       profit > 0 && !noData,
-			NoData:       noData,
-			Detail:       "Buy Skill Extractor from NES, sell on market",
+			Name:          "Skill Extractor (NES → Sell)",
+			Type:          "nes_sell",
+			PLEXCost:      nesExtractor,
+			CostISK:       cost,
+			RevenueGross:  extractorSell,
+			RevenueISK:    revenue,
+			ProfitISK:     profit,
+			ROI:           safeDiv(profit, cost) * 100,
+			Viable:        profit > 0 && !noData,
+			NoData:        noData,
+			Detail:        "Buy Skill Extractor from NES, sell on market",
+			BreakEvenPLEX: be,
+			EstMinutes:    5,
+			ISKPerHour:    safeDiv(profit, 5.0/60),
 		})
 	}
 
@@ -336,18 +404,22 @@ func ComputePLEXDashboard(
 		noData := injectorSell <= 0
 		revenue := injectorSell * netMult
 		profit := revenue - cost
+		be := safeDiv(revenue, float64(nesExtractor))
 		arbitrage = append(arbitrage, ArbitragePath{
-			Name:         "SP Chain (NES Extractor → Injector)",
-			Type:         "nes_process",
-			PLEXCost:     nesExtractor,
-			CostISK:      cost,
-			RevenueGross: injectorSell,
-			RevenueISK:   revenue,
-			ProfitISK:    profit,
-			ROI:          safeDiv(profit, cost) * 100,
-			Viable:       profit > 0 && !noData,
-			NoData:       noData,
-			Detail:       "Buy Extractor from NES, extract SP, sell Injector",
+			Name:          "SP Chain (NES Extractor → Injector)",
+			Type:          "nes_process",
+			PLEXCost:      nesExtractor,
+			CostISK:       cost,
+			RevenueGross:  injectorSell,
+			RevenueISK:    revenue,
+			ProfitISK:     profit,
+			ROI:           safeDiv(profit, cost) * 100,
+			Viable:        profit > 0 && !noData,
+			NoData:        noData,
+			Detail:        "Buy Extractor from NES, extract SP, sell Injector",
+			BreakEvenPLEX: be,
+			EstMinutes:    10,
+			ISKPerHour:    safeDiv(profit, 10.0/60),
 		})
 	}
 
@@ -357,18 +429,22 @@ func ComputePLEXDashboard(
 		noData := mptcSell <= 0
 		revenue := mptcSell * netMult
 		profit := revenue - cost
+		be := safeDiv(revenue, float64(nesMPTC))
 		arbitrage = append(arbitrage, ArbitragePath{
-			Name:         "MPTC (NES → Sell)",
-			Type:         "nes_sell",
-			PLEXCost:     nesMPTC,
-			CostISK:      cost,
-			RevenueGross: mptcSell,
-			RevenueISK:   revenue,
-			ProfitISK:    profit,
-			ROI:          safeDiv(profit, cost) * 100,
-			Viable:       profit > 0 && !noData,
-			NoData:       noData,
-			Detail:       "Buy MPTC from NES, sell on market",
+			Name:          "MPTC (NES → Sell)",
+			Type:          "nes_sell",
+			PLEXCost:      nesMPTC,
+			CostISK:       cost,
+			RevenueGross:  mptcSell,
+			RevenueISK:    revenue,
+			ProfitISK:     profit,
+			ROI:           safeDiv(profit, cost) * 100,
+			Viable:        profit > 0 && !noData,
+			NoData:        noData,
+			Detail:        "Buy MPTC from NES, sell on market",
+			BreakEvenPLEX: be,
+			EstMinutes:    5,
+			ISKPerHour:    safeDiv(profit, 5.0/60),
 		})
 	}
 
@@ -391,6 +467,8 @@ func ComputePLEXDashboard(
 			Viable:       profit > 0 && !noData,
 			NoData:       noData,
 			Detail:       "Buy Extractor from market, extract SP, sell Injector",
+			EstMinutes:   10,
+			ISKPerHour:   safeDiv(profit, 10.0/60),
 		})
 	}
 
@@ -486,6 +564,68 @@ func ComputePLEXDashboard(
 		})
 	}
 
+	// ---- Execution Slippage per arb path ----
+	// For NES paths: slippage on sell side only (you sell item on market)
+	// For spread paths: slippage on both buy and sell sides
+	for i := range arbitrage {
+		arb := &arbitrage[i]
+		if arb.NoData {
+			arb.AdjustedProfitISK = arb.ProfitISK
+			continue
+		}
+		switch {
+		case arb.Type == "nes_sell" && arb.Name == "Skill Extractor (NES → Sell)":
+			// Sell 1 extractor: walk buy orders
+			plan := ComputeExecutionPlan(relatedOrders[SkillExtractorTypeID], 1, false)
+			arb.SlippagePct = plan.SlippagePercent
+			adjRev := plan.ExpectedPrice * netMult
+			if adjRev <= 0 {
+				adjRev = arb.RevenueISK
+			}
+			arb.AdjustedProfitISK = adjRev - arb.CostISK
+		case arb.Type == "nes_process":
+			// Sell 1 injector: walk buy orders
+			plan := ComputeExecutionPlan(relatedOrders[LargeSkillInjTypeID], 1, false)
+			arb.SlippagePct = plan.SlippagePercent
+			adjRev := plan.ExpectedPrice * netMult
+			if adjRev <= 0 {
+				adjRev = arb.RevenueISK
+			}
+			arb.AdjustedProfitISK = adjRev - arb.CostISK
+		case arb.Type == "nes_sell" && arb.Name == "MPTC (NES → Sell)":
+			// Sell 1 MPTC: walk buy orders
+			plan := ComputeExecutionPlan(relatedOrders[MPTCTypeID], 1, false)
+			arb.SlippagePct = plan.SlippagePercent
+			adjRev := plan.ExpectedPrice * netMult
+			if adjRev <= 0 {
+				adjRev = arb.RevenueISK
+			}
+			arb.AdjustedProfitISK = adjRev - arb.CostISK
+		case arb.Type == "market_process":
+			// Buy 1 extractor from market (walk sell orders) + sell 1 injector (walk buy orders)
+			buyPlan := ComputeExecutionPlan(relatedOrders[SkillExtractorTypeID], 1, true)
+			sellPlan := ComputeExecutionPlan(relatedOrders[LargeSkillInjTypeID], 1, false)
+			// Combined slippage: buy side + sell side
+			arb.SlippagePct = buyPlan.SlippagePercent + sellPlan.SlippagePercent
+			adjCost := buyPlan.ExpectedPrice
+			adjRev := sellPlan.ExpectedPrice * netMult
+			if adjCost <= 0 {
+				adjCost = arb.CostISK
+			}
+			if adjRev <= 0 {
+				adjRev = arb.RevenueISK
+			}
+			arb.AdjustedProfitISK = adjRev - adjCost
+		case arb.Type == "spread":
+			// Spread paths: for 1 unit, slippage is typically 0 (you place limit orders)
+			// But if you wanted to market-take, we can compute it
+			arb.SlippagePct = 0
+			arb.AdjustedProfitISK = arb.ProfitISK
+		default:
+			arb.AdjustedProfitISK = arb.ProfitISK
+		}
+	}
+
 	// ---- SP Farm Calculator ----
 	spFarm := computeSPFarm(plexPrice, extractorSell, injectorSell, injectorBuy, netMult, salesTaxOnly, nesExtractor, nesOmega, nesMPTC)
 
@@ -501,22 +641,67 @@ func ComputePLEXDashboard(
 	// ---- Historical Arbitrage Profitability ----
 	arbHistory := computeArbHistory(sortedHist, extractorSell, injectorSell, mptcSell, netMult, nesExtractor, nesMPTC, nesOmega)
 
-	// ---- Market Depth ----
-	marketDepth := computeMarketDepth(plexOrders, relatedOrders)
+	// ---- Market Depth + Fill Times ----
+	marketDepth := computeMarketDepth(plexOrders, relatedOrders, history, relatedHistory)
 
 	// ---- Signal ----
 	signal := computeSignal(indicators, globalPrice)
 
+	// ---- Injection efficiency tiers ----
+	// Shows ISK/SP at each diminishing returns bracket for injector buyers.
+	var injectionTiers []InjectionTier
+	if injectorSell > 0 {
+		tiers := []struct {
+			label string
+			sp    int
+		}{
+			{"< 5M SP", 500000},
+			{"5–50M SP", 400000},
+			{"50–80M SP", 300000},
+			{"> 80M SP", 150000},
+		}
+		injectionTiers = make([]InjectionTier, len(tiers))
+		for i, t := range tiers {
+			injectionTiers[i] = InjectionTier{
+				Label:      t.label,
+				SPReceived: t.sp,
+				ISKPerSP:   injectorSell / float64(t.sp),
+				Efficiency: float64(t.sp) / 500000 * 100,
+			}
+		}
+	}
+
+	// ---- Omega Comparison (PLEX vs real money) ----
+	var omegaComp *OmegaComparison
+	if omegaUSD > 0 && plexPrice > 0 {
+		totalISK := float64(nesOmega) * plexPrice
+		omegaComp = &OmegaComparison{
+			PLEXNeeded:   nesOmega,
+			TotalISK:     totalISK,
+			RealMoneyUSD: omegaUSD,
+			ISKPerUSD:    safeDiv(totalISK, omegaUSD),
+		}
+	}
+
+	// ---- Cross-Hub Arbitrage ----
+	var crossHub []CrossHubArbitrage
+	if len(crossHubOrders) > 0 {
+		crossHub = computeCrossHubArbitrage(crossHubOrders, netMult)
+	}
+
 	return PLEXDashboard{
-		PLEXPrice:     globalPrice,
-		Arbitrage:     arbitrage,
-		SPFarm:        spFarm,
-		Indicators:    indicators,
-		ChartOverlays: chartOverlays,
-		ArbHistory:    arbHistory,
-		MarketDepth:   marketDepth,
-		Signal:        signal,
-		History:       priceHistory,
+		PLEXPrice:       globalPrice,
+		Arbitrage:       arbitrage,
+		SPFarm:          spFarm,
+		Indicators:      indicators,
+		ChartOverlays:   chartOverlays,
+		ArbHistory:      arbHistory,
+		MarketDepth:     marketDepth,
+		Signal:          signal,
+		History:         priceHistory,
+		InjectionTiers:  injectionTiers,
+		OmegaComparison: omegaComp,
+		CrossHub:        crossHub,
 	}
 }
 
@@ -561,14 +746,27 @@ func computeGlobalPLEXPrice(orders []esi.MarketOrder, history []esi.HistoryEntry
 		vol24h = history[len(history)-1].Volume
 	}
 
+	// 90-day price percentile: what % of history prices are below current sell price
+	percentile := 0.0
+	if bestSell > 0 && len(history) > 0 {
+		below := 0
+		for _, e := range history {
+			if e.Average < bestSell {
+				below++
+			}
+		}
+		percentile = float64(below) / float64(len(history)) * 100
+	}
+
 	return PLEXGlobalPrice{
-		BuyPrice:   bestBuy,
-		SellPrice:  bestSell,
-		Spread:     spread,
-		SpreadPct:  sanitizeFloat(spreadPct),
-		Volume24h:  vol24h,
-		BuyOrders:  buyCount,
-		SellOrders: sellCount,
+		BuyPrice:      bestBuy,
+		SellPrice:     bestSell,
+		Spread:        spread,
+		SpreadPct:     sanitizeFloat(spreadPct),
+		Volume24h:     vol24h,
+		BuyOrders:     buyCount,
+		SellOrders:    sellCount,
+		Percentile90d: percentile,
 	}
 }
 
@@ -621,11 +819,23 @@ func computeSPFarm(plexPrice, extractorMarketSell, injectorMarketSell, injectorB
 	instantRevenueBase := 0.0
 	instantProfitBase := 0.0
 	instantROI := 0.0
+	instantProfitPlus5 := 0.0
+	instantROIPlus5 := 0.0
 	if injectorBuyPrice > 0 {
 		instantRevenueBase = extractorsBase * injectorBuyPrice * salesTaxOnly
 		instantProfitBase = instantRevenueBase - totalCostBase
 		instantROI = safeDiv(instantProfitBase, totalCostBase) * 100
+		// +5 implants instant sell
+		instantRevenuePlus5 := extractorsPlus5 * injectorBuyPrice * salesTaxOnly
+		instantProfitPlus5 = instantRevenuePlus5 - totalCostPlus5
+		instantROIPlus5 = safeDiv(instantProfitPlus5, totalCostPlus5) * 100
 	}
+
+	// Break-even PLEX price: solve profit=0 for plexPrice
+	// profit = extractorsBase * injectorSell * netMult - plexPrice * (omega + extractorsBase * nesExtractor)
+	// plexPrice_be = extractorsBase * injectorSell * netMult / (omega + extractorsBase * nesExtractor)
+	plexDenominator := float64(nesOmega) + extractorsBase*float64(nesExtractor)
+	spFarmBreakEven := safeDiv(extractorsBase*injectorMarketSell*netMult, plexDenominator)
 
 	return SPFarmResult{
 		OmegaCostPLEX:      nesOmega,
@@ -661,6 +871,11 @@ func computeSPFarm(plexPrice, extractorMarketSell, injectorMarketSell, injectorB
 		InstantSellRevenueISK: instantRevenueBase,
 		InstantSellProfitISK:  instantProfitBase,
 		InstantSellROI:        instantROI,
+
+		InstantSellProfitPlus5: instantProfitPlus5,
+		InstantSellROIPlus5:    instantROIPlus5,
+
+		BreakEvenPLEX: spFarmBreakEven,
 	}
 }
 
@@ -699,7 +914,8 @@ func computeIndicators(history []esi.HistoryEntry) *PLEXIndicators {
 		ind.SMA30 = sum / 30
 	}
 
-	// Bollinger Bands (20, 2) — two-pass algorithm, sample variance (N-1)
+	// Bollinger Bands (20, 2) — two-pass algorithm, population variance (N)
+	// Uses population std dev to match TradingView/Bloomberg standard for BB.
 	if n >= 20 {
 		const bbWindow = 20
 		// Pass 1: compute mean
@@ -708,14 +924,14 @@ func computeIndicators(history []esi.HistoryEntry) *PLEXIndicators {
 			bbSum += prices[i]
 		}
 		bbMean := bbSum / float64(bbWindow)
-		// Pass 2: sum of squared deviations (numerically stable)
+		// Pass 2: sum of squared deviations
 		var devSum float64
 		for i := n - bbWindow; i < n; i++ {
 			d := prices[i] - bbMean
 			devSum += d * d
 		}
-		// Sample standard deviation (N-1) for proper statistical estimation
-		bbStd := math.Sqrt(devSum / float64(bbWindow-1))
+		// Population standard deviation (N) — industry standard for Bollinger Bands
+		bbStd := math.Sqrt(devSum / float64(bbWindow))
 		ind.BollingerMiddle = bbMean
 		ind.BollingerUpper = bbMean + 2*bbStd
 		ind.BollingerLower = bbMean - 2*bbStd
@@ -810,6 +1026,39 @@ func computeIndicators(history []esi.HistoryEntry) *PLEXIndicators {
 		ind.CCPSaleSignal = ind.VolumeSigma > 2 && ind.Change24h < -3
 	}
 
+	// 20-day annualized volatility (log-return std dev × √365)
+	if n >= 21 {
+		const volWindow = 20
+		logReturns := make([]float64, 0, volWindow)
+		for i := n - volWindow; i < n; i++ {
+			if prices[i-1] > 0 && prices[i] > 0 {
+				logReturns = append(logReturns, math.Log(prices[i]/prices[i-1]))
+			}
+		}
+		if len(logReturns) >= 10 {
+			var lrSum float64
+			for _, lr := range logReturns {
+				lrSum += lr
+			}
+			lrMean := lrSum / float64(len(logReturns))
+			var lrVarSum float64
+			for _, lr := range logReturns {
+				d := lr - lrMean
+				lrVarSum += d * d
+			}
+			dailyVol := math.Sqrt(lrVarSum / float64(len(logReturns)))
+			annualizedVol := dailyVol * math.Sqrt(365) * 100 // percentage
+			ind.Volatility20d = annualizedVol
+			if annualizedVol < 20 {
+				ind.VolRegime = "low"
+			} else if annualizedVol < 40 {
+				ind.VolRegime = "medium"
+			} else {
+				ind.VolRegime = "high"
+			}
+		}
+	}
+
 	return ind
 }
 
@@ -873,6 +1122,14 @@ func computeSignal(ind *PLEXIndicators, gp PLEXGlobalPrice) PLEXSignal {
 	} else if ind.Change7d > 5 {
 		sellScore += 15
 		reasons = append(reasons, "Price rose >5% in 7 days")
+	}
+
+	// Volatility regime context (informational, not a score contributor)
+	switch ind.VolRegime {
+	case "low":
+		reasons = append(reasons, "Low volatility — NES arbitrage margins stable")
+	case "high":
+		reasons = append(reasons, "High volatility — spread trading more profitable")
 	}
 
 	// Generate signal
@@ -993,6 +1250,8 @@ func computeArbHistory(
 func computeMarketDepth(
 	plexOrders []esi.MarketOrder,
 	relatedOrders map[int32][]esi.MarketOrder,
+	plexHistory []esi.HistoryEntry,
+	relatedHistory map[int32][]esi.HistoryEntry,
 ) *MarketDepthInfo {
 	md := &MarketDepthInfo{}
 
@@ -1011,7 +1270,38 @@ func computeMarketDepth(
 	md.MPTCSellQty = totalSellVolume(relatedOrders[MPTCTypeID])
 	md.MPTCBuyQty = totalBuyVolume(relatedOrders[MPTCTypeID])
 
+	// Time-to-fill estimates (hours to sell quantity based on avg daily volume)
+	md.ExtractorFillHours = estimateFillHours(relatedHistory[SkillExtractorTypeID], 1)
+	md.InjectorFillHours = estimateFillHours(relatedHistory[LargeSkillInjTypeID], 1)
+	md.MPTCFillHours = estimateFillHours(relatedHistory[MPTCTypeID], 1)
+	md.PLEXFillHours = estimateFillHours(plexHistory, 100)
+
 	return md
+}
+
+// estimateFillHours estimates hours to fill a given quantity based on recent daily volume.
+// Uses 7-day average daily volume: fillHours = (quantity / dailyVolume) * 24.
+func estimateFillHours(history []esi.HistoryEntry, quantity int) float64 {
+	if len(history) == 0 || quantity <= 0 {
+		return 0
+	}
+	// Use last 7 days of history
+	n := len(history)
+	start := n - 7
+	if start < 0 {
+		start = 0
+	}
+	var totalVol int64
+	days := 0
+	for i := start; i < n; i++ {
+		totalVol += history[i].Volume
+		days++
+	}
+	if days == 0 || totalVol == 0 {
+		return 0
+	}
+	dailyVol := float64(totalVol) / float64(days)
+	return float64(quantity) / dailyVol * 24
 }
 
 func sellDepthSummary(orders []esi.MarketOrder, maxLevels int) DepthSummary {
@@ -1032,7 +1322,7 @@ func sellDepthSummary(orders []esi.MarketOrder, maxLevels int) DepthSummary {
 	sort.Slice(sells, func(i, j int) bool { return sells[i].price < sells[j].price })
 
 	// Aggregate by distinct price levels
-	var totalVol int32
+	var totalVol int64
 	levels := 0
 	bestPrice := sells[0].price
 	worstPrice := sells[0].price
@@ -1046,7 +1336,7 @@ func sellDepthSummary(orders []esi.MarketOrder, maxLevels int) DepthSummary {
 			}
 			worstPrice = s.price
 		}
-		totalVol += s.vol
+		totalVol += int64(s.vol)
 	}
 
 	return DepthSummary{
@@ -1057,21 +1347,21 @@ func sellDepthSummary(orders []esi.MarketOrder, maxLevels int) DepthSummary {
 	}
 }
 
-func totalSellVolume(orders []esi.MarketOrder) int32 {
-	var vol int32
+func totalSellVolume(orders []esi.MarketOrder) int64 {
+	var vol int64
 	for _, o := range orders {
 		if !o.IsBuyOrder {
-			vol += o.VolumeRemain
+			vol += int64(o.VolumeRemain)
 		}
 	}
 	return vol
 }
 
-func totalBuyVolume(orders []esi.MarketOrder) int32 {
-	var vol int32
+func totalBuyVolume(orders []esi.MarketOrder) int64 {
+	var vol int64
 	for _, o := range orders {
 		if o.IsBuyOrder {
-			vol += o.VolumeRemain
+			vol += int64(o.VolumeRemain)
 		}
 	}
 	return vol
@@ -1133,7 +1423,7 @@ func computeChartOverlays(history []esi.HistoryEntry) *ChartOverlays {
 				d := history[j].Average - mean
 				devSum += d * d
 			}
-			std := math.Sqrt(devSum / float64(bbWindow-1))
+			std := math.Sqrt(devSum / float64(bbWindow))
 			up = append(up, OverlayPoint{Date: history[i].Date, Value: mean + 2*std})
 			dn = append(dn, OverlayPoint{Date: history[i].Date, Value: mean - 2*std})
 		}
@@ -1220,4 +1510,71 @@ func safeDiv(a, b float64) float64 {
 		return 0
 	}
 	return v
+}
+
+// Cross-hub region IDs and names for arbitrage comparison.
+var crossHubRegions = []struct {
+	RegionID int32
+	Name     string
+}{
+	{10000002, "Jita"},
+	{10000043, "Amarr"},
+	{10000032, "Dodixie"},
+	{10000030, "Rens"},
+}
+
+// crossHubItems maps type IDs to item names for cross-hub comparison.
+var crossHubItems = []struct {
+	TypeID int32
+	Name   string
+}{
+	{SkillExtractorTypeID, "Skill Extractor"},
+	{LargeSkillInjTypeID, "Large Skill Injector"},
+	{MPTCTypeID, "MPTC"},
+}
+
+// computeCrossHubArbitrage compares sell prices across 4 hubs for SP-related items.
+// crossHubOrders: typeID → regionID → orders
+func computeCrossHubArbitrage(crossHubOrders map[int32]map[int32][]esi.MarketOrder, netMult float64) []CrossHubArbitrage {
+	var results []CrossHubArbitrage
+
+	for _, item := range crossHubItems {
+		regionOrders, ok := crossHubOrders[item.TypeID]
+		if !ok || len(regionOrders) == 0 {
+			continue
+		}
+
+		// Find best sell price per hub
+		jitaPrice := bestSellPrice(regionOrders[JitaRegionID])
+		if jitaPrice <= 0 {
+			continue
+		}
+
+		bestPrice := jitaPrice
+		bestHub := "Jita"
+		for _, hub := range crossHubRegions {
+			sell := bestSellPrice(regionOrders[hub.RegionID])
+			if sell > 0 && sell < bestPrice {
+				bestPrice = sell
+				bestHub = hub.Name
+			}
+		}
+
+		diffPct := safeDiv(jitaPrice-bestPrice, bestPrice) * 100
+		profitISK := (jitaPrice*netMult - bestPrice) // buy cheap, sell in Jita after fees
+		viable := diffPct > 1.0 && profitISK > 0
+
+		results = append(results, CrossHubArbitrage{
+			ItemName:  item.Name,
+			TypeID:    item.TypeID,
+			BestHub:   bestHub,
+			BestPrice: bestPrice,
+			JitaPrice: jitaPrice,
+			DiffPct:   diffPct,
+			ProfitISK: profitISK,
+			Viable:    viable,
+		})
+	}
+
+	return results
 }
