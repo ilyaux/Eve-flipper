@@ -955,6 +955,8 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		MaxSDS             int     `json:"max_sds"`
 		LimitBuyToPriceLow bool    `json:"limit_buy_to_price_low"`
 		FlagExtremePrices  bool    `json:"flag_extreme_prices"`
+		// Relist fee estimation
+		RelistsPerDay float64 `json:"relists_per_day"` // 0 = auto-estimate from CI
 		// Player structures
 		IncludeStructures bool    `json:"include_structures"`
 		StructureIDs      []int64 `json:"structure_ids"`
@@ -1058,6 +1060,7 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 			MaxSDS:             req.MaxSDS,
 			LimitBuyToPriceLow: req.LimitBuyToPriceLow,
 			FlagExtremePrices:  req.FlagExtremePrices,
+			RelistsPerDay:     req.RelistsPerDay,
 		}
 		// For "all stations in region" mode, pass nil StationIDs
 		if req.StationID == 0 && req.Radius == 0 {

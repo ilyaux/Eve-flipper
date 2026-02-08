@@ -63,6 +63,16 @@ type StationTrade struct {
 	ExpectedProfit    float64 `json:"ExpectedProfit,omitempty"`
 	SlippageBuyPct    float64 `json:"SlippageBuyPct,omitempty"`
 	SlippageSellPct   float64 `json:"SlippageSellPct,omitempty"`
+
+	// Relist fee estimation
+	// In EVE station trading, competitive items require frequent order updates
+	// (0.01 ISK wars). Each modification incurs a relist fee proportional to
+	// the broker fee and the remaining duration fraction. These fields estimate
+	// the impact on real-world margin.
+	RelistCostPerUnit    float64 `json:"RelistCostPerUnit,omitempty"`    // Estimated relist fee cost per unit per fill cycle
+	MarginAfterRelists   float64 `json:"MarginAfterRelists,omitempty"`   // MarginPercent minus estimated relist drag (%)
+	ProfitAfterRelists   float64 `json:"ProfitAfterRelists,omitempty"`   // ProfitPerUnit minus RelistCostPerUnit
+	EstRelistsPerFill    float64 `json:"EstRelistsPerFill,omitempty"`    // Estimated number of relists before an order fills
 }
 
 // stationSortProxy returns a pre-history ranking score for a StationTrade.
@@ -121,7 +131,19 @@ type StationTradeParams struct {
 	// --- Price Limits ---
 	LimitBuyToPriceLow bool // Don't buy above P.Low + 10%
 	FlagExtremePrices  bool // Flag anomalous prices
+
+	// --- Relist Fee Estimation ---
+	// RelistsPerDay is the estimated number of order modifications per day
+	// due to 0.01 ISK competition. 0 = auto-estimate from Competition Index.
+	// Typical values: 3–5 for casual, 8–15 for competitive Jita items.
+	RelistsPerDay float64 // 0 = auto-estimate from CI
 }
+
+// DefaultRelistFraction is the average fraction of the original broker fee
+// charged per relist. In EVE, relist fee = brokerFee% × (remaining_days / total_days).
+// For a 90-day order modified after ~1 day on average, this is roughly 0.98.
+// We use a conservative 0.5 (midpoint of order lifetime) as default.
+const DefaultRelistFraction = 0.5
 
 // ScanStationTrades finds profitable same-station trading opportunities.
 func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(string)) ([]StationTrade, error) {
@@ -263,6 +285,9 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 		if effectiveBuy > 0 {
 			nowROI = profitPerUnit / effectiveBuy * 100
 		}
+
+		// Relist fee estimation will be populated after history enrichment
+		// when we know CI and can auto-estimate relists per fill.
 
 		results = append(results, StationTrade{
 			TypeID:          typeID,
@@ -571,5 +596,81 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 			results[idx].SDS,
 			results[idx].BuyUnitsPerDay,
 		))
+
+		// Relist fee estimation.
+		// In competitive EVE markets, station traders must frequently update
+		// (relist) their orders to stay at the top of the book. Each relist
+		// costs a fraction of the original broker fee. This erodes the spread.
+		//
+		// Model: estimate relists-per-fill-cycle, then compute total relist
+		// cost as a per-unit drag on profit.
+		//   relistsPerFill = relistsPerDay × avgDaysToFill
+		//   avgDaysToFill  = 1 / velocity (or 1 if velocity unknown)
+		//   relistCost/unit = relistsPerFill × brokerFee% × price × relistFraction
+		//                     applied to BOTH buy and sell sides.
+		if params.BrokerFee > 0 {
+			relistsPerDay := params.RelistsPerDay
+			if relistsPerDay <= 0 {
+				// Auto-estimate from Competition Index.
+				// CI < 20: low competition → ~2 relists/day
+				// CI 20-60: moderate → ~5 relists/day
+				// CI > 60: intense 0.01 ISK war → ~10 relists/day
+				ci := results[idx].CI
+				switch {
+				case ci <= 10:
+					relistsPerDay = 1
+				case ci <= 20:
+					relistsPerDay = 3
+				case ci <= 40:
+					relistsPerDay = 5
+				case ci <= 60:
+					relistsPerDay = 8
+				case ci <= 100:
+					relistsPerDay = 12
+				default:
+					relistsPerDay = 15
+				}
+			}
+
+			// Average days to fill one unit: 1 / (dailyShare / orderSize).
+			// Simplified: if dailyShare units fill per day and we have a
+			// typical order, avgDaysToFill ≈ 1 (most station trades cycle daily).
+			// Use velocity if available, otherwise assume 1 day.
+			avgDaysToFill := 1.0
+			if results[idx].DailyVolume > 0 && dailyShare > 0 {
+				avgDaysToFill = 1.0 / (float64(dailyShare) / float64(results[idx].DailyVolume))
+				if avgDaysToFill < 0.1 {
+					avgDaysToFill = 0.1 // floor: even liquid items need some time
+				}
+				if avgDaysToFill > 30 {
+					avgDaysToFill = 30 // cap: if it takes >30 days, relist cost is huge
+				}
+			}
+
+			relistsPerFill := relistsPerDay * avgDaysToFill
+			brokerRate := params.BrokerFee / 100
+
+			// Relist fee per unit: applied to both buy-side and sell-side orders.
+			// Each relist costs brokerRate × price × DefaultRelistFraction.
+			buySideRelist := results[idx].BuyPrice * brokerRate * DefaultRelistFraction * relistsPerFill
+			sellSideRelist := results[idx].SellPrice * brokerRate * DefaultRelistFraction * relistsPerFill
+			relistCostPerUnit := buySideRelist + sellSideRelist
+
+			results[idx].RelistCostPerUnit = sanitizeFloat(relistCostPerUnit)
+			results[idx].ProfitAfterRelists = sanitizeFloat(results[idx].ProfitPerUnit - relistCostPerUnit)
+			results[idx].EstRelistsPerFill = sanitizeFloat(relistsPerFill)
+
+			// Recompute effectiveBuy for this item (same formula as in the main loop).
+			effBuy := results[idx].BuyPrice * (1 + params.BrokerFee/100)
+			if effBuy > 0 {
+				results[idx].MarginAfterRelists = sanitizeFloat(
+					(results[idx].ProfitPerUnit - relistCostPerUnit) / effBuy * 100,
+				)
+			}
+		} else {
+			// No broker fee → no relist cost; margin unchanged.
+			results[idx].MarginAfterRelists = results[idx].MarginPercent
+			results[idx].ProfitAfterRelists = results[idx].ProfitPerUnit
+		}
 	}
 }
