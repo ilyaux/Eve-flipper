@@ -56,27 +56,27 @@ type BlueprintInfo struct {
 
 // IndustryAnalysis is the result of analyzing a production chain.
 type IndustryAnalysis struct {
-	TargetTypeID      int32           `json:"target_type_id"`
-	TargetTypeName    string          `json:"target_type_name"`
-	Runs              int32           `json:"runs"`
-	TotalQuantity     int32           `json:"total_quantity"`
-	MarketBuyPrice    float64         `json:"market_buy_price"`   // Cost to buy ready product (from sell orders, no broker fee)
-	TotalBuildCost    float64         `json:"total_build_cost"`   // Cost to build from scratch
-	OptimalBuildCost  float64         `json:"optimal_build_cost"` // Cost with optimal buy/build decisions
-	Savings           float64         `json:"savings"`            // MarketBuyPrice - OptimalBuildCost
-	SavingsPercent    float64         `json:"savings_percent"`
-	SellRevenue       float64         `json:"sell_revenue"`       // Revenue after sales tax + broker fee
-	Profit            float64         `json:"profit"`             // SellRevenue - OptimalBuildCost
-	ProfitPercent     float64         `json:"profit_percent"`     // Profit / OptimalBuildCost * 100
-	ISKPerHour        float64         `json:"isk_per_hour"`       // Profit / manufacturing hours
-	ManufacturingTime int32           `json:"manufacturing_time"` // Total time in seconds
-	TotalJobCost      float64         `json:"total_job_cost"`     // Sum of all job installation costs
-	MaterialTree      *MaterialNode   `json:"material_tree"`
-	FlatMaterials     []*FlatMaterial `json:"flat_materials"` // Flattened list of base materials
-	SystemCostIndex        float64         `json:"system_cost_index"`
-	RegionID               int32           `json:"region_id"`   // Market region for execution plan
-	RegionName             string          `json:"region_name"` // Optional display name
-	BlueprintCostIncluded  float64         `json:"blueprint_cost_included"` // BP cost added to build cost
+	TargetTypeID          int32           `json:"target_type_id"`
+	TargetTypeName        string          `json:"target_type_name"`
+	Runs                  int32           `json:"runs"`
+	TotalQuantity         int32           `json:"total_quantity"`
+	MarketBuyPrice        float64         `json:"market_buy_price"`   // Cost to buy ready product (from sell orders, no broker fee)
+	TotalBuildCost        float64         `json:"total_build_cost"`   // Cost to build from scratch
+	OptimalBuildCost      float64         `json:"optimal_build_cost"` // Cost with optimal buy/build decisions
+	Savings               float64         `json:"savings"`            // MarketBuyPrice - OptimalBuildCost
+	SavingsPercent        float64         `json:"savings_percent"`
+	SellRevenue           float64         `json:"sell_revenue"`       // Revenue after sales tax + broker fee
+	Profit                float64         `json:"profit"`             // SellRevenue - OptimalBuildCost
+	ProfitPercent         float64         `json:"profit_percent"`     // Profit / OptimalBuildCost * 100
+	ISKPerHour            float64         `json:"isk_per_hour"`       // Profit / manufacturing hours
+	ManufacturingTime     int32           `json:"manufacturing_time"` // Total time in seconds
+	TotalJobCost          float64         `json:"total_job_cost"`     // Sum of all job installation costs
+	MaterialTree          *MaterialNode   `json:"material_tree"`
+	FlatMaterials         []*FlatMaterial `json:"flat_materials"` // Flattened list of base materials
+	SystemCostIndex       float64         `json:"system_cost_index"`
+	RegionID              int32           `json:"region_id"`               // Market region for execution plan
+	RegionName            string          `json:"region_name"`             // Optional display name
+	BlueprintCostIncluded float64         `json:"blueprint_cost_included"` // BP cost added to build cost
 }
 
 // FlatMaterial is a simplified material for the shopping list.
@@ -222,39 +222,30 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 
 	totalJobCost := a.sumJobCosts(tree)
 
-	regionID := int32(0)
-	regionName := ""
-	if params.SystemID != 0 {
-		if sys, ok := a.SDE.Systems[params.SystemID]; ok {
-			regionID = sys.RegionID
-			if r, ok := a.SDE.Regions[regionID]; ok {
-				regionName = r.Name
-			}
-		}
-	}
+	regionID, regionName := a.resolveMarketRegion(params)
 
 	return &IndustryAnalysis{
-		TargetTypeID:      params.TypeID,
-		TargetTypeName:    typeInfo.Name,
-		Runs:              params.Runs,
-		TotalQuantity:     totalQuantity,
-		MarketBuyPrice:    marketBuyPrice,
-		TotalBuildCost:    tree.BuildCost,
-		OptimalBuildCost:  optimalCost,
-		Savings:           savings,
-		SavingsPercent:    savingsPercent,
-		SellRevenue:       sellRevenue,
-		Profit:            profit,
-		ProfitPercent:     profitPercent,
-		ISKPerHour:        iskPerHour,
-		ManufacturingTime: mfgTime,
-		TotalJobCost:      totalJobCost,
-		MaterialTree:      tree,
-		FlatMaterials:     flatMaterials,
-		SystemCostIndex:        costIndex,
-		RegionID:               regionID,
-		RegionName:             regionName,
-		BlueprintCostIncluded:  bpCostIncluded,
+		TargetTypeID:          params.TypeID,
+		TargetTypeName:        typeInfo.Name,
+		Runs:                  params.Runs,
+		TotalQuantity:         totalQuantity,
+		MarketBuyPrice:        marketBuyPrice,
+		TotalBuildCost:        tree.BuildCost,
+		OptimalBuildCost:      optimalCost,
+		Savings:               savings,
+		SavingsPercent:        savingsPercent,
+		SellRevenue:           sellRevenue,
+		Profit:                profit,
+		ProfitPercent:         profitPercent,
+		ISKPerHour:            iskPerHour,
+		ManufacturingTime:     mfgTime,
+		TotalJobCost:          totalJobCost,
+		MaterialTree:          tree,
+		FlatMaterials:         flatMaterials,
+		SystemCostIndex:       costIndex,
+		RegionID:              regionID,
+		RegionName:            regionName,
+		BlueprintCostIncluded: bpCostIncluded,
 	}, nil
 }
 
@@ -431,21 +422,74 @@ func (a *IndustryAnalyzer) sumJobCosts(node *MaterialNode) float64 {
 	return total
 }
 
-// fetchMarketPrices fetches best sell order prices for materials.
-// FIX #4: Uses the region of the user's selected system, falling back to The Forge (Jita).
-// Results are cached for 10 minutes per region.
-func (a *IndustryAnalyzer) fetchMarketPrices(params IndustryParams) (map[int32]float64, error) {
+// resolveMarketRegion chooses the market region for pricing.
+// Priority: selected manufacturing system -> selected NPC station -> The Forge (Jita).
+func (a *IndustryAnalyzer) resolveMarketRegion(params IndustryParams) (int32, string) {
 	// Default: The Forge (Jita)
 	regionID := int32(10000002)
+	regionName := ""
 
-	// Use the region of the selected manufacturing system if available
+	// Prefer explicit manufacturing system.
 	if params.SystemID != 0 {
 		if sys, ok := a.SDE.Systems[params.SystemID]; ok && sys.RegionID != 0 {
 			regionID = sys.RegionID
 		}
+	} else if params.StationID != 0 {
+		// Fallback: infer region from NPC station metadata in SDE.
+		// Player structures are not present in SDE station map.
+		if st, ok := a.SDE.Stations[params.StationID]; ok {
+			if sys, ok := a.SDE.Systems[st.SystemID]; ok && sys.RegionID != 0 {
+				regionID = sys.RegionID
+			}
+		}
 	}
 
-	return a.ESI.GetCachedMarketPrices(a.IndustryCache, regionID)
+	if r, ok := a.SDE.Regions[regionID]; ok {
+		regionName = r.Name
+	}
+	return regionID, regionName
+}
+
+func mergeMarketPrices(regionPrices, stationPrices map[int32]float64) map[int32]float64 {
+	out := make(map[int32]float64, len(regionPrices)+len(stationPrices))
+	for typeID, price := range regionPrices {
+		out[typeID] = price
+	}
+	for typeID, price := range stationPrices {
+		// Station-specific price wins when available.
+		out[typeID] = price
+	}
+	return out
+}
+
+// fetchMarketPrices fetches best sell order prices for materials.
+// If StationID is provided, station-specific prices are used with per-item fallback
+// to regional prices so missing station liquidity doesn't zero out pricing.
+func (a *IndustryAnalyzer) fetchMarketPrices(params IndustryParams) (map[int32]float64, error) {
+	regionID, _ := a.resolveMarketRegion(params)
+
+	regionPrices, err := a.ESI.GetCachedMarketPrices(a.IndustryCache, regionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if params.StationID == 0 {
+		return regionPrices, nil
+	}
+
+	stationPrices, err := a.ESI.GetCachedMarketPricesByLocation(a.IndustryCache, regionID, params.StationID)
+	if err != nil {
+		// Graceful fallback: station-level fetch failed, keep regional pricing.
+		log.Printf("Warning: failed to fetch station prices for location %d in region %d: %v",
+			params.StationID, regionID, err)
+		return regionPrices, nil
+	}
+	if len(stationPrices) == 0 {
+		// No visible liquidity on selected station/structure; use region fallback.
+		return regionPrices, nil
+	}
+
+	return mergeMarketPrices(regionPrices, stationPrices), nil
 }
 
 // GetBlueprintInfo returns blueprint information for a type.

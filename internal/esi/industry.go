@@ -8,7 +8,7 @@ import (
 
 // IndustryCostIndex represents the cost index for a solar system.
 type IndustryCostIndex struct {
-	SolarSystemID int32   `json:"solar_system_id"`
+	SolarSystemID int32 `json:"solar_system_id"`
 	CostIndices   []struct {
 		Activity  string  `json:"activity"`
 		CostIndex float64 `json:"cost_index"`
@@ -39,20 +39,30 @@ type IndustryCache struct {
 	costIndicesTime time.Time
 	prices          map[int32]*IndustryPrice // typeID -> prices
 	pricesTime      time.Time
-	
+
 	// Market prices cache (sell order minimums), keyed by region
 	marketPricesMu       sync.RWMutex
 	marketPrices         map[int32]float64 // typeID -> min sell price
 	marketPricesRegionID int32             // which region these prices belong to
 	marketPricesTime     time.Time
+
+	// Station/structure specific market prices cache (sell order minimums),
+	// keyed by "regionID:locationID".
+	locationMarketPrices map[string]locationMarketPricesEntry
+}
+
+type locationMarketPricesEntry struct {
+	prices    map[int32]float64
+	fetchedAt time.Time
 }
 
 // NewIndustryCache creates a new industry cache.
 func NewIndustryCache() *IndustryCache {
 	return &IndustryCache{
-		costIndices:  make(map[int32]*SystemCostIndices),
-		prices:       make(map[int32]*IndustryPrice),
-		marketPrices: make(map[int32]float64),
+		costIndices:          make(map[int32]*SystemCostIndices),
+		prices:               make(map[int32]*IndustryPrice),
+		marketPrices:         make(map[int32]float64),
+		locationMarketPrices: make(map[string]locationMarketPricesEntry),
 	}
 }
 
@@ -264,4 +274,55 @@ func (c *Client) GetCachedMarketPrices(cache *IndustryCache, regionID int32) (ma
 	cache.marketPricesTime = time.Now()
 
 	return prices, nil
+}
+
+// GetCachedMarketPricesByLocation returns min sell prices scoped to a specific
+// station/structure (location ID), cached for 10 minutes.
+func (c *Client) GetCachedMarketPricesByLocation(cache *IndustryCache, regionID int32, locationID int64) (map[int32]float64, error) {
+	if locationID == 0 {
+		return c.GetCachedMarketPrices(cache, regionID)
+	}
+
+	key := fmt.Sprintf("%d:%d", regionID, locationID)
+
+	cache.marketPricesMu.RLock()
+	if entry, ok := cache.locationMarketPrices[key]; ok &&
+		time.Since(entry.fetchedAt) < MarketPricesCacheTTL &&
+		len(entry.prices) > 0 {
+		result := make(map[int32]float64, len(entry.prices))
+		for typeID, price := range entry.prices {
+			result[typeID] = price
+		}
+		cache.marketPricesMu.RUnlock()
+		return result, nil
+	}
+	cache.marketPricesMu.RUnlock()
+
+	orders, err := c.FetchRegionOrders(regionID, "sell")
+	if err != nil {
+		return nil, err
+	}
+
+	prices := make(map[int32]float64)
+	for _, o := range orders {
+		if o.LocationID != locationID {
+			continue
+		}
+		if existing, ok := prices[o.TypeID]; !ok || o.Price < existing {
+			prices[o.TypeID] = o.Price
+		}
+	}
+
+	cache.marketPricesMu.Lock()
+	cache.locationMarketPrices[key] = locationMarketPricesEntry{
+		prices:    prices,
+		fetchedAt: time.Now(),
+	}
+	cache.marketPricesMu.Unlock()
+
+	result := make(map[int32]float64, len(prices))
+	for typeID, price := range prices {
+		result[typeID] = price
+	}
+	return result, nil
 }

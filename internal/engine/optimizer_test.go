@@ -753,3 +753,67 @@ func TestComputePortfolioOptimization_LookbackFilter(t *testing.T) {
 		t.Errorf("diag.UniqueDays = %d, want 2", diag.UniqueDays)
 	}
 }
+
+func TestComputePortfolioOptimization_InvariantToNotionalScaling(t *testing.T) {
+	base := time.Now().UTC()
+
+	buildTxns := func(scaleType35 float64) []esi.WalletTransaction {
+		cashflows34 := []float64{-100, 125, -90, 120, -95, 130}
+		cashflows35 := []float64{-80, 95, -70, 90, -75, 100}
+		txns := make([]esi.WalletTransaction, 0, 12)
+
+		appendTxn := func(day time.Time, typeID int32, typeName string, cashflow float64) {
+			amount := math.Abs(cashflow)
+			isBuy := cashflow < 0
+			txns = append(txns, esi.WalletTransaction{
+				Date:      day.Format(time.RFC3339),
+				TypeID:    typeID,
+				TypeName:  typeName,
+				UnitPrice: amount,
+				Quantity:  1,
+				IsBuy:     isBuy,
+			})
+		}
+
+		for i := 0; i < len(cashflows34); i++ {
+			day := base.AddDate(0, 0, -i-1)
+			appendTxn(day, 34, "Tritanium", cashflows34[i])
+			appendTxn(day, 35, "Pyerite", cashflows35[i]*scaleType35)
+		}
+		return txns
+	}
+
+	plain, diagPlain := ComputePortfolioOptimization(buildTxns(1), 90)
+	scaled, diagScaled := ComputePortfolioOptimization(buildTxns(50), 90)
+	if plain == nil {
+		t.Fatalf("expected non-nil base optimization, diagnostic: %+v", diagPlain)
+	}
+	if scaled == nil {
+		t.Fatalf("expected non-nil scaled optimization, diagnostic: %+v", diagScaled)
+	}
+
+	weightByType := func(out *PortfolioOptimization, typeID int32) float64 {
+		for i, a := range out.Assets {
+			if a.TypeID == typeID {
+				return out.OptimalWeights[i]
+			}
+		}
+		return -1
+	}
+
+	w34Plain := weightByType(plain, 34)
+	w35Plain := weightByType(plain, 35)
+	w34Scaled := weightByType(scaled, 34)
+	w35Scaled := weightByType(scaled, 35)
+
+	if w34Plain < 0 || w35Plain < 0 || w34Scaled < 0 || w35Scaled < 0 {
+		t.Fatalf("failed to find expected assets in optimization output")
+	}
+
+	if math.Abs(w34Plain-w34Scaled) > 0.05 {
+		t.Errorf("type 34 optimal weight changed after pure notional scaling: base=%v scaled=%v", w34Plain, w34Scaled)
+	}
+	if math.Abs(w35Plain-w35Scaled) > 0.05 {
+		t.Errorf("type 35 optimal weight changed after pure notional scaling: base=%v scaled=%v", w35Plain, w35Scaled)
+	}
+}

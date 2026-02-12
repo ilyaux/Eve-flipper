@@ -67,6 +67,28 @@ func TestComputeExecutionPlan_CannotFill(t *testing.T) {
 	if got.TotalDepth != 50 {
 		t.Errorf("TotalDepth = %v, want 50", got.TotalDepth)
 	}
+	if math.Abs(got.ExpectedPrice-100) > 1e-9 {
+		t.Errorf("ExpectedPrice = %v, want 100", got.ExpectedPrice)
+	}
+	// Must be based on actually filled volume (50), not requested quantity (100).
+	if math.Abs(got.TotalCost-5000) > 1e-9 {
+		t.Errorf("TotalCost = %v, want 5000", got.TotalCost)
+	}
+}
+
+func TestComputeExecutionPlan_CannotFill_SellTotalCostUsesFilledQuantity(t *testing.T) {
+	orders := []esi.MarketOrder{{Price: 80, VolumeRemain: 40}}
+	got := ComputeExecutionPlan(orders, 100, false)
+	if got.CanFill {
+		t.Error("CanFill want false when depth < quantity")
+	}
+	if math.Abs(got.ExpectedPrice-80) > 1e-9 {
+		t.Errorf("ExpectedPrice = %v, want 80", got.ExpectedPrice)
+	}
+	// For sell side TotalCost represents expected revenue for the executable part.
+	if math.Abs(got.TotalCost-3200) > 1e-9 {
+		t.Errorf("TotalCost = %v, want 3200", got.TotalCost)
+	}
 }
 
 func TestComputeExecutionPlan_EmptyOrZeroQty(t *testing.T) {

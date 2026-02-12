@@ -64,3 +64,88 @@ func TestGetBlueprintInfo_DelegatesToSDE(t *testing.T) {
 		t.Error("GetBlueprintInfo(888) should be false")
 	}
 }
+
+func TestResolveMarketRegion_PrefersSystemOverStation(t *testing.T) {
+	a := &IndustryAnalyzer{
+		SDE: &sde.Data{
+			Systems: map[int32]*sde.SolarSystem{
+				30000142: {ID: 30000142, RegionID: 10000002},
+				30002187: {ID: 30002187, RegionID: 10000043},
+			},
+			Stations: map[int64]*sde.Station{
+				60008494: {ID: 60008494, SystemID: 30002187},
+			},
+			Regions: map[int32]*sde.Region{
+				10000002: {ID: 10000002, Name: "The Forge"},
+				10000043: {ID: 10000043, Name: "Domain"},
+			},
+		},
+	}
+
+	regionID, regionName := a.resolveMarketRegion(IndustryParams{
+		SystemID:  30000142,
+		StationID: 60008494,
+	})
+
+	if regionID != 10000002 {
+		t.Fatalf("regionID = %d, want 10000002", regionID)
+	}
+	if regionName != "The Forge" {
+		t.Fatalf("regionName = %q, want The Forge", regionName)
+	}
+}
+
+func TestResolveMarketRegion_UsesStationWhenSystemMissing(t *testing.T) {
+	a := &IndustryAnalyzer{
+		SDE: &sde.Data{
+			Systems: map[int32]*sde.SolarSystem{
+				30000142: {ID: 30000142, RegionID: 10000002},
+			},
+			Stations: map[int64]*sde.Station{
+				60003760: {ID: 60003760, SystemID: 30000142},
+			},
+			Regions: map[int32]*sde.Region{
+				10000002: {ID: 10000002, Name: "The Forge"},
+			},
+		},
+	}
+
+	regionID, regionName := a.resolveMarketRegion(IndustryParams{
+		SystemID:  0,
+		StationID: 60003760,
+	})
+
+	if regionID != 10000002 {
+		t.Fatalf("regionID = %d, want 10000002", regionID)
+	}
+	if regionName != "The Forge" {
+		t.Fatalf("regionName = %q, want The Forge", regionName)
+	}
+}
+
+func TestMergeMarketPrices_StationOverridesRegionWithFallback(t *testing.T) {
+	region := map[int32]float64{
+		34:    5.0,  // fallback only
+		35:    12.0, // overridden by station
+		11399: 1.5,  // fallback only
+	}
+	station := map[int32]float64{
+		35: 9.5,  // station override
+		36: 20.0, // station-only type
+	}
+
+	got := mergeMarketPrices(region, station)
+
+	if got[34] != 5.0 {
+		t.Fatalf("type 34 = %v, want 5.0", got[34])
+	}
+	if got[35] != 9.5 {
+		t.Fatalf("type 35 = %v, want 9.5", got[35])
+	}
+	if got[36] != 20.0 {
+		t.Fatalf("type 36 = %v, want 20.0", got[36])
+	}
+	if got[11399] != 1.5 {
+		t.Fatalf("type 11399 = %v, want 1.5", got[11399])
+	}
+}

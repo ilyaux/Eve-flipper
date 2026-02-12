@@ -105,7 +105,6 @@ type StationTradeParams struct {
 	SalesTaxPercent float64
 	BrokerFee       float64 // percent
 	MinDailyVolume  int64   // 0 = no filter
-	MaxResults      int     // 0 = use default (100)
 
 	// --- EVE Guru Profit Filters ---
 	MinItemProfit   float64 // Min profit per unit ISK (e.g. 1,000,000)
@@ -389,8 +388,8 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 			// Skip player structures that couldn't be resolved (no access + not in EVERef)
 			if isPlayerStructureID(results[i].StationID) &&
 				(results[i].StationName == "" ||
-				 strings.HasPrefix(results[i].StationName, "Structure ") ||
-				 strings.HasPrefix(results[i].StationName, "Location ")) {
+					strings.HasPrefix(results[i].StationName, "Structure ") ||
+					strings.HasPrefix(results[i].StationName, "Location ")) {
 				skippedCount++
 				continue
 			}

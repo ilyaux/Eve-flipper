@@ -40,9 +40,10 @@ type Server struct {
 	ssoStates   map[string]ssoStateEntry
 
 	// Wallet transaction cache for P&L tab (TTL 2 min).
-	txnCacheMu   sync.RWMutex
-	txnCache     []esi.WalletTransaction
-	txnCacheTime time.Time
+	txnCacheMu          sync.RWMutex
+	txnCache            []esi.WalletTransaction
+	txnCacheTime        time.Time
+	txnCacheCharacterID int64
 
 	// PLEX dashboard cache (TTL 5 min) to avoid hammering ESI with 5 concurrent requests per click.
 	plexCacheMu   sync.RWMutex
@@ -58,6 +59,47 @@ type Server struct {
 type ssoStateEntry struct {
 	ExpiresAt time.Time
 	Desktop   bool
+}
+
+const walletTxnCacheTTL = 2 * time.Minute
+
+func (s *Server) getWalletTxnCache(characterID int64) ([]esi.WalletTransaction, bool) {
+	s.txnCacheMu.RLock()
+	defer s.txnCacheMu.RUnlock()
+
+	if s.txnCache == nil {
+		return nil, false
+	}
+	if s.txnCacheCharacterID != characterID {
+		return nil, false
+	}
+	if time.Since(s.txnCacheTime) >= walletTxnCacheTTL {
+		return nil, false
+	}
+
+	// Return a copy to avoid accidental sharing across handlers.
+	out := make([]esi.WalletTransaction, len(s.txnCache))
+	copy(out, s.txnCache)
+	return out, true
+}
+
+func (s *Server) setWalletTxnCache(characterID int64, txns []esi.WalletTransaction) {
+	cached := make([]esi.WalletTransaction, len(txns))
+	copy(cached, txns)
+
+	s.txnCacheMu.Lock()
+	s.txnCache = cached
+	s.txnCacheTime = time.Now()
+	s.txnCacheCharacterID = characterID
+	s.txnCacheMu.Unlock()
+}
+
+func (s *Server) clearWalletTxnCache() {
+	s.txnCacheMu.Lock()
+	s.txnCache = nil
+	s.txnCacheTime = time.Time{}
+	s.txnCacheCharacterID = 0
+	s.txnCacheMu.Unlock()
 }
 
 // NewServer creates a Server with the given config, ESI client, and database.
@@ -535,7 +577,6 @@ type scanRequest struct {
 	// Advanced filters
 	MinDailyVolume   int64   `json:"min_daily_volume"`
 	MaxInvestment    float64 `json:"max_investment"`
-	MaxResults       int     `json:"max_results"`
 	MinRouteSecurity float64 `json:"min_route_security"` // 0 = all; 0.45 = highsec only; 0.7 = min 0.7
 	TargetRegion     string  `json:"target_region"`      // Empty = search all by radius; region name = search only in that region
 	// Contract-specific filters
@@ -583,7 +624,6 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 		MinDailyVolume:    req.MinDailyVolume,
 		MaxInvestment:     req.MaxInvestment,
 		MinRouteSecurity:  req.MinRouteSecurity,
-		MaxResults:        req.MaxResults,
 		TargetRegionID:    targetRegionID,
 		MinContractPrice:  req.MinContractPrice,
 		MaxContractMargin: req.MaxContractMargin,
@@ -815,14 +855,13 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SystemName       string  `json:"system_name"`
-		CargoCapacity    float64 `json:"cargo_capacity"`
-		MinMargin        float64 `json:"min_margin"`
-		SalesTaxPercent  float64 `json:"sales_tax_percent"`
-		BrokerFeePercent float64 `json:"broker_fee_percent"`
-		MinHops          int     `json:"min_hops"`
-		MaxHops          int     `json:"max_hops"`
-		MaxResults       int     `json:"max_results"`
+		SystemName        string  `json:"system_name"`
+		CargoCapacity     float64 `json:"cargo_capacity"`
+		MinMargin         float64 `json:"min_margin"`
+		SalesTaxPercent   float64 `json:"sales_tax_percent"`
+		BrokerFeePercent  float64 `json:"broker_fee_percent"`
+		MinHops           int     `json:"min_hops"`
+		MaxHops           int     `json:"max_hops"`
 		MinRouteSecurity  float64 `json:"min_route_security"` // 0 = all; 0.45 = highsec only; 0.7 = min 0.7
 		IncludeStructures bool    `json:"include_structures"`
 	}
@@ -864,7 +903,6 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		BrokerFeePercent: req.BrokerFeePercent,
 		MinHops:          req.MinHops,
 		MaxHops:          req.MaxHops,
-		MaxResults:       req.MaxResults,
 		MinRouteSecurity: req.MinRouteSecurity,
 	}
 
@@ -1000,7 +1038,6 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		SalesTaxPercent float64 `json:"sales_tax_percent"`
 		BrokerFee       float64 `json:"broker_fee"`
 		MinDailyVolume  int64   `json:"min_daily_volume"`
-		MaxResults      int     `json:"max_results"`
 		// EVE Guru Profit Filters
 		MinItemProfit   float64 `json:"min_item_profit"`
 		MinDemandPerDay float64 `json:"min_demand_per_day"`
@@ -1123,7 +1160,6 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 			SalesTaxPercent:    req.SalesTaxPercent,
 			BrokerFee:          req.BrokerFee,
 			MinDailyVolume:     req.MinDailyVolume,
-			MaxResults:         req.MaxResults,
 			MinItemProfit:      req.MinItemProfit,
 			MinDemandPerDay:    req.MinDemandPerDay,
 			AvgPricePeriod:     req.AvgPricePeriod,
@@ -1612,6 +1648,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Delete()
+	s.clearWalletTxnCache()
 	log.Println("[AUTH] Logged out")
 	writeJSON(w, map[string]interface{}{"logged_in": false})
 }
@@ -1902,15 +1939,8 @@ func (s *Server) handleAuthPortfolio(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use cached wallet transactions (TTL 2 min) to avoid hammering ESI
-	// when the user switches between P&L periods.
-	s.txnCacheMu.RLock()
-	cached := s.txnCache
-	cacheAge := time.Since(s.txnCacheTime)
-	s.txnCacheMu.RUnlock()
-
 	var txns []esi.WalletTransaction
-	if cached != nil && cacheAge < 2*time.Minute {
+	if cached, ok := s.getWalletTxnCache(sess.CharacterID); ok {
 		txns = cached
 	} else {
 		freshTxns, fetchErr := s.esi.GetWalletTransactions(sess.CharacterID, token)
@@ -1933,10 +1963,7 @@ func (s *Server) handleAuthPortfolio(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Store in cache
-		s.txnCacheMu.Lock()
-		s.txnCache = freshTxns
-		s.txnCacheTime = time.Now()
-		s.txnCacheMu.Unlock()
+		s.setWalletTxnCache(sess.CharacterID, freshTxns)
 
 		txns = freshTxns
 	}
@@ -1965,14 +1992,8 @@ func (s *Server) handleAuthPortfolioOptimize(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Use cached wallet transactions (TTL 2 min) to avoid hammering ESI.
-	s.txnCacheMu.RLock()
-	cached := s.txnCache
-	cacheAge := time.Since(s.txnCacheTime)
-	s.txnCacheMu.RUnlock()
-
 	var txns []esi.WalletTransaction
-	if cached != nil && cacheAge < 2*time.Minute {
+	if cached, ok := s.getWalletTxnCache(sess.CharacterID); ok {
 		txns = cached
 	} else {
 		freshTxns, fetchErr := s.esi.GetWalletTransactions(sess.CharacterID, token)
@@ -1995,10 +2016,7 @@ func (s *Server) handleAuthPortfolioOptimize(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Store in cache
-		s.txnCacheMu.Lock()
-		s.txnCache = freshTxns
-		s.txnCacheTime = time.Now()
-		s.txnCacheMu.Unlock()
+		s.setWalletTxnCache(sess.CharacterID, freshTxns)
 
 		txns = freshTxns
 	}
@@ -2033,7 +2051,7 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 		BrokerFee          float64 `json:"broker_fee"`
 		SalesTaxPercent    float64 `json:"sales_tax_percent"`
 		MaxDepth           int     `json:"max_depth"`
-		OwnBlueprint       *bool   `json:"own_blueprint"`    // nil → true (default)
+		OwnBlueprint       *bool   `json:"own_blueprint"` // nil → true (default)
 		BlueprintCost      float64 `json:"blueprint_cost"`
 		BlueprintIsBPO     bool    `json:"blueprint_is_bpo"`
 	}

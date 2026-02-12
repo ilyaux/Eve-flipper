@@ -95,3 +95,35 @@ func TestBuildOrderIndex_Empty(t *testing.T) {
 		t.Errorf("highestBuy should be empty, got %d systems", len(idx.highestBuy))
 	}
 }
+
+func TestSelectClosestRouteRegions(t *testing.T) {
+	systemRegion := map[int32]int32{
+		1: 10, // dist 0
+		2: 20, // dist 5
+		3: 30, // dist 2
+		4: 20, // dist 3 (improves region 20 min dist to 3)
+		5: 40, // dist 9
+	}
+	systems := map[int32]int{
+		1: 0,
+		2: 5,
+		3: 2,
+		4: 3,
+		5: 9,
+	}
+
+	got := selectClosestRouteRegions(systemRegion, systems, 2)
+
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	if !got[10] {
+		t.Fatalf("expected region 10 (closest) to be selected")
+	}
+	if !got[30] {
+		t.Fatalf("expected region 30 (second closest) to be selected")
+	}
+	if got[20] || got[40] {
+		t.Fatalf("unexpected farther regions selected: %+v", got)
+	}
+}

@@ -29,7 +29,7 @@ type ExecutionPlanResult struct {
 	BestPrice       float64      `json:"best_price"`        // top of book
 	ExpectedPrice   float64      `json:"expected_price"`    // volume-weighted avg fill price
 	SlippagePercent float64      `json:"slippage_percent"`  // (expected - best) / best * 100
-	TotalCost       float64      `json:"total_cost"`        // expected price * quantity (for buy)
+	TotalCost       float64      `json:"total_cost"`        // expected price * filled quantity (buy cost / sell revenue for fillable part)
 	DepthLevels     []DepthLevel `json:"depth_levels"`      // fill curve (first N levels until Q filled)
 	TotalDepth      int32        `json:"total_depth"`       // total volume in book (for this type/location)
 	CanFill         bool         `json:"can_fill"`          // book has enough volume for Q
@@ -121,7 +121,7 @@ func ComputeExecutionPlan(orders []esi.MarketOrder, quantity int32, isBuy bool) 
 			out.SlippagePercent = -out.SlippagePercent // for sell, we get less than best
 		}
 	}
-	out.TotalCost = out.ExpectedPrice * float64(quantity)
+	out.TotalCost = out.ExpectedPrice * float64(filled)
 
 	// Optimal slicing: participation-rate model.
 	// Each slice should not exceed targetPct of total book depth to avoid

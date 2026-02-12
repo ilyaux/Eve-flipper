@@ -14,6 +14,9 @@ import (
 const (
 	// MaxTradeJumps is the maximum jump distance for a single trade hop.
 	MaxTradeJumps = 50
+	// MaxRouteSearchRegions limits how many nearest regions we load market orders from
+	// for route search. Keeps inter-region support while bounding ESI load.
+	MaxRouteSearchRegions = 12
 )
 
 // orderIndex is a pre-built index of best sell/buy prices per system per type.
@@ -28,6 +31,46 @@ type orderEntry struct {
 	Price        float64
 	VolumeRemain int32
 	LocationID   int64
+}
+
+type regionDistance struct {
+	regionID int32
+	dist     int
+}
+
+func selectClosestRouteRegions(systemRegion map[int32]int32, systems map[int32]int, maxRegions int) map[int32]bool {
+	minDistByRegion := make(map[int32]int)
+	for systemID, dist := range systems {
+		regionID, ok := systemRegion[systemID]
+		if !ok || regionID == 0 {
+			continue
+		}
+		cur, exists := minDistByRegion[regionID]
+		if !exists || dist < cur {
+			minDistByRegion[regionID] = dist
+		}
+	}
+
+	ordered := make([]regionDistance, 0, len(minDistByRegion))
+	for regionID, dist := range minDistByRegion {
+		ordered = append(ordered, regionDistance{regionID: regionID, dist: dist})
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].dist == ordered[j].dist {
+			return ordered[i].regionID < ordered[j].regionID
+		}
+		return ordered[i].dist < ordered[j].dist
+	})
+
+	if maxRegions > 0 && len(ordered) > maxRegions {
+		ordered = ordered[:maxRegions]
+	}
+
+	out := make(map[int32]bool, len(ordered))
+	for _, r := range ordered {
+		out[r.regionID] = true
+	}
+	return out
 }
 
 // buildOrderIndex builds per-system order maps from raw orders.
@@ -185,46 +228,87 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 		return nil, fmt.Errorf("system not found: %s", params.SystemName)
 	}
 
-	regionID, ok := s.SDE.Universe.SystemRegion[systemID]
-	if !ok || regionID == 0 {
-		return nil, fmt.Errorf("region not found for system %d", systemID)
+	searchRadius := params.MaxHops * MaxTradeJumps
+	if searchRadius < MaxTradeJumps {
+		searchRadius = MaxTradeJumps
+	}
+	var reachableSystems map[int32]int
+	if params.MinRouteSecurity > 0 {
+		reachableSystems = s.SDE.Universe.SystemsWithinRadiusMinSecurity(systemID, searchRadius, params.MinRouteSecurity)
+	} else {
+		reachableSystems = s.SDE.Universe.SystemsWithinRadius(systemID, searchRadius)
+	}
+	if len(reachableSystems) == 0 {
+		return nil, fmt.Errorf("no reachable systems from system %d", systemID)
 	}
 
-	// Fetch all orders for the region once
-	progress("Fetching market orders...")
-	regions := map[int32]bool{regionID: true}
-	allSystems := s.SDE.Universe.SystemsInRegions(regions)
+	// Select the nearest reachable regions (inter-region support with bounded load).
+	regions := selectClosestRouteRegions(s.SDE.Universe.SystemRegion, reachableSystems, MaxRouteSearchRegions)
+	if len(regions) == 0 {
+		return nil, fmt.Errorf("no reachable regions from system %d", systemID)
+	}
+	searchSystems := make(map[int32]int, len(reachableSystems))
+	for sysID, dist := range reachableSystems {
+		if regionID, ok := s.SDE.Universe.SystemRegion[sysID]; ok && regions[regionID] {
+			searchSystems[sysID] = dist
+		}
+	}
+
+	progress(fmt.Sprintf("Fetching market orders from %d regions...", len(regions)))
 
 	var sellOrders, buyOrders []esi.MarketOrder
+	fetchBySide := func(orderType string) []esi.MarketOrder {
+		var out []esi.MarketOrder
+		var outMu sync.Mutex
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 4)
+
+		for regionID := range regions {
+			wg.Add(1)
+			go func(rid int32) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				orders, err := s.ESI.FetchRegionOrders(rid, orderType)
+				if err != nil {
+					log.Printf("[Route] FetchRegionOrders(%d,%s) error: %v", rid, orderType, err)
+					return
+				}
+
+				filtered := make([]esi.MarketOrder, 0, len(orders))
+				for _, o := range orders {
+					if _, ok := searchSystems[o.SystemID]; ok {
+						filtered = append(filtered, o)
+					}
+				}
+				if len(filtered) == 0 {
+					return
+				}
+
+				outMu.Lock()
+				out = append(out, filtered...)
+				outMu.Unlock()
+			}(regionID)
+		}
+		wg.Wait()
+		return out
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		orders, err := s.ESI.FetchRegionOrders(regionID, "sell")
-		if err != nil {
-			return
-		}
-		for _, o := range orders {
-			if _, ok := allSystems[o.SystemID]; ok {
-				sellOrders = append(sellOrders, o)
-			}
-		}
+		sellOrders = fetchBySide("sell")
 	}()
 	go func() {
 		defer wg.Done()
-		orders, err := s.ESI.FetchRegionOrders(regionID, "buy")
-		if err != nil {
-			return
-		}
-		for _, o := range orders {
-			if _, ok := allSystems[o.SystemID]; ok {
-				buyOrders = append(buyOrders, o)
-			}
-		}
+		buyOrders = fetchBySide("buy")
 	}()
 	wg.Wait()
 
-	log.Printf("[Route] Fetched %d sell, %d buy orders", len(sellOrders), len(buyOrders))
+	log.Printf("[Route] Fetched %d sell, %d buy orders across %d regions (%d systems in envelope)",
+		len(sellOrders), len(buyOrders), len(regions), len(searchSystems))
 	progress("Building order index...")
 	idx := buildOrderIndex(sellOrders, buyOrders)
 

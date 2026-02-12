@@ -98,7 +98,6 @@ type RouteParams struct {
 	BrokerFeePercent float64
 	MinHops          int
 	MaxHops          int
-	MaxResults       int     // 0 = use default (50)
 	MinRouteSecurity float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7
 }
 
@@ -116,7 +115,6 @@ type ScanParams struct {
 	MaxInvestment    float64 // 0 = no filter (max ISK per position)
 	SecurityFilter   string  // "" = all, "highsec", "lowsec", "nullsec"
 	MinRouteSecurity float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7 (route must stay in this security)
-	MaxResults       int     // 0 = use default (100)
 	TargetRegionID   int32   // 0 = search all by radius; >0 = search only in this specific region
 
 	// --- Contract-specific filters ---

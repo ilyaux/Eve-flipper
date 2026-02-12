@@ -103,6 +103,7 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 	type itemDayPnL struct {
 		pnlByDay     map[string]float64
 		totalBought  float64
+		totalSold    float64
 		typeName     string
 		transactions int
 	}
@@ -135,6 +136,7 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 			item.totalBought += amount
 		} else {
 			item.pnlByDay[day] += amount
+			item.totalSold += amount
 		}
 	}
 
@@ -151,6 +153,7 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 		typeName     string
 		totalBought  float64
 		tradingDays  int
+		dailyPnL     []float64
 		dailyReturns []float64
 	}
 	var candidates []assetCandidate
@@ -161,11 +164,20 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 			continue
 		}
 
-		// Build aligned daily returns (using all days, 0 for days with no activity).
+		// Normalize daily cashflows by item capital scale so covariance and weights
+		// are not dominated by absolute ISK size differences between items.
+		capitalScale := math.Max(item.totalBought, item.totalSold)
+		if capitalScale <= 0 {
+			continue
+		}
+
+		// Build aligned daily series (using all days, 0 for days with no activity).
+		dailyPnL := make([]float64, len(sortedDays))
 		returns := make([]float64, len(sortedDays))
 		for i, day := range sortedDays {
 			if pnl, ok := item.pnlByDay[day]; ok {
-				returns[i] = pnl
+				dailyPnL[i] = pnl
+				returns[i] = pnl / capitalScale
 			}
 		}
 
@@ -174,6 +186,7 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 			typeName:     item.typeName,
 			totalBought:  item.totalBought,
 			tradingDays:  tradingDays,
+			dailyPnL:     dailyPnL,
 			dailyReturns: returns,
 		})
 	}
@@ -312,27 +325,41 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 		hhi += w * w
 	}
 
+	// Scale return-space risk/return metrics to ISK/day using current deployed capital.
+	// This keeps frontend charts in familiar units while optimization itself remains
+	// based on normalized returns.
+	referenceCapital := totalCapital
+	if referenceCapital <= 0 {
+		referenceCapital = 1
+	}
+
 	// Phase 7: Long-only efficient frontier.
 	// Computed by solving the constrained QP at each target return level,
 	// ensuring all plotted points are achievable with long-only portfolios.
 	frontier := computeLongOnlyFrontier(means, covMatrix, frontierPoints)
+	for i := range frontier {
+		frontier[i].Risk *= referenceCapital
+		frontier[i].Return *= referenceCapital
+	}
 
 	// Phase 8: Build asset stats.
 	assetStats := make([]AssetStats, n)
 	for i, c := range candidates {
-		vol := math.Sqrt(variance(c.dailyReturns))
+		volRet := math.Sqrt(variance(c.dailyReturns))
 		sr := 0.0
-		if vol > 0 {
-			sr = (means[i] / vol) * math.Sqrt(365)
+		if volRet > 0 {
+			sr = (means[i] / volRet) * math.Sqrt(365)
 		}
+		avgDailyPnL := means[i] * referenceCapital
+		vol := volRet * referenceCapital
 		totalPnL := 0.0
-		for _, r := range c.dailyReturns {
-			totalPnL += r
+		for _, pnl := range c.dailyPnL {
+			totalPnL += pnl
 		}
 		assetStats[i] = AssetStats{
 			TypeID:        c.typeID,
 			TypeName:      c.typeName,
-			AvgDailyPnL:   means[i],
+			AvgDailyPnL:   avgDailyPnL,
 			Volatility:    vol,
 			SharpeRatio:   sr,
 			CurrentWeight: currentWeights[i],

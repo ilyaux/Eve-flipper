@@ -334,9 +334,9 @@ func (s *Scanner) calculateResults(
 	// This deduplicates multiple orders at the same location while preserving
 	// different location combinations (e.g. Amarr→Rens AND Jita→Rens).
 	type pairKey struct {
-		typeID     int32
-		sellLocID  int64 // where we BUY (from sell orders)
-		buyLocID   int64 // where we SELL (to buy orders)
+		typeID    int32
+		sellLocID int64 // where we BUY (from sell orders)
+		buyLocID  int64 // where we SELL (to buy orders)
 	}
 	bestPairs := make(map[pairKey]*FlipResult)
 
@@ -575,20 +575,41 @@ func (s *Scanner) calculateResults(
 			k := locTypeKey{o.LocationID, o.TypeID}
 			buyByLT[k] = append(buyByLT[k], o)
 		}
+		filtered := make([]FlipResult, 0, len(results))
 		for i := range results {
 			r := &results[i]
-			planBuy := ComputeExecutionPlan(sellByLT[locTypeKey{r.BuyLocationID, r.TypeID}], r.UnitsToBuy, true)
-			planSell := ComputeExecutionPlan(buyByLT[locTypeKey{r.SellLocationID, r.TypeID}], r.UnitsToBuy, false)
+			safeQty, planBuy, planSell, expectedProfit := findSafeExecutionQuantity(
+				sellByLT[locTypeKey{r.BuyLocationID, r.TypeID}],
+				buyByLT[locTypeKey{r.SellLocationID, r.TypeID}],
+				r.UnitsToBuy,
+				brokerFeeRate,
+				taxMult,
+			)
+			if safeQty <= 0 {
+				continue
+			}
+			if safeQty != r.UnitsToBuy {
+				r.UnitsToBuy = safeQty
+				r.TotalProfit = r.ProfitPerUnit * float64(safeQty)
+				if r.TotalJumps > 0 {
+					r.ProfitPerJump = sanitizeFloat(r.TotalProfit / float64(r.TotalJumps))
+				} else {
+					r.ProfitPerJump = 0
+				}
+			}
 			r.ExpectedBuyPrice = planBuy.ExpectedPrice
 			r.ExpectedSellPrice = planSell.ExpectedPrice
 			r.SlippageBuyPct = planBuy.SlippagePercent
 			r.SlippageSellPct = planSell.SlippagePercent
-			if r.ExpectedBuyPrice > 0 && r.ExpectedSellPrice > 0 {
-				effBuy := r.ExpectedBuyPrice * (1 + brokerFeeRate)
-				effSell := r.ExpectedSellPrice * taxMult * (1 - brokerFeeRate)
-				r.ExpectedProfit = (effSell - effBuy) * float64(r.UnitsToBuy)
-			}
+			r.ExpectedProfit = expectedProfit
+			filtered = append(filtered, *r)
 		}
+		results = filtered
+
+		// Re-sort because safe qty can reduce TotalProfit.
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].TotalProfit > results[j].TotalProfit
+		})
 	}
 
 	// OPT: prefetch station names in parallel (only for top N)
@@ -722,6 +743,95 @@ func harmonicDailyShare(dailyVolume int64, competitors int) int64 {
 	return result
 }
 
+// findSafeExecutionQuantity returns the largest executable and profitable quantity
+// up to desiredQty based on order-book depth and expected fill prices.
+// Predicate assumes profitability does not improve on larger quantities.
+func findSafeExecutionQuantity(
+	askOrdersAtBuy []esi.MarketOrder, // sell orders we buy from
+	bidOrdersAtSell []esi.MarketOrder, // buy orders we sell into
+	desiredQty int32,
+	brokerFeeRate float64,
+	taxMult float64,
+) (int32, ExecutionPlanResult, ExecutionPlanResult, float64) {
+	var zeroBuy ExecutionPlanResult
+	var zeroSell ExecutionPlanResult
+	if desiredQty <= 0 || len(askOrdersAtBuy) == 0 || len(bidOrdersAtSell) == 0 {
+		return 0, zeroBuy, zeroSell, 0
+	}
+
+	eval := func(q int32) (bool, ExecutionPlanResult, ExecutionPlanResult, float64) {
+		if q <= 0 {
+			return false, zeroBuy, zeroSell, 0
+		}
+		planBuy := ComputeExecutionPlan(askOrdersAtBuy, q, true)
+		planSell := ComputeExecutionPlan(bidOrdersAtSell, q, false)
+		expectedProfit := expectedProfitForPlans(planBuy, planSell, q, brokerFeeRate, taxMult)
+		ok := planBuy.CanFill && planSell.CanFill && expectedProfit > 0
+		return ok, planBuy, planSell, expectedProfit
+	}
+
+	ok, planBuy, planSell, expectedProfit := eval(desiredQty)
+	if ok {
+		return desiredQty, planBuy, planSell, expectedProfit
+	}
+
+	maxFill := desiredQty
+	if planBuy.TotalDepth < maxFill {
+		maxFill = planBuy.TotalDepth
+	}
+	if planSell.TotalDepth < maxFill {
+		maxFill = planSell.TotalDepth
+	}
+	if maxFill <= 0 {
+		return 0, planBuy, planSell, 0
+	}
+
+	okOne, planBuyOne, planSellOne, expectedOne := eval(1)
+	if !okOne {
+		return 0, planBuyOne, planSellOne, 0
+	}
+
+	low := int32(1)
+	bestBuy := planBuyOne
+	bestSell := planSellOne
+	bestExpected := expectedOne
+	high := maxFill
+
+	for low+1 < high {
+		mid := low + (high-low)/2
+		okMid, planBuyMid, planSellMid, expectedMid := eval(mid)
+		if okMid {
+			low = mid
+			bestBuy = planBuyMid
+			bestSell = planSellMid
+			bestExpected = expectedMid
+		} else {
+			high = mid
+		}
+	}
+
+	okHigh, planBuyHigh, planSellHigh, expectedHigh := eval(high)
+	if okHigh {
+		return high, planBuyHigh, planSellHigh, expectedHigh
+	}
+	return low, bestBuy, bestSell, bestExpected
+}
+
+func expectedProfitForPlans(
+	planBuy ExecutionPlanResult,
+	planSell ExecutionPlanResult,
+	qty int32,
+	brokerFeeRate float64,
+	taxMult float64,
+) float64 {
+	if qty <= 0 || planBuy.ExpectedPrice <= 0 || planSell.ExpectedPrice <= 0 {
+		return 0
+	}
+	effBuy := planBuy.ExpectedPrice * (1 + brokerFeeRate)
+	effSell := planSell.ExpectedPrice * taxMult * (1 - brokerFeeRate)
+	return (effSell - effBuy) * float64(qty)
+}
+
 // sanitizeFloat replaces NaN/Inf with 0 to prevent JSON marshal errors.
 func sanitizeFloat(f float64) float64 {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
@@ -758,14 +868,24 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 		regionID int32
 		typeID   int32
 	}
-	needed := make(map[historyKey]int) // key -> index in results
+	type historyNeed struct {
+		idx         int
+		totalListed int32
+	}
+	needed := make(map[historyKey][]historyNeed) // key -> all result indices with total listed quantity
+	totalNeeds := 0
 	for i := range results {
 		regionID := s.SDE.Universe.SystemRegion[results[i].SellSystemID]
 		if regionID == 0 {
 			continue
 		}
 		key := historyKey{regionID, results[i].TypeID}
-		needed[key] = i
+		totalListed := results[i].SellOrderRemain + results[i].BuyOrderRemain
+		needed[key] = append(needed[key], historyNeed{
+			idx:         i,
+			totalListed: totalListed,
+		})
+		totalNeeds++
 	}
 
 	// Fetch history concurrently (limited)
@@ -773,12 +893,12 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 		idx   int
 		stats esi.MarketStats
 	}
-	ch := make(chan histResult, len(needed))
+	ch := make(chan histResult, totalNeeds)
 	sem := make(chan struct{}, 10) // limit concurrent history requests
 
-	for key, idx := range needed {
+	for key, needs := range needed {
 		sem <- struct{}{}
-		go func(k historyKey, i int) {
+		go func(k historyKey, ns []historyNeed) {
 			defer func() { <-sem }()
 
 			// Try cache first
@@ -787,19 +907,22 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 				var err error
 				entries, err = s.ESI.FetchMarketHistory(k.regionID, k.typeID)
 				if err != nil {
-					ch <- histResult{i, esi.MarketStats{}}
+					for _, n := range ns {
+						ch <- histResult{n.idx, esi.MarketStats{}}
+					}
 					return
 				}
 				s.History.SetMarketHistory(k.regionID, k.typeID, entries)
 			}
 
-			totalListed := results[i].SellOrderRemain + results[i].BuyOrderRemain
-			stats := esi.ComputeMarketStats(entries, totalListed)
-			ch <- histResult{i, stats}
-		}(key, idx)
+			for _, n := range ns {
+				stats := esi.ComputeMarketStats(entries, n.totalListed)
+				ch <- histResult{n.idx, stats}
+			}
+		}(key, needs)
 	}
 
-	for range needed {
+	for i := 0; i < totalNeeds; i++ {
 		r := <-ch
 		results[r.idx].DailyVolume = r.stats.DailyVolume
 		results[r.idx].Velocity = sanitizeFloat(r.stats.Velocity)

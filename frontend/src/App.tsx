@@ -804,7 +804,6 @@ function App() {
                 "min_margin",
                 "sales_tax_percent",
                 "broker_fee_percent",
-                "max_results",
                 "min_daily_volume",
                 "min_contract_price",
                 "max_contract_margin",
