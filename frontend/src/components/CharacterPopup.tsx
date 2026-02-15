@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Modal } from "./Modal";
 import { getCharacterInfo, getCharacterRoles, getOrderDesk, getUndercuts, getPortfolioPnL, getPortfolioOptimization, type OptimizerResult } from "../lib/api";
 import { useI18n, type TranslationKey } from "../lib/i18n";
@@ -1859,6 +1859,7 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
   const [deskError, setDeskError] = useState<string | null>(null);
   const [deskData, setDeskData] = useState<OrderDeskResponse | null>(null);
   const [showDesk, setShowDesk] = useState(false);
+  const deskReqSeq = useRef(0);
 
   const filtered = orders.filter((o) => {
     if (filter === "buy") return o.is_buy_order;
@@ -1889,20 +1890,49 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
   }, [undercutLoaded, undercutLoading, loadUndercuts]);
 
   const loadDesk = useCallback(() => {
+    const reqID = ++deskReqSeq.current;
     setDeskLoading(true);
     setDeskError(null);
     getOrderDesk({ salesTax, brokerFee, targetEtaDays })
-      .then(setDeskData)
-      .catch((e) => setDeskError(e.message))
-      .finally(() => setDeskLoading(false));
+      .then((next) => {
+        if (reqID !== deskReqSeq.current) return;
+        setDeskData(next);
+      })
+      .catch((e) => {
+        if (reqID !== deskReqSeq.current) return;
+        setDeskError(e?.message || "Unknown error");
+      })
+      .finally(() => {
+        if (reqID === deskReqSeq.current) {
+          setDeskLoading(false);
+        }
+      });
   }, [salesTax, brokerFee, targetEtaDays]);
 
   const toggleDesk = useCallback(() => {
     if (!showDesk && !deskData) {
       loadDesk();
     }
-    setShowDesk(!showDesk);
+    setShowDesk((prev) => !prev);
   }, [showDesk, deskData, loadDesk]);
+
+  const hasDeskParamDrift = useMemo(() => {
+    if (!deskData) return false;
+    const s = deskData.settings;
+    return (
+      Math.abs(s.sales_tax_percent - salesTax) > 1e-9 ||
+      Math.abs(s.broker_fee_percent - brokerFee) > 1e-9 ||
+      Math.abs(s.target_eta_days - targetEtaDays) > 1e-9
+    );
+  }, [deskData, salesTax, brokerFee, targetEtaDays]);
+
+  useEffect(() => {
+    if (!showDesk || !deskData || !hasDeskParamDrift) return;
+    const timer = window.setTimeout(() => {
+      loadDesk();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [showDesk, deskData, hasDeskParamDrift, loadDesk]);
 
   const deskRows = useMemo(() => {
     const source = deskData?.orders ?? [];
@@ -1910,6 +1940,15 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
     if (filter === "sell") return source.filter((o) => !o.is_buy_order);
     return source;
   }, [deskData, filter]);
+
+  const effectiveTargetEtaDays = deskData?.settings.target_eta_days ?? targetEtaDays;
+  const effectiveWarnExpiryDays = deskData?.settings.warn_expiry_days ?? 2;
+
+  const recommendationLabel = useCallback((value: string) => {
+    if (value === "cancel") return t("orderDeskActionCancel");
+    if (value === "reprice") return t("orderDeskActionReprice");
+    return t("orderDeskActionHold");
+  }, [t]);
 
   if (orders.length === 0) {
     return <div className="text-center text-eve-dim py-8">{t("charNoOrders")}</div>;
@@ -2008,11 +2047,15 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
 
           {deskData?.summary && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label={t("charTotalOrders")} value={String(deskData.summary.total_orders)} subvalue={`${deskData.summary.buy_orders} BUY / ${deskData.summary.sell_orders} SELL`} />
+              <StatCard
+                label={t("charTotalOrders")}
+                value={String(deskData.summary.total_orders)}
+                subvalue={`${deskData.summary.buy_orders} ${t("charBuy")} / ${deskData.summary.sell_orders} ${t("charSell")}`}
+              />
               <StatCard
                 label={t("orderDeskNeedAction")}
                 value={String(deskData.summary.needs_reprice + deskData.summary.needs_cancel)}
-                subvalue={`${deskData.summary.needs_reprice} reprice / ${deskData.summary.needs_cancel} cancel`}
+                subvalue={`${deskData.summary.needs_reprice} ${t("orderDeskActionReprice")} / ${deskData.summary.needs_cancel} ${t("orderDeskActionCancel")}`}
                 color={(deskData.summary.needs_reprice + deskData.summary.needs_cancel) > 0 ? "text-eve-warning" : "text-eve-profit"}
               />
               <StatCard
@@ -2044,6 +2087,10 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
                   {deskRows.map((row) => {
                     const sideClass = row.is_buy_order ? "text-eve-profit" : "text-eve-error";
                     const etaLabel = row.eta_days >= 0 ? `${row.eta_days.toFixed(1)}d` : "—";
+                    const sideLabel = row.is_buy_order ? t("charBuy") : t("charSell");
+                    const positionLabel = row.book_available ? `#${row.position}/${row.total_orders}` : "—";
+                    const queueLabel = row.book_available ? row.queue_ahead_qty.toLocaleString() : "—";
+                    const suggestedLabel = row.book_available ? formatIsk(row.suggested_price) : "—";
                     return (
                       <tr key={row.order_id} className="border-t border-eve-border/50 hover:bg-eve-panel/50">
                         <td className="px-2 py-2">
@@ -2053,21 +2100,23 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
                                 ? "bg-red-500/20 text-red-400"
                                 : row.recommendation === "reprice"
                                   ? "bg-amber-500/20 text-amber-400"
-                                  : "bg-emerald-500/20 text-emerald-400"
+                                  : row.book_available
+                                    ? "bg-emerald-500/20 text-emerald-400"
+                                    : "bg-eve-dim/20 text-eve-dim"
                             }`}
                             title={row.reason}
                           >
-                            {row.recommendation.toUpperCase()}
+                            {recommendationLabel(row.recommendation)}
                           </span>
                         </td>
-                        <td className={`px-2 py-2 ${sideClass}`}>{row.is_buy_order ? "BUY" : "SELL"} #{row.position}/{row.total_orders}</td>
+                        <td className={`px-2 py-2 ${sideClass}`}>{sideLabel} {positionLabel}</td>
                         <td className="px-2 py-2 text-eve-text max-w-[220px] truncate" title={row.type_name}>{row.type_name || `#${row.type_id}`}</td>
                         <td className="px-2 py-2 text-right text-eve-accent">{formatIsk(row.price)}</td>
                         <td className="px-2 py-2 text-right text-eve-dim">{row.volume_remain.toLocaleString()}</td>
-                        <td className="px-2 py-2 text-right text-eve-dim">{row.queue_ahead_qty.toLocaleString()}</td>
-                        <td className={`px-2 py-2 text-right ${row.eta_days >= 0 && row.eta_days > targetEtaDays ? "text-eve-warning" : "text-eve-dim"}`}>{etaLabel}</td>
-                        <td className={`px-2 py-2 text-right ${row.days_to_expire >= 0 && row.days_to_expire <= 2 ? "text-eve-warning" : "text-eve-dim"}`}>{row.days_to_expire >= 0 ? `${row.days_to_expire}d` : "—"}</td>
-                        <td className="px-2 py-2 text-right text-eve-text">{formatIsk(row.suggested_price)}</td>
+                        <td className="px-2 py-2 text-right text-eve-dim">{queueLabel}</td>
+                        <td className={`px-2 py-2 text-right ${row.eta_days >= 0 && row.eta_days > effectiveTargetEtaDays ? "text-eve-warning" : "text-eve-dim"}`}>{etaLabel}</td>
+                        <td className={`px-2 py-2 text-right ${row.days_to_expire >= 0 && row.days_to_expire <= effectiveWarnExpiryDays ? "text-eve-warning" : "text-eve-dim"}`}>{row.days_to_expire >= 0 ? `${row.days_to_expire}d` : "—"}</td>
+                        <td className="px-2 py-2 text-right text-eve-text">{suggestedLabel}</td>
                       </tr>
                     );
                   })}
@@ -2128,196 +2177,6 @@ function ActiveOrdersWithDeskTab({ orders, formatIsk, t }: ActiveOrdersWithDeskT
   );
 }
 
-interface OrderDeskTabProps {
-  formatIsk: (v: number) => string;
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}
-
-// Deprecated: now combined into ActiveOrdersWithDeskTab
-// @ts-ignore - keeping for reference
-function _OrderDeskTab({ formatIsk, t }: OrderDeskTabProps) {
-  const [salesTax, setSalesTax] = useState(8);
-  const [brokerFee, setBrokerFee] = useState(1);
-  const [targetEtaDays, setTargetEtaDays] = useState(3);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<OrderDeskResponse | null>(null);
-  const [side, setSide] = useState<"all" | "buy" | "sell">("all");
-
-  const loadDesk = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    getOrderDesk({ salesTax, brokerFee, targetEtaDays })
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [salesTax, brokerFee, targetEtaDays]);
-
-  useEffect(() => {
-    loadDesk();
-  }, [loadDesk]);
-
-  const rows = useMemo(() => {
-    const source = data?.orders ?? [];
-    if (side === "buy") return source.filter((o) => o.is_buy_order);
-    if (side === "sell") return source.filter((o) => !o.is_buy_order);
-    return source;
-  }, [data, side]);
-
-  if (loading && !data) {
-    return (
-      <div className="flex items-center justify-center h-full text-eve-dim text-xs">
-        <span className="inline-block w-4 h-4 border-2 border-eve-accent/40 border-t-eve-accent rounded-full animate-spin mr-2" />
-        {t("loading")}...
-      </div>
-    );
-  }
-
-  if (error && !data) {
-    return <div className="flex items-center justify-center h-full text-eve-error text-xs">{error}</div>;
-  }
-
-  const summary = data?.summary;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs text-eve-dim uppercase tracking-wider">{t("charOrderDeskTab")}</div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 text-[10px]">
-            <span className="text-eve-dim">{t("pnlSalesTax")}</span>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step={0.1}
-              value={salesTax}
-              onChange={(e) => setSalesTax(parseFloat(e.target.value) || 0)}
-              className="w-14 px-1 py-0.5 rounded-sm border border-eve-border bg-eve-dark text-eve-text"
-            />
-          </div>
-          <div className="flex items-center gap-1 text-[10px]">
-            <span className="text-eve-dim">{t("pnlBrokerFee")}</span>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step={0.1}
-              value={brokerFee}
-              onChange={(e) => setBrokerFee(parseFloat(e.target.value) || 0)}
-              className="w-14 px-1 py-0.5 rounded-sm border border-eve-border bg-eve-dark text-eve-text"
-            />
-          </div>
-          <div className="flex items-center gap-1 text-[10px]">
-            <span className="text-eve-dim">{t("orderDeskTargetETA")}</span>
-            <input
-              type="number"
-              min={0.5}
-              max={60}
-              step={0.5}
-              value={targetEtaDays}
-              onChange={(e) => setTargetEtaDays(parseFloat(e.target.value) || 3)}
-              className="w-14 px-1 py-0.5 rounded-sm border border-eve-border bg-eve-dark text-eve-text"
-            />
-          </div>
-          <button
-            onClick={loadDesk}
-            className="px-2.5 py-1 text-[10px] rounded-sm border bg-eve-panel border-eve-border text-eve-dim hover:text-eve-text hover:border-eve-accent/50"
-          >
-            {t("charRefresh")}
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-eve-error/10 border border-eve-error/30 rounded-sm px-3 py-2 text-xs text-eve-error">
-          {error}
-        </div>
-      )}
-
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label={t("charTotalOrders")} value={String(summary.total_orders)} subvalue={`${summary.buy_orders} BUY / ${summary.sell_orders} SELL`} />
-          <StatCard
-            label={t("orderDeskNeedAction")}
-            value={String(summary.needs_reprice + summary.needs_cancel)}
-            subvalue={`${summary.needs_reprice} reprice / ${summary.needs_cancel} cancel`}
-            color={(summary.needs_reprice + summary.needs_cancel) > 0 ? "text-eve-warning" : "text-eve-profit"}
-          />
-          <StatCard
-            label={t("orderDeskMedianETA")}
-            value={summary.median_eta_days > 0 ? `${summary.median_eta_days.toFixed(1)}d` : "—"}
-            subvalue={`${summary.unknown_eta_count} ${t("orderDeskUnknownETA").toLowerCase()}`}
-          />
-          <StatCard label={t("orderDeskNotional")} value={`${formatIsk(summary.total_notional)} ISK`} />
-        </div>
-      )}
-
-      {data && data.orders.length > 0 && (
-        <div className="flex gap-2">
-          <FilterBtn active={side === "all"} onClick={() => setSide("all")} label={t("charAll")} count={data.orders.length} />
-          <FilterBtn active={side === "buy"} onClick={() => setSide("buy")} label={t("charBuy")} count={data.orders.filter((o) => o.is_buy_order).length} color="text-eve-profit" />
-          <FilterBtn active={side === "sell"} onClick={() => setSide("sell")} label={t("charSell")} count={data.orders.filter((o) => !o.is_buy_order).length} color="text-eve-error" />
-        </div>
-      )}
-
-      {!data || data.orders.length === 0 ? (
-        <div className="text-center text-eve-dim py-8">{t("orderDeskNoOrders")}</div>
-      ) : (
-        <div className="border border-eve-border rounded-sm overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-eve-panel">
-              <tr className="text-eve-dim">
-                <th className="px-2 py-2 text-left">{t("orderDeskAction")}</th>
-                <th className="px-2 py-2 text-left">{t("charOrderType")}</th>
-                <th className="px-2 py-2 text-left">{t("colItemName")}</th>
-                <th className="px-2 py-2 text-right">{t("charPrice")}</th>
-                <th className="px-2 py-2 text-right">{t("charVolume")}</th>
-                <th className="px-2 py-2 text-right">{t("orderDeskQueueAhead")}</th>
-                <th className="px-2 py-2 text-right">{t("orderDeskETA")}</th>
-                <th className="px-2 py-2 text-right">{t("orderDeskExpiry")}</th>
-                <th className="px-2 py-2 text-right">{t("orderDeskSuggested")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const sideClass = row.is_buy_order ? "text-eve-profit" : "text-eve-error";
-                const etaLabel = row.eta_days >= 0 ? `${row.eta_days.toFixed(1)}d` : "—";
-                return (
-                  <tr key={row.order_id} className="border-t border-eve-border/50 hover:bg-eve-panel/50">
-                    <td className="px-2 py-2">
-                      <span
-                        className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                          row.recommendation === "cancel"
-                            ? "bg-red-500/20 text-red-400"
-                            : row.recommendation === "reprice"
-                              ? "bg-amber-500/20 text-amber-400"
-                              : "bg-emerald-500/20 text-emerald-400"
-                        }`}
-                        title={row.reason}
-                      >
-                        {row.recommendation.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className={`px-2 py-2 ${sideClass}`}>{row.is_buy_order ? "BUY" : "SELL"} #{row.position}/{row.total_orders}</td>
-                    <td className="px-2 py-2 text-eve-text max-w-[220px] truncate" title={row.type_name}>{row.type_name || `#${row.type_id}`}</td>
-                    <td className="px-2 py-2 text-right text-eve-accent">{formatIsk(row.price)}</td>
-                    <td className="px-2 py-2 text-right text-eve-dim">{row.volume_remain.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-eve-dim">{row.queue_ahead_qty.toLocaleString()}</td>
-                    <td className={`px-2 py-2 text-right ${row.eta_days >= 0 && row.eta_days > targetEtaDays ? "text-eve-warning" : "text-eve-dim"}`}>{etaLabel}</td>
-                    <td className={`px-2 py-2 text-right ${row.days_to_expire >= 0 && row.days_to_expire <= 2 ? "text-eve-warning" : "text-eve-dim"}`}>{row.days_to_expire >= 0 ? `${row.days_to_expire}d` : "—"}</td>
-                    <td className="px-2 py-2 text-right text-eve-text">{formatIsk(row.suggested_price)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function StatCard({
   label,
   value,
@@ -2336,128 +2195,6 @@ function StatCard({
       <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{label}</div>
       <div className={`${large ? "text-xl" : "text-lg"} font-bold ${color}`}>{value}</div>
       {subvalue && <div className="text-xs text-eve-dim">{subvalue}</div>}
-    </div>
-  );
-}
-
-interface OrdersTabProps {
-  orders: CharacterOrder[];
-  formatIsk: (v: number) => string;
-  onOpenOrderDesk: () => void;
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}
-
-// Deprecated: now combined into ActiveOrdersWithDeskTab
-// @ts-ignore - keeping for reference
-function _OrdersTab({ orders, formatIsk, onOpenOrderDesk, t }: OrdersTabProps) {
-  const [filter, setFilter] = useState<"all" | "buy" | "sell">("all");
-  const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
-  const [undercuts, setUndercuts] = useState<Record<number, UndercutStatus>>({});
-  const [undercutLoading, setUndercutLoading] = useState(false);
-  const [undercutLoaded, setUndercutLoaded] = useState(false);
-  const [undercutError, setUndercutError] = useState<string | null>(null);
-
-  const filtered = orders.filter((o) => {
-    if (filter === "buy") return o.is_buy_order;
-    if (filter === "sell") return !o.is_buy_order;
-    return true;
-  });
-
-  const loadUndercuts = useCallback(async () => {
-    if (undercutLoaded || undercutLoading) return;
-    setUndercutLoading(true);
-    setUndercutError(null);
-    try {
-      const data = await getUndercuts();
-      const map: Record<number, UndercutStatus> = {};
-      for (const u of data) map[u.order_id] = u;
-      setUndercuts(map);
-      setUndercutLoaded(true);
-    } catch (e: any) {
-      setUndercutError(e?.message || "Unknown error");
-    } finally {
-      setUndercutLoading(false);
-    }
-  }, [undercutLoaded, undercutLoading]);
-
-  const toggleExpand = useCallback((orderId: number) => {
-    if (!undercutLoaded && !undercutLoading) loadUndercuts();
-    setExpandedOrder((prev) => (prev === orderId ? null : orderId));
-  }, [undercutLoaded, undercutLoading, loadUndercuts]);
-
-  if (orders.length === 0) {
-    return <div className="text-center text-eve-dim py-8">{t("charNoOrders")}</div>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {/* Filter */}
-      <div className="flex gap-2 items-center flex-wrap">
-        <FilterBtn active={filter === "all"} onClick={() => setFilter("all")} label={t("charAll")} count={orders.length} />
-        <FilterBtn active={filter === "buy"} onClick={() => setFilter("buy")} label={t("charBuy")} count={orders.filter((o) => o.is_buy_order).length} color="text-eve-profit" />
-        <FilterBtn active={filter === "sell"} onClick={() => setFilter("sell")} label={t("charSell")} count={orders.filter((o) => !o.is_buy_order).length} color="text-eve-error" />
-        <button
-          onClick={onOpenOrderDesk}
-          className="px-2.5 py-1 text-[10px] rounded-sm border border-eve-border text-eve-dim hover:text-eve-text hover:border-eve-accent/50"
-        >
-          {t("orderDeskOpen")}
-        </button>
-      </div>
-
-      {/* Undercut error */}
-      {undercutError && (
-        <div className="bg-eve-error/10 border border-eve-error/30 rounded-sm px-3 py-2 text-xs text-eve-error">
-          {t("charUndercutError")}: {undercutError}
-        </div>
-      )}
-
-      {/* Table */}
-      <div className="border border-eve-border rounded-sm overflow-hidden">
-        <table className="w-full text-xs">
-          <thead className="bg-eve-panel">
-            <tr className="text-eve-dim">
-              <th className="px-3 py-2 text-left">{t("charOrderType")}</th>
-              <th className="px-3 py-2 text-left">{t("colItemName")}</th>
-              <th className="px-3 py-2 text-right">{t("charPrice")}</th>
-              <th className="px-3 py-2 text-right">{t("charVolume")}</th>
-              <th className="px-3 py-2 text-right">{t("charTotal")}</th>
-              <th className="px-3 py-2 text-left">{t("charLocation")}</th>
-              <th className="w-8"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((order) => {
-              const uc = undercuts[order.order_id];
-              const isExpanded = expandedOrder === order.order_id;
-              // Undercut indicator color
-              let indicatorColor = "bg-eve-dim/30 text-eve-dim"; // gray = #1 or unknown
-              if (uc) {
-                if (uc.position === 1) {
-                  indicatorColor = "bg-emerald-500/20 text-emerald-400";
-                } else if (uc.undercut_pct > 1) {
-                  indicatorColor = "bg-red-500/20 text-red-400";
-                } else if (uc.undercut_pct > 0) {
-                  indicatorColor = "bg-amber-500/20 text-amber-400";
-                }
-              }
-
-              return (
-                <OrderRow
-                  key={order.order_id}
-                  order={order}
-                  uc={uc}
-                  isExpanded={isExpanded}
-                  indicatorColor={indicatorColor}
-                  undercutLoading={undercutLoading}
-                  formatIsk={formatIsk}
-                  toggleExpand={toggleExpand}
-                  t={t}
-                />
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

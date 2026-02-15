@@ -63,6 +63,7 @@ type OrderDeskOrder struct {
 	NetNotional         float64 `json:"net_notional"`
 	Position            int     `json:"position"`
 	TotalOrders         int     `json:"total_orders"`
+	BookAvailable       bool    `json:"book_available"`
 	BestPrice           float64 `json:"best_price"`
 	SuggestedPrice      float64 `json:"suggested_price"`
 	UndercutAmount      float64 `json:"undercut_amount"`
@@ -114,6 +115,7 @@ func ComputeOrderDesk(
 	playerOrders []esi.CharacterOrder,
 	regionOrders []esi.MarketOrder,
 	historyByKey map[OrderDeskHistoryKey][]esi.HistoryEntry,
+	unavailableBooks map[OrderDeskHistoryKey]bool,
 	opt OrderDeskOptions,
 ) OrderDeskResponse {
 	opt = normalizeOrderDeskOptions(opt)
@@ -162,6 +164,7 @@ func ComputeOrderDesk(
 			IssuedAt:       po.Issued,
 			DaysToExpire:   -1,
 			ETADays:        -1,
+			BookAvailable:  true,
 			Recommendation: "hold",
 			Reason:         "on track",
 		}
@@ -185,94 +188,102 @@ func ComputeOrderDesk(
 			}
 		}
 
-		k := bookKey{locationID: po.LocationID, typeID: po.TypeID, isBuy: po.IsBuyOrder}
-		orders := book[k]
-		if len(orders) > 0 {
-			sorted := make([]esi.MarketOrder, len(orders))
-			copy(sorted, orders)
-			if po.IsBuyOrder {
-				sort.Slice(sorted, func(i, j int) bool {
-					if sorted[i].Price == sorted[j].Price {
-						return sorted[i].OrderID < sorted[j].OrderID
-					}
-					return sorted[i].Price > sorted[j].Price
-				})
-			} else {
-				sort.Slice(sorted, func(i, j int) bool {
-					if sorted[i].Price == sorted[j].Price {
-						return sorted[i].OrderID < sorted[j].OrderID
-					}
-					return sorted[i].Price < sorted[j].Price
-				})
-			}
-
-			row.BestPrice = sorted[0].Price
-			for _, o := range sorted {
-				if o.Price != row.BestPrice {
-					break
+		hk := NewOrderDeskHistoryKey(po.RegionID, po.TypeID)
+		if unavailableBooks != nil && unavailableBooks[hk] {
+			row.BookAvailable = false
+			row.Position = 0
+			row.TotalOrders = 0
+			row.BestPrice = 0
+			row.SuggestedPrice = po.Price
+		} else {
+			k := bookKey{locationID: po.LocationID, typeID: po.TypeID, isBuy: po.IsBuyOrder}
+			orders := book[k]
+			if len(orders) > 0 {
+				sorted := make([]esi.MarketOrder, len(orders))
+				copy(sorted, orders)
+				if po.IsBuyOrder {
+					sort.Slice(sorted, func(i, j int) bool {
+						if sorted[i].Price == sorted[j].Price {
+							return sorted[i].OrderID < sorted[j].OrderID
+						}
+						return sorted[i].Price > sorted[j].Price
+					})
+				} else {
+					sort.Slice(sorted, func(i, j int) bool {
+						if sorted[i].Price == sorted[j].Price {
+							return sorted[i].OrderID < sorted[j].OrderID
+						}
+						return sorted[i].Price < sorted[j].Price
+					})
 				}
-				row.TopPriceQty += int64(o.VolumeRemain)
-			}
 
-			pos := 1
-			var queueAhead int64
-			playerFound := false
-			for _, o := range sorted {
-				if o.OrderID == po.OrderID {
-					playerFound = true
-					break
-				}
-				queueAhead += int64(o.VolumeRemain)
-				pos++
-			}
-			if !playerFound {
-				pos = 1
-				queueAhead = 0
+				row.BestPrice = sorted[0].Price
 				for _, o := range sorted {
-					if orderDeskBetterPrice(po.IsBuyOrder, o.Price, po.Price) {
-						queueAhead += int64(o.VolumeRemain)
-						pos++
+					if o.Price != row.BestPrice {
+						break
+					}
+					row.TopPriceQty += int64(o.VolumeRemain)
+				}
+
+				pos := 1
+				var queueAhead int64
+				playerFound := false
+				for _, o := range sorted {
+					if o.OrderID == po.OrderID {
+						playerFound = true
+						break
+					}
+					queueAhead += int64(o.VolumeRemain)
+					pos++
+				}
+				if !playerFound {
+					pos = 1
+					queueAhead = 0
+					for _, o := range sorted {
+						if orderDeskBetterPrice(po.IsBuyOrder, o.Price, po.Price) {
+							queueAhead += int64(o.VolumeRemain)
+							pos++
+						}
 					}
 				}
-			}
-			row.Position = pos
-			row.QueueAheadQty = queueAhead
-			row.TotalOrders = len(sorted)
-			if row.TotalOrders < row.Position {
-				row.TotalOrders = row.Position
-			}
-			if row.TotalOrders == 0 {
-				row.TotalOrders = 1
-			}
+				row.Position = pos
+				row.QueueAheadQty = queueAhead
+				row.TotalOrders = len(sorted)
+				if row.TotalOrders < row.Position {
+					row.TotalOrders = row.Position
+				}
+				if row.TotalOrders == 0 {
+					row.TotalOrders = 1
+				}
 
-			if po.IsBuyOrder {
-				if row.BestPrice > po.Price {
-					row.UndercutAmount = row.BestPrice - po.Price
+				if po.IsBuyOrder {
+					if row.BestPrice > po.Price {
+						row.UndercutAmount = row.BestPrice - po.Price
+					}
+					row.SuggestedPrice = row.BestPrice + 0.01
+				} else {
+					if row.BestPrice < po.Price {
+						row.UndercutAmount = po.Price - row.BestPrice
+					}
+					row.SuggestedPrice = row.BestPrice - 0.01
+					if row.SuggestedPrice < 0.01 {
+						row.SuggestedPrice = 0.01
+					}
 				}
-				row.SuggestedPrice = row.BestPrice + 0.01
+				if row.Position == 1 {
+					row.SuggestedPrice = po.Price
+				}
+				if po.Price > 0 {
+					row.UndercutPct = row.UndercutAmount / po.Price * 100.0
+				}
 			} else {
-				if row.BestPrice < po.Price {
-					row.UndercutAmount = po.Price - row.BestPrice
-				}
-				row.SuggestedPrice = row.BestPrice - 0.01
-				if row.SuggestedPrice < 0.01 {
-					row.SuggestedPrice = 0.01
-				}
-			}
-			if row.Position == 1 {
+				row.Position = 1
+				row.TotalOrders = 1
+				row.BestPrice = po.Price
 				row.SuggestedPrice = po.Price
 			}
-			if po.Price > 0 {
-				row.UndercutPct = row.UndercutAmount / po.Price * 100.0
-			}
-		} else {
-			row.Position = 1
-			row.TotalOrders = 1
-			row.BestPrice = po.Price
-			row.SuggestedPrice = po.Price
 		}
 
-		hk := NewOrderDeskHistoryKey(po.RegionID, po.TypeID)
 		row.AvgDailyVolume = orderDeskAvgDailyVolume(historyByKey[hk], 7)
 		row.EstimatedFillPerDay = row.AvgDailyVolume
 		if row.EstimatedFillPerDay > 0 && row.VolumeRemain > 0 {
@@ -347,22 +358,39 @@ func orderDeskAvgDailyVolume(entries []esi.HistoryEntry, days int) float64 {
 	if len(entries) == 0 || days <= 0 {
 		return 0
 	}
-	total := 0.0
-	count := 0
-	for i := len(entries) - 1; i >= 0 && count < days; i-- {
-		if entries[i].Volume <= 0 {
+	volByDate := make(map[string]float64, len(entries))
+	latestDate := ""
+	for _, e := range entries {
+		if e.Date == "" {
 			continue
 		}
-		total += float64(entries[i].Volume)
-		count++
+		if e.Date > latestDate {
+			latestDate = e.Date
+		}
+		if e.Volume > 0 {
+			volByDate[e.Date] += float64(e.Volume)
+		}
 	}
-	if count == 0 {
+	if latestDate == "" {
 		return 0
 	}
-	return total / float64(count)
+	end, err := time.Parse("2006-01-02", latestDate)
+	if err != nil {
+		return 0
+	}
+	total := 0.0
+	for i := 0; i < days; i++ {
+		d := end.AddDate(0, 0, -i).Format("2006-01-02")
+		total += volByDate[d]
+	}
+	return total / float64(days)
 }
 
 func orderDeskRecommendation(row OrderDeskOrder, opt OrderDeskOptions) (string, string) {
+	if !row.BookAvailable {
+		return "hold", "market book unavailable"
+	}
+
 	if row.ETADays < 0 {
 		if row.DaysToExpire >= 0 && row.DaysToExpire <= opt.WarnExpiryDays {
 			return "cancel", "low liquidity near expiry"

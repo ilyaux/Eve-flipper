@@ -43,7 +43,7 @@ func TestComputeOrderDesk_QueueEtaAndReprice(t *testing.T) {
 		},
 	}
 
-	got := ComputeOrderDesk(player, regional, history, OrderDeskOptions{
+	got := ComputeOrderDesk(player, regional, history, nil, OrderDeskOptions{
 		SalesTaxPercent:  8,
 		BrokerFeePercent: 1,
 		TargetETADays:    1,
@@ -93,7 +93,7 @@ func TestComputeOrderDesk_UnknownLiquidityCancelNearExpiry(t *testing.T) {
 		},
 	}
 
-	got := ComputeOrderDesk(player, nil, nil, OrderDeskOptions{
+	got := ComputeOrderDesk(player, nil, nil, nil, OrderDeskOptions{
 		SalesTaxPercent:  8,
 		BrokerFeePercent: 1,
 		TargetETADays:    3,
@@ -112,5 +112,88 @@ func TestComputeOrderDesk_UnknownLiquidityCancelNearExpiry(t *testing.T) {
 	}
 	if got.Summary.NeedsCancel != 1 {
 		t.Fatalf("summary needs_cancel = %d, want 1", got.Summary.NeedsCancel)
+	}
+}
+
+func TestComputeOrderDesk_AvgDailyVolumeIncludesZeroDays(t *testing.T) {
+	player := []esi.CharacterOrder{
+		{
+			OrderID:      3001,
+			TypeID:       34,
+			TypeName:     "Tritanium",
+			LocationID:   60003760,
+			LocationName: "Jita",
+			RegionID:     10000002,
+			Price:        100,
+			VolumeRemain: 10,
+			VolumeTotal:  10,
+			IsBuyOrder:   false,
+			Duration:     90,
+			Issued:       time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339),
+		},
+	}
+	history := map[OrderDeskHistoryKey][]esi.HistoryEntry{
+		NewOrderDeskHistoryKey(10000002, 34): {
+			{Date: "2026-02-06", Volume: 70},
+			{Date: "2026-02-07", Volume: 0},
+		},
+	}
+
+	got := ComputeOrderDesk(player, nil, history, nil, OrderDeskOptions{
+		TargetETADays:  3,
+		WarnExpiryDays: 2,
+	})
+
+	if len(got.Orders) != 1 {
+		t.Fatalf("orders len = %d, want 1", len(got.Orders))
+	}
+	row := got.Orders[0]
+	if math.Abs(row.AvgDailyVolume-10.0) > 1e-6 {
+		t.Fatalf("avg_daily_volume = %v, want 10", row.AvgDailyVolume)
+	}
+}
+
+func TestComputeOrderDesk_UnavailableBookDoesNotAssumeTop(t *testing.T) {
+	player := []esi.CharacterOrder{
+		{
+			OrderID:      4001,
+			TypeID:       34,
+			TypeName:     "Tritanium",
+			LocationID:   60003760,
+			LocationName: "Jita",
+			RegionID:     10000002,
+			Price:        100,
+			VolumeRemain: 20,
+			VolumeTotal:  20,
+			IsBuyOrder:   false,
+			Duration:     90,
+			Issued:       time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339),
+		},
+	}
+	// Regional data exists but handler marked this (region,type) pair as unavailable.
+	regional := []esi.MarketOrder{
+		{OrderID: 5001, TypeID: 34, LocationID: 60003760, Price: 99, VolumeRemain: 5, IsBuyOrder: false},
+	}
+	unavailable := map[OrderDeskHistoryKey]bool{
+		NewOrderDeskHistoryKey(10000002, 34): true,
+	}
+
+	got := ComputeOrderDesk(player, regional, nil, unavailable, OrderDeskOptions{
+		TargetETADays:  3,
+		WarnExpiryDays: 2,
+	})
+
+	if len(got.Orders) != 1 {
+		t.Fatalf("orders len = %d, want 1", len(got.Orders))
+	}
+	row := got.Orders[0]
+	if row.BookAvailable {
+		t.Fatalf("book_available = true, want false")
+	}
+	if row.Position != 0 || row.TotalOrders != 0 {
+		t.Fatalf("position/total = %d/%d, want 0/0", row.Position, row.TotalOrders)
+	}
+	if row.Recommendation != "hold" {
+		t.Fatalf("recommendation = %q, want hold", row.Recommendation)
 	}
 }

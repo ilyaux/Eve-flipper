@@ -29,11 +29,13 @@ func (s *Server) handleUIOpenMarket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[API] OpenMarketWindow: type_id=%d, character_id=%d", req.TypeID, sess.CharacterID)
 	if err := s.esi.OpenMarketWindow(req.TypeID, sess.AccessToken); err != nil {
 		log.Printf("[API] OpenMarketWindow error: type_id=%d, err=%v", req.TypeID, err)
 		http.Error(w, `{"error":"esi_error"}`, http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[API] OpenMarketWindow success: type_id=%d", req.TypeID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"success":true}`))
@@ -64,11 +66,14 @@ func (s *Server) handleUISetWaypoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[API] SetWaypoint: solar_system_id=%d, clear=%t, add_to_beginning=%t, character_id=%d",
+		req.SolarSystemID, req.ClearOtherWaypoints, req.AddToBeginning, sess.CharacterID)
 	if err := s.esi.SetWaypoint(req.SolarSystemID, req.ClearOtherWaypoints, req.AddToBeginning, sess.AccessToken); err != nil {
 		log.Printf("[API] SetWaypoint error: solar_system_id=%d, err=%v", req.SolarSystemID, err)
 		http.Error(w, `{"error":"esi_error"}`, http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[API] SetWaypoint success: solar_system_id=%d", req.SolarSystemID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"success":true}`))
@@ -97,11 +102,13 @@ func (s *Server) handleUIOpenContract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[API] OpenContractWindow: contract_id=%d, character_id=%d", req.ContractID, sess.CharacterID)
 	if err := s.esi.OpenContractWindow(req.ContractID, sess.AccessToken); err != nil {
 		log.Printf("[API] OpenContractWindow error: contract_id=%d, err=%v", req.ContractID, err)
 		http.Error(w, `{"error":"esi_error"}`, http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[API] OpenContractWindow success: contract_id=%d", req.ContractID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"success":true}`))

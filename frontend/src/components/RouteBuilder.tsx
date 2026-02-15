@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { findRoutes } from "@/lib/api";
+import { findRoutes, setWaypointInGame } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { RouteResult, RouteHop, ScanParams } from "@/lib/types";
 import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
+import { useGlobalToast } from "./Toast";
+import { handleEveUIError } from "@/lib/handleEveUIError";
 import {
   TabSettingsPanel,
   SettingsField,
@@ -17,6 +19,7 @@ interface Props {
   params: ScanParams;
   /** Results loaded externally (e.g. from history) */
   loadedResults?: RouteResult[] | null;
+  isLoggedIn?: boolean;
 }
 
 function formatISK(v: number): string {
@@ -30,7 +33,7 @@ function formatISKFull(v: number): string {
   return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-export function RouteBuilder({ params, loadedResults }: Props) {
+export function RouteBuilder({ params, loadedResults, isLoggedIn = false }: Props) {
   const { t } = useI18n();
   const [minHops, setMinHops] = useState<number | "">(2);
   const [maxHops, setMaxHops] = useState<number | "">(5);
@@ -204,6 +207,7 @@ export function RouteBuilder({ params, loadedResults }: Props) {
           onClose={() => setSelectedRoute(null)}
           onCopySystems={copyRouteSystems}
           salesTaxPercent={params.sales_tax_percent ?? 0}
+          isLoggedIn={isLoggedIn}
         />
       )}
     </div>
@@ -246,14 +250,27 @@ function RouteDetailPopup({
   onClose,
   onCopySystems,
   salesTaxPercent = 0,
+  isLoggedIn = false,
 }: {
   route: RouteResult;
   onClose: () => void;
   onCopySystems: (route: RouteResult) => void;
   salesTaxPercent?: number;
+  isLoggedIn?: boolean;
 }) {
   const { t } = useI18n();
+  const { addToast } = useGlobalToast();
   const [execPlanHop, setExecPlanHop] = useState<RouteHop | null>(null);
+
+  const handleSetWaypoint = async (systemID: number) => {
+    try {
+      await setWaypointInGame(systemID);
+      addToast(t("actionSuccess"), "success", 2000);
+    } catch (err: any) {
+      const { messageKey, duration } = handleEveUIError(err);
+      addToast(t(messageKey), "error", duration);
+    }
+  };
 
   return (
     <>
@@ -291,16 +308,28 @@ function RouteDetailPopup({
                   <span className="text-xs font-medium text-eve-text">
                     {hop.StationName || hop.SystemName}
                   </span>
-                  {hop.RegionID != null && hop.RegionID > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setExecPlanHop(hop)}
-                      className="ml-auto px-2 py-0.5 text-[10px] rounded-sm text-eve-dim hover:text-eve-accent border border-eve-border hover:border-eve-accent/30 transition-colors"
-                      title={t("execPlanTitle")}
-                    >
-                      📊 {t("execPlanTitle")}
-                    </button>
-                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    {isLoggedIn && hop.SystemID && (
+                      <button
+                        type="button"
+                        onClick={() => handleSetWaypoint(hop.SystemID)}
+                        className="px-2 py-0.5 text-[10px] rounded-sm text-eve-dim hover:text-eve-accent border border-eve-border hover:border-eve-accent/30 transition-colors"
+                        title={t("setDestination")}
+                      >
+                        🎯
+                      </button>
+                    )}
+                    {hop.RegionID != null && hop.RegionID > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setExecPlanHop(hop)}
+                        className="px-2 py-0.5 text-[10px] rounded-sm text-eve-dim hover:text-eve-accent border border-eve-border hover:border-eve-accent/30 transition-colors"
+                        title={t("execPlanTitle")}
+                      >
+                        📊
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="ml-8 space-y-1 text-xs">
@@ -315,6 +344,16 @@ function RouteDetailPopup({
                     <span className="text-eve-dim">→ {t("routeDeliverTo")}:</span>
                     <span className="text-eve-text">{hop.DestStationName || hop.DestSystemName}</span>
                     <span className="text-eve-dim font-mono">({hop.Jumps} {t("routeJumpsUnit")})</span>
+                    {isLoggedIn && hop.DestSystemID && (
+                      <button
+                        type="button"
+                        onClick={() => handleSetWaypoint(hop.DestSystemID)}
+                        className="px-1 py-0.5 text-[9px] rounded-sm text-eve-dim hover:text-eve-accent border border-eve-border hover:border-eve-accent/30 transition-colors"
+                        title={t("setDestination")}
+                      >
+                        🎯
+                      </button>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-eve-dim">{t("routeSell")}:</span>
