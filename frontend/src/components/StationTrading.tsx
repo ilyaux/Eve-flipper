@@ -12,6 +12,8 @@ import {
   getWatchlist,
   addToWatchlist,
   removeFromWatchlist,
+  openMarketInGame,
+  setWaypointInGame,
 } from "@/lib/api";
 import { formatISK, formatMargin, formatNumber } from "@/lib/format";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
@@ -19,6 +21,7 @@ import { MetricTooltip } from "./Tooltip";
 import { EmptyState } from "./EmptyState";
 import { StationTradingExecutionCalculator } from "./StationTradingExecutionCalculator";
 import { useGlobalToast } from "./Toast";
+import { handleEveUIError } from "@/lib/handleEveUIError";
 import {
   TabSettingsPanel,
   SettingsField,
@@ -1023,6 +1026,39 @@ export function StationTrading({
                 }}
               />
             )}
+            {/* EVE UI actions */}
+            {isLoggedIn && (
+              <>
+                <div className="h-px bg-eve-border my-1" />
+                <ContextItem
+                  label={`🎮 ${t("openMarket")}`}
+                  onClick={async () => {
+                    try {
+                      await openMarketInGame(contextMenu.row.TypeID);
+                      addToast(t("actionSuccess"), "success", 2000);
+                    } catch (err: any) {
+                      const { messageKey, duration } = handleEveUIError(err);
+                      addToast(t(messageKey), "error", duration);
+                    }
+                    setContextMenu(null);
+                  }}
+                />
+                <ContextItem
+                  label={`🎯 ${t("setDestination")}`}
+                  onClick={async () => {
+                    try {
+                      await setWaypointInGame(systemId);
+                      addToast(t("actionSuccess"), "success", 2000);
+                    } catch (err: any) {
+                      const { messageKey, duration } = handleEveUIError(err);
+                      addToast(t(messageKey), "error", duration);
+                    }
+                    setContextMenu(null);
+                  }}
+                />
+              </>
+            )}
+            <div className="h-px bg-eve-border my-1" />
             <ContextItem
               label={
                 pinnedKeys.has(stationRowKey(contextMenu.row))

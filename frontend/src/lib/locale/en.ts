@@ -1174,4 +1174,14 @@ export const en = {
     noNpcStationsToggleHint: "No NPC stations. Click the structure icon to include player structures.",
     loadingStructures: "Loading structures...",
     structuresFound: "{count} player structure(s) found",
+
+    // In-game UI actions (context menu)
+    openInEve: "Open in EVE",
+    openMarket: "Open Market Window",
+    setDestination: "Set Destination",
+    openContract: "Open Contract",
+    actionSuccess: "Action sent to game",
+    actionFailed: "Action failed: {error}",
+    loginRequired: "Login required for in-game actions",
+    reloginRequired: "New permissions added! Please logout and login again via EVE SSO",
 } as const;

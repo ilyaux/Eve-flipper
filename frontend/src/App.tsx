@@ -837,6 +837,7 @@ function App() {
               scanning={scanning && tab === "radius"}
               progress={tab === "radius" ? progress : ""}
               salesTaxPercent={params.sales_tax_percent}
+              isLoggedIn={authStatus.logged_in}
             />
           </div>
           <div
@@ -847,6 +848,7 @@ function App() {
               scanning={scanning && tab === "region"}
               progress={tab === "region" ? progress : ""}
               salesTaxPercent={params.sales_tax_percent}
+              isLoggedIn={authStatus.logged_in}
               showRegions
             />
           </div>
@@ -862,6 +864,7 @@ function App() {
               scanning={scanning && tab === "contracts"}
               progress={tab === "contracts" ? progress : ""}
               filterHints={contractFilterHints}
+              isLoggedIn={authStatus.logged_in}
             />
           </div>
           <div

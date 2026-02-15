@@ -132,7 +132,8 @@ func main() {
 			ClientSecret: clientSecret,
 			CallbackURL:  callbackURL,
 			Scopes: "esi-location.read_location.v1 esi-skills.read_skills.v1 esi-skills.read_skillqueue.v1 esi-wallet.read_character_wallet.v1 esi-assets.read_assets.v1 esi-markets.structure_markets.v1 esi-universe.read_structures.v1 esi-markets.read_character_orders.v1" +
-				" esi-characters.read_corporation_roles.v1 esi-wallet.read_corporation_wallets.v1 esi-corporations.read_corporation_membership.v1 esi-industry.read_corporation_jobs.v1 esi-industry.read_corporation_mining.v1 esi-markets.read_corporation_orders.v1 esi-corporations.read_divisions.v1 esi-corporations.track_members.v1",
+				" esi-characters.read_corporation_roles.v1 esi-wallet.read_corporation_wallets.v1 esi-corporations.read_corporation_membership.v1 esi-industry.read_corporation_jobs.v1 esi-industry.read_corporation_mining.v1 esi-markets.read_corporation_orders.v1 esi-corporations.read_divisions.v1 esi-corporations.track_members.v1" +
+				" esi-ui.open_window.v1 esi-ui.write_waypoint.v1",
 		}
 	} else {
 		logger.Info("SSO", "EVE SSO not configured (missing ESI_CLIENT_ID / ESI_CLIENT_SECRET)")

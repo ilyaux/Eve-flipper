@@ -2,10 +2,11 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import type { FlipResult, WatchlistItem } from "@/lib/types";
 import { formatISK, formatMargin } from "@/lib/format";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
-import { getWatchlist, addToWatchlist, removeFromWatchlist } from "@/lib/api";
+import { getWatchlist, addToWatchlist, removeFromWatchlist, openMarketInGame, setWaypointInGame } from "@/lib/api";
 import { useGlobalToast } from "./Toast";
 import { EmptyState, type EmptyReason } from "./EmptyState";
 import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
+import { handleEveUIError } from "@/lib/handleEveUIError";
 
 const PAGE_SIZE = 100;
 
@@ -19,6 +20,7 @@ interface Props {
   scanCompletedWithZero?: boolean;
   salesTaxPercent?: number;
   showRegions?: boolean;
+  isLoggedIn?: boolean;
 }
 
 type ColumnDef = {
@@ -291,6 +293,7 @@ export function ScanResultsTable({
   scanCompletedWithZero,
   salesTaxPercent,
   showRegions = false,
+  isLoggedIn = false,
 }: Props) {
   const { t } = useI18n();
   const emptyReason: EmptyReason = scanCompletedWithZero
@@ -900,6 +903,53 @@ export function ScanResultsTable({
                 }}
               />
             )}
+            {/* EVE UI actions */}
+            {isLoggedIn && (
+              <>
+                <div className="h-px bg-eve-border my-1" />
+                <ContextItem
+                  label={`🎮 ${t("openMarket")}`}
+                  onClick={async () => {
+                    try {
+                      await openMarketInGame(contextMenu.row.TypeID);
+                      addToast(t("actionSuccess"), "success", 2000);
+                    } catch (err: any) {
+                      const { messageKey, duration } = handleEveUIError(err);
+                      addToast(t(messageKey), "error", duration);
+                    }
+                    setContextMenu(null);
+                  }}
+                />
+                <ContextItem
+                  label={`🎯 ${t("setDestination")} (Buy)`}
+                  onClick={async () => {
+                    try {
+                      await setWaypointInGame(contextMenu.row.BuySystemID);
+                      addToast(t("actionSuccess"), "success", 2000);
+                    } catch (err: any) {
+                      const { messageKey, duration } = handleEveUIError(err);
+                      addToast(t(messageKey), "error", duration);
+                    }
+                    setContextMenu(null);
+                  }}
+                />
+                {contextMenu.row.SellSystemID !== contextMenu.row.BuySystemID && (
+                  <ContextItem
+                    label={`🎯 ${t("setDestination")} (Sell)`}
+                    onClick={async () => {
+                      try {
+                        await setWaypointInGame(contextMenu.row.SellSystemID);
+                        addToast(t("actionSuccess"), "success", 2000);
+                      } catch (err: any) {
+                        addToast(t("actionFailed").replace("{error}", err.message), "error", 3000);
+                      }
+                      setContextMenu(null);
+                    }}
+                  />
+                )}
+              </>
+            )}
+            <div className="h-px bg-eve-border my-1" />
             <ContextItem
               label={
                 pinnedIds.has(contextMenu.id) ? t("unpinRow") : t("pinRow")

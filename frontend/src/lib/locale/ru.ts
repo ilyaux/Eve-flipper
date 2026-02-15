@@ -1174,4 +1174,14 @@ export const ru = {
     noNpcStationsToggleHint: "Нет NPC станций. Нажмите иконку структуры для поиска структур игроков.",
     loadingStructures: "Загрузка структур...",
     structuresFound: "Найдено структур игроков: {count}",
+
+    // In-game UI actions (context menu)
+    openInEve: "Открыть в EVE",
+    openMarket: "Открыть окно рынка",
+    setDestination: "Установить пункт назначения",
+    openContract: "Открыть контракт",
+    actionSuccess: "Действие отправлено в игру",
+    actionFailed: "Ошибка действия: {error}",
+    loginRequired: "Требуется авторизация для действий в игре",
+    reloginRequired: "Добавлены новые разрешения! Пожалуйста, выйдите и войдите заново через EVE SSO",
 } as const;

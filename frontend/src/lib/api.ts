@@ -645,3 +645,45 @@ export async function getCorpMiningLedger(mode: "demo" | "live" = "demo", signal
   const res = await fetch(`${BASE}/api/corp/mining?mode=${mode}`, { signal });
   return handleResponse<CorpMiningEntry[]>(res);
 }
+
+// --- UI Operations (in-game actions) ---
+
+export async function openMarketInGame(typeID: number): Promise<void> {
+  const res = await fetch(`${BASE}/api/ui/open-market`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type_id: typeID }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error || "Failed to open market window");
+  }
+}
+
+export async function setWaypointInGame(solarSystemID: number, clearOther = true, addToBeginning = false): Promise<void> {
+  const res = await fetch(`${BASE}/api/ui/set-waypoint`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      solar_system_id: solarSystemID,
+      clear_other_waypoints: clearOther,
+      add_to_beginning: addToBeginning,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error || "Failed to set waypoint");
+  }
+}
+
+export async function openContractInGame(contractID: number): Promise<void> {
+  const res = await fetch(`${BASE}/api/ui/open-contract`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contract_id: contractID }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(err.error || "Failed to open contract window");
+  }
+}

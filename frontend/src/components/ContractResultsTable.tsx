@@ -4,6 +4,8 @@ import { formatISK, formatMargin } from "@/lib/format";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { useGlobalToast } from "./Toast";
 import { EmptyState, type EmptyReason } from "./EmptyState";
+import { openContractInGame } from "@/lib/api";
+import { handleEveUIError } from "@/lib/handleEveUIError";
 
 type SortKey = keyof ContractResult;
 type SortDir = "asc" | "desc";
@@ -14,6 +16,7 @@ interface Props {
   progress: string;
   /** When 0 results, show these filter hints (e.g. "Min price: 10M", "Max margin: 100%") */
   filterHints?: string[];
+  isLoggedIn?: boolean;
 }
 
 const columnDefs: { key: SortKey; labelKey: TranslationKey; width: string; numeric: boolean }[] = [
@@ -38,7 +41,7 @@ function rowKey(row: ContractResult) {
   return `contract-${row.ContractID}`;
 }
 
-export function ContractResultsTable({ results, scanning, progress, filterHints }: Props) {
+export function ContractResultsTable({ results, scanning, progress, filterHints, isLoggedIn = false }: Props) {
   const { t } = useI18n();
   const { addToast } = useGlobalToast();
   const emptyReason: EmptyReason = (results.length === 0 && filterHints && filterHints.length > 0)
@@ -353,6 +356,25 @@ export function ContractResultsTable({ results, scanning, progress, filterHints 
             <ContextItem label={t("copyStation")} onClick={() => copyText(contextMenu.row.StationName)} />
             <ContextItem label={t("copyContractID")} onClick={() => copyText(String(contextMenu.row.ContractID))} />
             <div className="h-px bg-eve-border my-1" />
+            {/* EVE UI actions */}
+            {isLoggedIn && (
+              <>
+                <ContextItem
+                  label={`🎮 ${t("openContract")}`}
+                  onClick={async () => {
+                    try {
+                      await openContractInGame(contextMenu.row.ContractID);
+                      addToast(t("actionSuccess"), "success", 2000);
+                    } catch (err: any) {
+                      const { messageKey, duration } = handleEveUIError(err);
+                      addToast(t(messageKey), "error", duration);
+                    }
+                    setContextMenu(null);
+                  }}
+                />
+                <div className="h-px bg-eve-border my-1" />
+              </>
+            )}
             <ContextItem
               label={t("openInEveref")}
               onClick={() => { window.open(`https://everef.net/contract/${contextMenu.row.ContractID}`, "_blank"); setContextMenu(null); }}

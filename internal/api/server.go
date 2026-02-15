@@ -207,6 +207,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/portfolio", s.handleAuthPortfolio)
 	mux.HandleFunc("GET /api/auth/portfolio/optimize", s.handleAuthPortfolioOptimize)
 	mux.HandleFunc("GET /api/auth/structures", s.handleAuthStructures)
+	// UI operations (requires auth)
+	mux.HandleFunc("POST /api/ui/open-market", s.handleUIOpenMarket)
+	mux.HandleFunc("POST /api/ui/set-waypoint", s.handleUISetWaypoint)
+	mux.HandleFunc("POST /api/ui/open-contract", s.handleUIOpenContract)
 	// Industry
 	mux.HandleFunc("POST /api/industry/analyze", s.handleIndustryAnalyze)
 	mux.HandleFunc("GET /api/industry/search", s.handleIndustrySearch)
