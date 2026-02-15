@@ -61,6 +61,20 @@ func TestGetContractFilters_ZeroMaxMarginUsesDefault(t *testing.T) {
 	}
 }
 
+func TestGetContractFilters_MinPricedRatioPercentAndClamp(t *testing.T) {
+	params := ScanParams{MinPricedRatio: 80} // accidental percent input from API client
+	_, _, minPricedRatio := getContractFilters(params)
+	if minPricedRatio != 0.8 {
+		t.Errorf("minPricedRatio(80) = %v, want 0.8", minPricedRatio)
+	}
+
+	params = ScanParams{MinPricedRatio: 0.01}
+	_, _, minPricedRatio = getContractFilters(params)
+	if minPricedRatio != 0.1 {
+		t.Errorf("minPricedRatio lower clamp = %v, want 0.1", minPricedRatio)
+	}
+}
+
 func TestContractSellValueMultiplier_InstantLiquidation_IgnoresBroker(t *testing.T) {
 	params := ScanParams{
 		SalesTaxPercent:            8,
@@ -117,5 +131,38 @@ func TestEstimateFillDaysAndProbability(t *testing.T) {
 	// No volume => impossible fill in model.
 	if p0 := fillProbabilityWithinDays(estimateFillDays(10, 0), 7); p0 != 0 {
 		t.Errorf("fillProbabilityWithinDays(no volume) = %v, want 0", p0)
+	}
+}
+
+func TestIsRig(t *testing.T) {
+	tests := []struct {
+		name    string
+		groupID int32
+		want    bool
+	}{
+		{"Small rig group", 28, true},
+		{"Medium rig group", 54, true},
+		{"Large rig group", 80, true},
+		{"Capital rig group", 106, true},
+		{"Armor rig group", 132, true},
+		{"Shield rig group", 158, true},
+		{"Astronautic rig group", 184, true},
+		{"Projectile weapon rig group", 210, true},
+		{"Drone rig group", 236, true},
+		{"Launcher rig group", 262, true},
+		{"Energy weapon rig group", 289, true},
+		{"Hybrid weapon rig group", 290, true},
+		{"Electronic superiority rig group", 291, true},
+		{"Ship group (not a rig)", 25, false},       // Frigate
+		{"Module group (not a rig)", 53, false},     // Energy Weapon
+		{"Ammunition group (not a rig)", 83, false}, // Hybrid Charge
+		{"Unknown group", 99999, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRig(tt.groupID); got != tt.want {
+				t.Errorf("isRig(groupID=%d) = %v, want %v", tt.groupID, got, tt.want)
+			}
+		})
 	}
 }

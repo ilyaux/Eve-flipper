@@ -73,10 +73,10 @@ type ContractResult struct {
 type RouteHop struct {
 	SystemName      string
 	StationName     string
-	SystemID        int32 `json:"-"`
+	SystemID        int32
 	RegionID        int32 `json:"RegionID"` // Market region for execution plan / slippage
 	LocationID      int64 `json:"-"`
-	DestSystemID    int32 `json:"-"`
+	DestSystemID    int32
 	DestSystemName  string
 	DestStationName string `json:"DestStationName,omitempty"`
 	DestLocationID  int64  `json:"-"`
@@ -134,4 +134,5 @@ type ScanParams struct {
 	ContractInstantLiquidation bool    // If true, require immediate sell-side liquidation via buy-book depth (sell radius)
 	ContractHoldDays           int     // Non-instant mode: hold horizon in days (0 = default)
 	ContractTargetConfidence   float64 // Non-instant mode: minimum full-liquidation probability in % (0 = default)
+	ExcludeRigsWithShip        bool    // If true, exclude rig pricing when contract contains a ship
 }

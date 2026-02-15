@@ -3,6 +3,7 @@ package esi
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -50,15 +51,18 @@ type PublicContract struct {
 
 // ContractItem represents an item inside a public contract.
 type ContractItem struct {
-	RecordID         int64 `json:"record_id"`
-	TypeID           int32 `json:"type_id"`
-	Quantity         int32 `json:"quantity"`
-	IsIncluded       bool  `json:"is_included"`
-	IsBlueprintCopy  bool  `json:"is_blueprint_copy"`
-	ItemID           int64 `json:"item_id"`
-	MaterialEfficiency int  `json:"material_efficiency"`
-	TimeEfficiency   int   `json:"time_efficiency"`
-	Runs             int   `json:"runs"`
+	RecordID           int64   `json:"record_id"`
+	TypeID             int32   `json:"type_id"`
+	Quantity           int32   `json:"quantity"`
+	IsIncluded         bool    `json:"is_included"`
+	IsBlueprintCopy    bool    `json:"is_blueprint_copy"`
+	ItemID             int64   `json:"item_id"`
+	MaterialEfficiency int     `json:"material_efficiency"`
+	TimeEfficiency     int     `json:"time_efficiency"`
+	Runs               int     `json:"runs"`
+	Flag               int     `json:"flag"`      // Item location flag (46-53 = Rig Slots, 0 = Cargo, etc.)
+	Singleton          bool    `json:"singleton"` // True for fitted items
+	Damage             float64 `json:"damage"`    // Damage level 0.0-1.0 (0.1 = 10% damaged)
 }
 
 // FetchRegionContracts fetches all public contracts for a region (paginated).
@@ -76,6 +80,12 @@ func (c *Client) FetchRegionContracts(regionID int32) ([]PublicContract, error) 
 		<-c.sem
 		return nil, err
 	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		<-c.sem
+		return nil, fmt.Errorf("ESI contracts %d: %s", resp.StatusCode, string(body))
+	}
 
 	totalPages := 1
 	if p := resp.Header.Get("X-Pages"); p != "" {
@@ -83,7 +93,11 @@ func (c *Client) FetchRegionContracts(regionID int32) ([]PublicContract, error) 
 	}
 
 	var page1 []PublicContract
-	json.NewDecoder(resp.Body).Decode(&page1)
+	if err := json.NewDecoder(resp.Body).Decode(&page1); err != nil {
+		resp.Body.Close()
+		<-c.sem
+		return nil, fmt.Errorf("decode contracts page 1: %w", err)
+	}
 	resp.Body.Close()
 	<-c.sem
 
@@ -202,6 +216,7 @@ func (c *Client) FetchContractItemsBatch(contractIDs []int32, cache *ContractIte
 	type result struct {
 		id    int32
 		items []ContractItem
+		err   error
 	}
 
 	jobs := make(chan int32, workers*2)
@@ -220,9 +235,9 @@ func (c *Client) FetchContractItemsBatch(contractIDs []int32, cache *ContractIte
 			for id := range jobs {
 				items, err := c.FetchContractItems(id)
 				if err == nil && len(items) > 0 {
-					results <- result{id: id, items: items}
+					results <- result{id: id, items: items, err: nil}
 				} else {
-					results <- result{id: id, items: nil}
+					results <- result{id: id, items: nil, err: err}
 				}
 			}
 		}()
@@ -248,15 +263,20 @@ func (c *Client) FetchContractItemsBatch(contractIDs []int32, cache *ContractIte
 		if r.items != nil {
 			out[r.id] = r.items
 		}
-		// Cache the result (even nil for "no items" to avoid re-fetching)
+		// Cache successful results (including empty lists), but do not cache
+		// transient fetch errors to avoid sticky false-negatives.
 		if cache != nil {
-			cache.mu.Lock()
-			if _, exists := cache.items[r.id]; !exists {
-				cache.evictOldest()
-				cache.order = append(cache.order, r.id)
+			if r.err == nil {
+				cache.mu.Lock()
+				if _, exists := cache.items[r.id]; !exists {
+					cache.evictOldest()
+					cache.order = append(cache.order, r.id)
+				}
+				cache.items[r.id] = r.items
+				cache.mu.Unlock()
+			} else {
+				log.Printf("[DEBUG] ContractItemsBatch: fetch failed for %d: %v", r.id, r.err)
 			}
-			cache.items[r.id] = r.items
-			cache.mu.Unlock()
 		}
 		done++
 		if done%50 == 0 || done == total {

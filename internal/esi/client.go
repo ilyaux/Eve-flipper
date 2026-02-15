@@ -375,7 +375,7 @@ func (c *Client) PrefetchStructureNames(locationIDs map[int64]bool, accessToken 
 
 // isRetryable returns true if the HTTP status code indicates a transient error worth retrying.
 func isRetryable(statusCode int) bool {
-	return statusCode == 502 || statusCode == 503 || statusCode == 504 || statusCode == 520
+	return statusCode == 420 || statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504 || statusCode == 520
 }
 
 // PostJSON sends a POST request with a JSON body and decodes the response into dst.

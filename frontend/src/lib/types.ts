@@ -65,6 +65,27 @@ export interface ContractResult {
   ProfitPerJump: number;
 }
 
+export interface ContractItem {
+  type_id: number;
+  type_name: string;
+  quantity: number;
+  is_included: boolean;
+  is_blueprint_copy: boolean;
+  record_id: number;
+  item_id: number;
+  material_efficiency?: number;
+  time_efficiency?: number;
+  runs?: number;
+  flag?: number;      // Item location flag (46-53 = fitted rigs, 0/1/5 = cargo/hangar)
+  singleton?: boolean; // True for fitted items
+  damage?: number;    // Damage level 0.0-1.0 (0.1 = 10% damaged)
+}
+
+export interface ContractDetails {
+  contract_id: number;
+  items: ContractItem[];
+}
+
 export type NdjsonContractMessage =
   | { type: "progress"; message: string }
   | { type: "result"; data: ContractResult[]; count: number }
@@ -73,8 +94,10 @@ export type NdjsonContractMessage =
 export interface RouteHop {
   SystemName: string;
   StationName: string;
+  SystemID: number;
   DestSystemName: string;
   DestStationName?: string;
+  DestSystemID: number;
   TypeName: string;
   TypeID: number;
   BuyPrice: number;
@@ -266,6 +289,7 @@ export interface ScanParams {
   contract_instant_liquidation?: boolean;
   contract_hold_days?: number;
   contract_target_confidence?: number;
+  exclude_rigs_with_ship?: boolean;
   // Player structures
   include_structures?: boolean;
 }
@@ -438,6 +462,7 @@ export interface OrderDeskOrder {
   net_notional: number;
   position: number;
   total_orders: number;
+  book_available: boolean;
   best_price: number;
   suggested_price: number;
   undercut_amount: number;

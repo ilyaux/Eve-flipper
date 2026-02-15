@@ -34,7 +34,68 @@ const (
 	ContractConservativePriceHaircut = 0.03
 	// ContractDailyCarryRate models opportunity/carry cost of locked capital per day.
 	ContractDailyCarryRate = 0.001
+	// ContractShipModuleValueFactor discounts module value when a contract contains a ship.
+	// Public ESI does not reliably expose fitted-state metadata for all items.
+	ContractShipModuleValueFactor = 0.55
 )
+
+// Rig GroupIDs from EVE SDE (categoryID 1111 - Ship Modifications)
+// Source: https://everef.net/market/1111
+var rigGroupIDs = map[int32]bool{
+	28:  true, // Small rigs
+	54:  true, // Medium rigs
+	80:  true, // Large rigs
+	106: true, // Capital rigs
+	132: true, // Armor rigs
+	158: true, // Shield rigs
+	184: true, // Astronautic rigs
+	210: true, // Projectile weapon rigs
+	236: true, // Drone rigs
+	262: true, // Launcher rigs
+	289: true, // Energy weapon rigs
+	290: true, // Hybrid weapon rigs
+	291: true, // Electronic superiority rigs
+}
+
+// isRig returns true if the item's groupID indicates it's a ship rig.
+// Rigs are destroyed when removed from a ship, so they have no separate market value.
+func isRig(groupID int32) bool {
+	return rigGroupIDs[groupID]
+}
+
+// getRigSizeClass returns the size class of a rig: 1=Small, 2=Medium, 3=Large/Capital, 0=Unknown.
+// Checks item name for size keywords (since some rig groups are type-based, not size-based).
+func getRigSizeClass(itemName string) int {
+	nameLower := strings.ToLower(itemName)
+	if strings.Contains(nameLower, "small") {
+		return 1
+	}
+	if strings.Contains(nameLower, "medium") {
+		return 2
+	}
+	if strings.Contains(nameLower, "large") || strings.Contains(nameLower, "capital") {
+		return 3
+	}
+	return 0 // Unknown size
+}
+
+// getShipSizeClass returns the size class of a ship based on groupID: 1=Small, 2=Medium, 3=Large, 0=Unknown.
+// Uses EVE ship group IDs from SDE.
+func getShipSizeClass(groupID int32) int {
+	// Small: Frigate(25), Destroyer(420), Interceptor(831), Stealth Bomber(834), etc.
+	if groupID == 25 || groupID == 420 || groupID == 324 || groupID == 831 || groupID == 834 || groupID == 893 || groupID == 1527 || groupID == 2016 {
+		return 1 // Small (Frigate/Destroyer class)
+	}
+	// Medium: Cruiser(26), Battlecruiser(419,1201), Industrial(28), etc.
+	if groupID == 26 || groupID == 419 || groupID == 1201 || groupID == 28 || groupID == 358 || groupID == 832 || groupID == 833 || groupID == 894 || groupID == 906 || groupID == 963 || groupID == 1305 || groupID == 1534 || groupID == 2017 || groupID == 2018 {
+		return 2 // Medium (Cruiser/BC class)
+	}
+	// Large: Battleship(27), Capital ships, etc.
+	if groupID == 27 || groupID == 381 || groupID == 485 || groupID == 547 || groupID == 659 || groupID == 883 || groupID == 898 || groupID == 900 || groupID == 902 || groupID == 1538 || groupID == 2019 {
+		return 3 // Large (Battleship/Capital class)
+	}
+	return 0 // Unknown
+}
 
 // getContractFilters returns effective filter values, using defaults if params are 0.
 func getContractFilters(params ScanParams) (minPrice, maxMargin, minPricedRatio float64) {
@@ -49,6 +110,16 @@ func getContractFilters(params ScanParams) (minPrice, maxMargin, minPricedRatio 
 	minPricedRatio = params.MinPricedRatio
 	if minPricedRatio <= 0 {
 		minPricedRatio = DefaultMinPricedRatio
+	}
+	// Accept accidental percent-like inputs (e.g. 80 instead of 0.8) and clamp.
+	if minPricedRatio > 1 {
+		minPricedRatio = minPricedRatio / 100
+	}
+	if minPricedRatio > 1 {
+		minPricedRatio = 1
+	}
+	if minPricedRatio < 0.1 {
+		minPricedRatio = 0.1
 	}
 	return
 }
@@ -257,6 +328,13 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 		}
 	}
 
+	// Build sell orders by type for additionalCost calculation (items buyer must provide).
+	// We need sell orders to calculate the cost of BUYING these items.
+	sellOrdersByType := make(map[int32][]esi.MarketOrder)
+	for _, o := range sellOrders {
+		sellOrdersByType[o.TypeID] = append(sellOrdersByType[o.TypeID], o)
+	}
+
 	// Build price data map: typeID -> itemPriceData
 	// Track min price, total volume, and order count per type
 	priceData := make(map[int32]*itemPriceData)
@@ -368,113 +446,198 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 		var marketValue float64
 		var itemCount int32
 		var pricedCount int        // how many item types we could price
-		var totalTypes int         // total included item types (non-BPC)
+		var totalTypes int         // total included item types (non-BPC/BPO/filtered)
 		var topItems []string      // for generating title
 		var lowVolumeItems int     // items with suspicious low trading volume
 		var highDeviationItems int // items where sell price deviates significantly from VWAP
 		fullLiquidationProb := 1.0
 		maxFillDays := 0.0
 		expectedGrossByFill := 0.0
+		var additionalCost float64      // cost of items buyer must provide (PLEX, etc.)
+		var unpricedAdditionalItems int // items buyer must provide that we couldn't price
+		includedQtyByType := make(map[int32]int32)
+		additionalQtyByType := make(map[int32]int32)
+
+		// FIRST PASS: detect ship presence for fitted-risk handling.
+		shipSizeClass := 0 // 0=no ship, 1=small, 2=medium, 3=large
+		for _, item := range items {
+			if !item.IsIncluded || item.Quantity <= 0 {
+				continue
+			}
+			if typeInfo, ok := s.SDE.Types[item.TypeID]; ok && typeInfo.CategoryID == 6 { // ships
+				sizeClass := getShipSizeClass(typeInfo.GroupID)
+				if sizeClass > 0 && sizeClass > shipSizeClass {
+					shipSizeClass = sizeClass
+				}
+			}
+		}
 
 		hasBPO := false
+
+		// SECOND PASS: normalize and aggregate quantities by type to avoid
+		// double-counting order-book depth for repeated lines.
 		for _, item := range items {
-			if !item.IsIncluded {
-				continue // items the buyer must provide
-			}
-			if item.IsBlueprintCopy {
-				continue // BPCs have no reliable market price
+			if item.Quantity <= 0 {
+				continue
 			}
 
-			// Detect BPOs/BPCs by checking SDE category or name
-			if typeName, ok := s.SDE.Types[item.TypeID]; ok {
-				nameLower := strings.ToLower(typeName.Name)
+			// Items buyer must provide on top of ISK price.
+			if !item.IsIncluded {
+				additionalQtyByType[item.TypeID] += item.Quantity
+				continue
+			}
+			// BPCs have no reliable generic market valuation.
+			if item.IsBlueprintCopy {
+				continue
+			}
+			// Damaged items are too uncertain in public ESI context.
+			if item.Damage > 0 {
+				continue
+			}
+
+			typeInfo, hasTypeInfo := s.SDE.Types[item.TypeID]
+			if hasTypeInfo {
+				nameLower := strings.ToLower(typeInfo.Name)
+				// BPOs are excluded: valuation is highly dependent on research state.
 				if strings.Contains(nameLower, "blueprint") {
 					hasBPO = true
 					continue
 				}
+				// Rig handling (fitted-risk control).
+				if isRig(typeInfo.GroupID) {
+					if params.ExcludeRigsWithShip && shipSizeClass > 0 {
+						continue
+					}
+					rigSize := getRigSizeClass(typeInfo.Name)
+					if shipSizeClass > 0 && rigSize == shipSizeClass {
+						continue
+					}
+				}
 			}
-			totalTypes++
+
+			includedQtyByType[item.TypeID] += item.Quantity
+		}
+
+		totalTypes = len(includedQtyByType)
+
+		// Price additional required items (must be fully priceable to trust total cost).
+		for typeID, qty := range additionalQtyByType {
+			var itemCost float64
+			couldPrice := false
 
 			if contractInstant {
-				book := buyOrdersByType[item.TypeID]
+				// Buy required item from sell book.
+				book := sellOrdersByType[typeID]
+				if len(book) > 0 {
+					plan := ComputeExecutionPlan(book, qty, true)
+					if plan.CanFill && plan.ExpectedPrice > 0 {
+						itemCost = plan.ExpectedPrice * float64(qty)
+						couldPrice = true
+					}
+				}
+			} else {
+				pd, ok := priceData[typeID]
+				if ok && pd.MinSellPrice > 0 && pd.MinSellPrice != math.MaxFloat64 {
+					price := pd.MinSellPrice
+					if pd.TotalSellVol < MinSellOrderVolume {
+						price = price * 1.5
+					}
+					itemCost = price * float64(qty)
+					couldPrice = true
+				}
+			}
+
+			if couldPrice {
+				additionalCost += itemCost
+			} else {
+				unpricedAdditionalItems++
+			}
+		}
+
+		// Price included items once per type (aggregated quantity).
+		for typeID, qty := range includedQtyByType {
+			typeInfo, hasTypeInfo := s.SDE.Types[typeID]
+			itemLabel := fmt.Sprintf("Type %d", typeID)
+			if hasTypeInfo && strings.TrimSpace(typeInfo.Name) != "" {
+				itemLabel = typeInfo.Name
+			}
+
+			valueFactor := 1.0
+			// Conservative haircut: when a ship is present, module value is uncertain
+			// because public ESI lacks reliable fitted-state flags for all cases.
+			if shipSizeClass > 0 && hasTypeInfo && typeInfo.CategoryID == 7 && !isRig(typeInfo.GroupID) {
+				valueFactor = ContractShipModuleValueFactor
+			}
+
+			if contractInstant {
+				book := buyOrdersByType[typeID]
 				if len(book) == 0 {
 					continue
 				}
-				plan := ComputeExecutionPlan(book, item.Quantity, false)
+				plan := ComputeExecutionPlan(book, qty, false)
 				if !plan.CanFill || plan.ExpectedPrice <= 0 {
 					continue
 				}
 
 				pricedCount++
-				marketValue += plan.ExpectedPrice * float64(item.Quantity)
-				itemCount += item.Quantity
+				itemValue := plan.ExpectedPrice * float64(qty) * valueFactor
+				marketValue += itemValue
+				itemCount += qty
 
-				if typeName, ok := s.SDE.Types[item.TypeID]; ok {
-					if item.Quantity > 1 {
-						topItems = append(topItems, fmt.Sprintf("%dx %s", item.Quantity, typeName.Name))
-					} else {
-						topItems = append(topItems, typeName.Name)
-					}
+				if qty > 1 {
+					topItems = append(topItems, fmt.Sprintf("%dx %s", qty, itemLabel))
+				} else {
+					topItems = append(topItems, itemLabel)
 				}
 				continue
 			}
 
-				pd, ok := priceData[item.TypeID]
-				if !ok || pd.MinSellPrice == 0 || pd.MinSellPrice == math.MaxFloat64 {
-					continue // can't price this item
+			pd, ok := priceData[typeID]
+			if !ok || pd.MinSellPrice == 0 || pd.MinSellPrice == math.MaxFloat64 {
+				continue
 			}
 
-			// Determine the best price to use: prefer VWAP if available and reliable
 			var usePrice float64
 			if pd.HasHistory && pd.VWAP > 0 {
-				// Check if min sell deviates too much from VWAP (potential bait order)
 				if pd.MinSellPrice < pd.VWAP*0.5 {
-					// Sell price is <50% of VWAP — likely a bait order.
-					// Use conservative estimate: min(70% VWAP, 2x MinSell) to avoid inflating value.
 					usePrice = math.Min(pd.VWAP*0.7, pd.MinSellPrice*2)
 					highDeviationItems++
 				} else {
-					// Normal case: use the lower of VWAP and market sell price
 					usePrice = math.Min(pd.VWAP, pd.MinSellPrice)
 				}
 			} else {
-				// No history — if RequireHistory is set, skip this item entirely
 				if params.RequireHistory {
 					continue
 				}
-				// No history — use min sell but be conservative
 				usePrice = pd.MinSellPrice
 			}
 
-			// Track items with low daily volume (unreliable pricing)
 			if pd.DailyVolume < MinDailyVolumeForContract {
 				lowVolumeItems++
 			}
 
-				pricedCount++
-				marketValue += usePrice * float64(item.Quantity)
-				itemCount += item.Quantity
+			pricedCount++
+			itemValue := usePrice * float64(qty) * valueFactor
+			marketValue += itemValue
+			itemCount += qty
 
-				dailyVol := effectiveDailyVolume(pd)
-				fillDays := estimateFillDays(item.Quantity, dailyVol)
-				itemFillProb := fillProbabilityWithinDays(fillDays, float64(holdDays))
-				fullLiquidationProb *= itemFillProb
-				if math.IsInf(fillDays, 1) {
-					if maxFillDays < float64(holdDays)*10 {
-						maxFillDays = float64(holdDays) * 10
-					}
-				} else if fillDays > maxFillDays {
-					maxFillDays = fillDays
+			dailyVol := effectiveDailyVolume(pd)
+			fillDays := estimateFillDays(qty, dailyVol)
+			itemFillProb := fillProbabilityWithinDays(fillDays, float64(holdDays))
+			fullLiquidationProb *= itemFillProb
+			if math.IsInf(fillDays, 1) {
+				if maxFillDays < float64(holdDays)*10 {
+					maxFillDays = float64(holdDays) * 10
 				}
-				expectedGrossByFill += usePrice * float64(item.Quantity) * itemFillProb
+			} else if fillDays > maxFillDays {
+				maxFillDays = fillDays
+			}
+			expectedGrossByFill += itemValue * itemFillProb
 
-				// Build item name for title generation
-				if typeName, ok := s.SDE.Types[item.TypeID]; ok {
-				if item.Quantity > 1 {
-					topItems = append(topItems, fmt.Sprintf("%dx %s", item.Quantity, typeName.Name))
-				} else {
-					topItems = append(topItems, typeName.Name)
-				}
+			if qty > 1 {
+				topItems = append(topItems, fmt.Sprintf("%dx %s", qty, itemLabel))
+			} else {
+				topItems = append(topItems, itemLabel)
 			}
 		}
 
@@ -482,44 +645,44 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 		if hasBPO && totalTypes == 0 {
 			continue
 		}
-
-		// Skip if we couldn't price most items
+		if unpricedAdditionalItems > 0 {
+			log.Printf("[DEBUG] Contract %d: skipping - couldn't price %d additional items (IsIncluded=false)",
+				contract.ContractID, unpricedAdditionalItems)
+			continue
+		}
 		if totalTypes == 0 || pricedCount == 0 {
 			continue
 		}
 		if float64(pricedCount)/float64(totalTypes) < minPricedRatio {
 			continue
 		}
-		// In instant liquidation mode, require full immediate liquidation of all
-		// included tradable items in the contract.
 		if contractInstant && pricedCount < totalTypes {
 			continue
 		}
 
-		// Skip if too many items have low volume (unreliable pricing)
-		if pricedCount > 0 && float64(lowVolumeItems)/float64(pricedCount) > 0.5 {
-			continue // >50% items have no recent trading — unreliable
+		// This heuristic is useful only when history is mandatory; otherwise it is too
+		// punitive for thin items without history (DailyVolume=0 fallback path).
+		if params.RequireHistory && pricedCount > 0 && float64(lowVolumeItems)/float64(pricedCount) > 0.5 {
+			continue
 		}
-
-		// Skip if too many items have suspicious price deviations
 		if pricedCount > 0 && float64(highDeviationItems)/float64(pricedCount) > 0.3 {
-			continue // >30% items have bait-like pricing — suspicious
+			continue
 		}
 
 		if marketValue <= 0 {
 			continue
 		}
 
-		// Calculate profit
+		totalCost := contract.Price + additionalCost
 		effectiveValue := marketValue * sellValueMult
-		profit := effectiveValue - contract.Price
+		profit := effectiveValue - totalCost
 		if profit <= 0 {
 			continue
 		}
 
-		margin := profit / contract.Price * 100
+		margin := safeDiv(profit, totalCost) * 100
 		if margin > maxContractMargin {
-			continue // margin too high — likely a scam or pricing error
+			continue
 		}
 
 		expectedProfit := profit
@@ -537,19 +700,18 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 			estLiqDays = maxFillDays
 			conservativeGross := expectedGrossByFill * (1.0 - ContractConservativePriceHaircut)
 			conservativeValue = conservativeGross * sellValueMult
-			carryCost = contract.Price * ContractDailyCarryRate * float64(holdDays)
-			expectedProfit = conservativeValue - contract.Price - carryCost
+			carryCost = totalCost * ContractDailyCarryRate * float64(holdDays)
+			expectedProfit = conservativeValue - totalCost - carryCost
 			if expectedProfit <= 0 {
 				continue
 			}
-			expectedMargin = safeDiv(expectedProfit, contract.Price) * 100
+			expectedMargin = safeDiv(expectedProfit, totalCost) * 100
 		}
 
 		if expectedMargin < params.MinMargin {
 			continue
 		}
 
-		// Generate title from items if contract title is empty
 		title := strings.TrimSpace(contract.Title)
 		if title == "" {
 			if len(topItems) == 1 {
@@ -562,8 +724,6 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 		}
 
 		stationName := s.ESI.StationName(contract.StartLocationID)
-
-		// Resolve system and region for the contract location
 		sysID := s.locationToSystem(contract.StartLocationID, marketLocationSystems)
 		sysName := ""
 		regionName := ""
@@ -581,7 +741,6 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 			}
 		}
 
-		// Calculate jumps from current system to contract station
 		jumps := 0
 		if sysID != 0 {
 			if d, ok := buySystems[sysID]; ok {
@@ -591,31 +750,35 @@ func (s *Scanner) ScanContracts(params ScanParams, progress func(string)) ([]Con
 			}
 		}
 
-		var profitPerJump float64
+		kpiProfit := profit
+		if !contractInstant {
+			kpiProfit = expectedProfit
+		}
+		profitPerJump := 0.0
 		if jumps > 0 {
-			profitPerJump = profit / float64(jumps)
+			profitPerJump = kpiProfit / float64(jumps)
 		}
 
 		results = append(results, ContractResult{
-			ContractID:    contract.ContractID,
-			Title:         title,
-			Price:         contract.Price,
-			MarketValue:   marketValue,
-			Profit:        sanitizeFloat(profit),
-			MarginPercent: sanitizeFloat(margin),
+			ContractID:            contract.ContractID,
+			Title:                 title,
+			Price:                 contract.Price,
+			MarketValue:           marketValue,
+			Profit:                sanitizeFloat(profit),
+			MarginPercent:         sanitizeFloat(margin),
 			ExpectedProfit:        sanitizeFloat(expectedProfit),
 			ExpectedMarginPercent: sanitizeFloat(expectedMargin),
 			SellConfidence:        sanitizeFloat(sellConfidencePct),
 			EstLiquidationDays:    sanitizeFloat(estLiqDays),
 			ConservativeValue:     sanitizeFloat(conservativeValue),
 			CarryCost:             sanitizeFloat(carryCost),
-			Volume:        contract.Volume,
-			StationName:   stationName,
-			SystemName:    sysName,
-			RegionName:    regionName,
-			ItemCount:     itemCount,
-			Jumps:         jumps,
-			ProfitPerJump: sanitizeFloat(profitPerJump),
+			Volume:                contract.Volume,
+			StationName:           stationName,
+			SystemName:            sysName,
+			RegionName:            regionName,
+			ItemCount:             itemCount,
+			Jumps:                 jumps,
+			ProfitPerJump:         sanitizeFloat(profitPerJump),
 		})
 	}
 

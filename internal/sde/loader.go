@@ -46,9 +46,11 @@ type SolarSystem struct {
 
 // ItemType represents a market-tradeable item type from the SDE.
 type ItemType struct {
-	ID     int32
-	Name   string
-	Volume float64 // packaged volume in m³
+	ID         int32
+	Name       string
+	Volume     float64 // packaged volume in m³
+	GroupID    int32   // item group (for categorization: rigs, ships, modules, etc.)
+	CategoryID int32   // item category (6=Ships, 7=Modules, 20=Implants, etc.)
 }
 
 // Station represents an NPC station from the SDE.
@@ -197,6 +199,24 @@ func (d *Data) loadSystems(dir string) error {
 }
 
 func (d *Data) loadTypes(dir string) error {
+	// First load groups to get CategoryID mapping
+	groupCategories := make(map[int32]int32) // groupID -> categoryID
+	err := readJSONL(dir, "groups", func(raw json.RawMessage) error {
+		var g struct {
+			Key        int32 `json:"_key"`
+			CategoryID int32 `json:"categoryID"`
+		}
+		if err := json.Unmarshal(raw, &g); err != nil {
+			return err
+		}
+		groupCategories[g.Key] = g.CategoryID
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("load groups: %w", err)
+	}
+
+	// Then load types
 	return readJSONL(dir, "types", func(raw json.RawMessage) error {
 		var t struct {
 			Key            int32             `json:"_key"`
@@ -205,6 +225,7 @@ func (d *Data) loadTypes(dir string) error {
 			PackagedVolume float64           `json:"packagedVolume"`
 			Published      bool              `json:"published"`
 			MarketGroupID  *int32            `json:"marketGroupID"`
+			GroupID        int32             `json:"groupID"`
 		}
 		if err := json.Unmarshal(raw, &t); err != nil {
 			return err
@@ -221,7 +242,11 @@ func (d *Data) loadTypes(dir string) error {
 			vol = t.Volume
 		}
 		d.Types[t.Key] = &ItemType{
-			ID: t.Key, Name: name, Volume: vol,
+			ID:         t.Key,
+			Name:       name,
+			Volume:     vol,
+			GroupID:    t.GroupID,
+			CategoryID: groupCategories[t.GroupID],
 		}
 		return nil
 	})

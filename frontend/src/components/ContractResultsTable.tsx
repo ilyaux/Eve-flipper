@@ -6,6 +6,7 @@ import { useGlobalToast } from "./Toast";
 import { EmptyState, type EmptyReason } from "./EmptyState";
 import { openContractInGame } from "@/lib/api";
 import { handleEveUIError } from "@/lib/handleEveUIError";
+import { ContractDetailsPopup } from "./ContractDetailsPopup";
 
 type SortKey = keyof ContractResult;
 type SortDir = "asc" | "desc";
@@ -52,6 +53,9 @@ export function ContractResultsTable({ results, scanning, progress, filterHints,
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showFilters, setShowFilters] = useState(false);
+
+  // Contract details popup
+  const [selectedContract, setSelectedContract] = useState<ContractResult | null>(null);
 
   // Context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: ContractResult } | null>(null);
@@ -293,8 +297,9 @@ export function ContractResultsTable({ results, scanning, progress, filterHints,
             {sorted.map((row, i) => (
               <tr
                 key={rowKey(row)}
+                onClick={() => setSelectedContract(row)}
                 onContextMenu={(e) => handleContextMenu(e, row)}
-                className={`border-b border-eve-border/50 hover:bg-eve-accent/5 transition-colors ${
+                className={`border-b border-eve-border/50 hover:bg-eve-accent/5 transition-colors cursor-pointer ${
                   i % 2 === 0 ? "bg-eve-panel" : "bg-eve-dark"
                 }`}
               >
@@ -382,6 +387,15 @@ export function ContractResultsTable({ results, scanning, progress, filterHints,
           </div>
         </>
       )}
+
+      {/* Contract details popup */}
+      <ContractDetailsPopup
+        open={!!selectedContract}
+        contractID={selectedContract?.ContractID ?? 0}
+        contractTitle={selectedContract?.Title ?? ""}
+        contractPrice={selectedContract?.Price ?? 0}
+        onClose={() => setSelectedContract(null)}
+      />
     </div>
   );
 }
