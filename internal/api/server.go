@@ -568,6 +568,24 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := patch["sales_tax_percent"]; ok {
 		json.Unmarshal(v, &s.cfg.SalesTaxPercent)
 	}
+	if v, ok := patch["broker_fee_percent"]; ok {
+		json.Unmarshal(v, &s.cfg.BrokerFeePercent)
+	}
+	if v, ok := patch["split_trade_fees"]; ok {
+		json.Unmarshal(v, &s.cfg.SplitTradeFees)
+	}
+	if v, ok := patch["buy_broker_fee_percent"]; ok {
+		json.Unmarshal(v, &s.cfg.BuyBrokerFeePercent)
+	}
+	if v, ok := patch["sell_broker_fee_percent"]; ok {
+		json.Unmarshal(v, &s.cfg.SellBrokerFeePercent)
+	}
+	if v, ok := patch["buy_sales_tax_percent"]; ok {
+		json.Unmarshal(v, &s.cfg.BuySalesTaxPercent)
+	}
+	if v, ok := patch["sell_sales_tax_percent"]; ok {
+		json.Unmarshal(v, &s.cfg.SellSalesTaxPercent)
+	}
 	if v, ok := patch["alert_telegram"]; ok {
 		json.Unmarshal(v, &s.cfg.AlertTelegram)
 	}
@@ -613,6 +631,31 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfg.SalesTaxPercent = 0
 	} else if s.cfg.SalesTaxPercent > 100 {
 		s.cfg.SalesTaxPercent = 100
+	}
+	if s.cfg.BrokerFeePercent < 0 {
+		s.cfg.BrokerFeePercent = 0
+	} else if s.cfg.BrokerFeePercent > 100 {
+		s.cfg.BrokerFeePercent = 100
+	}
+	if s.cfg.BuyBrokerFeePercent < 0 {
+		s.cfg.BuyBrokerFeePercent = 0
+	} else if s.cfg.BuyBrokerFeePercent > 100 {
+		s.cfg.BuyBrokerFeePercent = 100
+	}
+	if s.cfg.SellBrokerFeePercent < 0 {
+		s.cfg.SellBrokerFeePercent = 0
+	} else if s.cfg.SellBrokerFeePercent > 100 {
+		s.cfg.SellBrokerFeePercent = 100
+	}
+	if s.cfg.BuySalesTaxPercent < 0 {
+		s.cfg.BuySalesTaxPercent = 0
+	} else if s.cfg.BuySalesTaxPercent > 100 {
+		s.cfg.BuySalesTaxPercent = 100
+	}
+	if s.cfg.SellSalesTaxPercent < 0 {
+		s.cfg.SellSalesTaxPercent = 0
+	} else if s.cfg.SellSalesTaxPercent > 100 {
+		s.cfg.SellSalesTaxPercent = 100
 	}
 	if s.cfg.Opacity < 0 {
 		s.cfg.Opacity = 0
@@ -811,13 +854,18 @@ func (s *Server) handleRegionAutocomplete(w http.ResponseWriter, r *http.Request
 }
 
 type scanRequest struct {
-	SystemName       string  `json:"system_name"`
-	CargoCapacity    float64 `json:"cargo_capacity"`
-	BuyRadius        int     `json:"buy_radius"`
-	SellRadius       int     `json:"sell_radius"`
-	MinMargin        float64 `json:"min_margin"`
-	SalesTaxPercent  float64 `json:"sales_tax_percent"`
-	BrokerFeePercent float64 `json:"broker_fee_percent"` // 0 = instant trades (no broker fee); >0 = applied to both sides
+	SystemName           string  `json:"system_name"`
+	CargoCapacity        float64 `json:"cargo_capacity"`
+	BuyRadius            int     `json:"buy_radius"`
+	SellRadius           int     `json:"sell_radius"`
+	MinMargin            float64 `json:"min_margin"`
+	SalesTaxPercent      float64 `json:"sales_tax_percent"`
+	BrokerFeePercent     float64 `json:"broker_fee_percent"` // 0 = instant trades (no broker fee); >0 = applied to both sides
+	SplitTradeFees       bool    `json:"split_trade_fees"`
+	BuyBrokerFeePercent  float64 `json:"buy_broker_fee_percent"`
+	SellBrokerFeePercent float64 `json:"sell_broker_fee_percent"`
+	BuySalesTaxPercent   float64 `json:"buy_sales_tax_percent"`
+	SellSalesTaxPercent  float64 `json:"sell_sales_tax_percent"`
 	// Advanced filters
 	MinDailyVolume   int64   `json:"min_daily_volume"`
 	MaxInvestment    float64 `json:"max_investment"`
@@ -869,6 +917,11 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 		MinMargin:                  req.MinMargin,
 		SalesTaxPercent:            req.SalesTaxPercent,
 		BrokerFeePercent:           req.BrokerFeePercent,
+		SplitTradeFees:             req.SplitTradeFees,
+		BuyBrokerFeePercent:        req.BuyBrokerFeePercent,
+		SellBrokerFeePercent:       req.SellBrokerFeePercent,
+		BuySalesTaxPercent:         req.BuySalesTaxPercent,
+		SellSalesTaxPercent:        req.SellSalesTaxPercent,
 		MinDailyVolume:             req.MinDailyVolume,
 		MaxInvestment:              req.MaxInvestment,
 		MinRouteSecurity:           req.MinRouteSecurity,
@@ -1120,15 +1173,20 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SystemName        string  `json:"system_name"`
-		CargoCapacity     float64 `json:"cargo_capacity"`
-		MinMargin         float64 `json:"min_margin"`
-		SalesTaxPercent   float64 `json:"sales_tax_percent"`
-		BrokerFeePercent  float64 `json:"broker_fee_percent"`
-		MinHops           int     `json:"min_hops"`
-		MaxHops           int     `json:"max_hops"`
-		MinRouteSecurity  float64 `json:"min_route_security"` // 0 = all; 0.45 = highsec only; 0.7 = min 0.7
-		IncludeStructures bool    `json:"include_structures"`
+		SystemName           string  `json:"system_name"`
+		CargoCapacity        float64 `json:"cargo_capacity"`
+		MinMargin            float64 `json:"min_margin"`
+		SalesTaxPercent      float64 `json:"sales_tax_percent"`
+		BrokerFeePercent     float64 `json:"broker_fee_percent"`
+		SplitTradeFees       bool    `json:"split_trade_fees"`
+		BuyBrokerFeePercent  float64 `json:"buy_broker_fee_percent"`
+		SellBrokerFeePercent float64 `json:"sell_broker_fee_percent"`
+		BuySalesTaxPercent   float64 `json:"buy_sales_tax_percent"`
+		SellSalesTaxPercent  float64 `json:"sell_sales_tax_percent"`
+		MinHops              int     `json:"min_hops"`
+		MaxHops              int     `json:"max_hops"`
+		MinRouteSecurity     float64 `json:"min_route_security"` // 0 = all; 0.45 = highsec only; 0.7 = min 0.7
+		IncludeStructures    bool    `json:"include_structures"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid json")
@@ -1161,14 +1219,19 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	params := engine.RouteParams{
-		SystemName:       req.SystemName,
-		CargoCapacity:    req.CargoCapacity,
-		MinMargin:        req.MinMargin,
-		SalesTaxPercent:  req.SalesTaxPercent,
-		BrokerFeePercent: req.BrokerFeePercent,
-		MinHops:          req.MinHops,
-		MaxHops:          req.MaxHops,
-		MinRouteSecurity: req.MinRouteSecurity,
+		SystemName:           req.SystemName,
+		CargoCapacity:        req.CargoCapacity,
+		MinMargin:            req.MinMargin,
+		SalesTaxPercent:      req.SalesTaxPercent,
+		BrokerFeePercent:     req.BrokerFeePercent,
+		SplitTradeFees:       req.SplitTradeFees,
+		BuyBrokerFeePercent:  req.BuyBrokerFeePercent,
+		SellBrokerFeePercent: req.SellBrokerFeePercent,
+		BuySalesTaxPercent:   req.BuySalesTaxPercent,
+		SellSalesTaxPercent:  req.SellSalesTaxPercent,
+		MinHops:              req.MinHops,
+		MaxHops:              req.MaxHops,
+		MinRouteSecurity:     req.MinRouteSecurity,
 	}
 
 	log.Printf("[API] RouteFind: system=%s, cargo=%.0f, margin=%.1f, hops=%d-%d",
@@ -1384,14 +1447,19 @@ func (s *Server) handleGetAlertHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		StationID       int64   `json:"station_id"`  // 0 = all stations
-		RegionID        int32   `json:"region_id"`   // required
-		SystemName      string  `json:"system_name"` // for radius-based scan
-		Radius          int     `json:"radius"`      // 0 = single system
-		MinMargin       float64 `json:"min_margin"`
-		SalesTaxPercent float64 `json:"sales_tax_percent"`
-		BrokerFee       float64 `json:"broker_fee"`
-		MinDailyVolume  int64   `json:"min_daily_volume"`
+		StationID            int64   `json:"station_id"`  // 0 = all stations
+		RegionID             int32   `json:"region_id"`   // required
+		SystemName           string  `json:"system_name"` // for radius-based scan
+		Radius               int     `json:"radius"`      // 0 = single system
+		MinMargin            float64 `json:"min_margin"`
+		SalesTaxPercent      float64 `json:"sales_tax_percent"`
+		BrokerFee            float64 `json:"broker_fee"`
+		SplitTradeFees       bool    `json:"split_trade_fees"`
+		BuyBrokerFeePercent  float64 `json:"buy_broker_fee_percent"`
+		SellBrokerFeePercent float64 `json:"sell_broker_fee_percent"`
+		BuySalesTaxPercent   float64 `json:"buy_sales_tax_percent"`
+		SellSalesTaxPercent  float64 `json:"sell_sales_tax_percent"`
+		MinDailyVolume       int64   `json:"min_daily_volume"`
 		// EVE Guru Profit Filters
 		MinItemProfit   float64 `json:"min_item_profit"`
 		MinDemandPerDay float64 `json:"min_demand_per_day"`
@@ -1508,23 +1576,28 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 	var allResults []engine.StationTrade
 	for regionID := range regionIDs {
 		params := engine.StationTradeParams{
-			StationIDs:         stationIDs,
-			RegionID:           regionID,
-			MinMargin:          req.MinMargin,
-			SalesTaxPercent:    req.SalesTaxPercent,
-			BrokerFee:          req.BrokerFee,
-			MinDailyVolume:     req.MinDailyVolume,
-			MinItemProfit:      req.MinItemProfit,
-			MinDemandPerDay:    req.MinDemandPerDay,
-			AvgPricePeriod:     req.AvgPricePeriod,
-			MinPeriodROI:       req.MinPeriodROI,
-			BvSRatioMin:        req.BvSRatioMin,
-			BvSRatioMax:        req.BvSRatioMax,
-			MaxPVI:             req.MaxPVI,
-			MaxSDS:             req.MaxSDS,
-			LimitBuyToPriceLow: req.LimitBuyToPriceLow,
-			FlagExtremePrices:  req.FlagExtremePrices,
-			AccessToken:        accessToken,
+			StationIDs:           stationIDs,
+			RegionID:             regionID,
+			MinMargin:            req.MinMargin,
+			SalesTaxPercent:      req.SalesTaxPercent,
+			BrokerFee:            req.BrokerFee,
+			SplitTradeFees:       req.SplitTradeFees,
+			BuyBrokerFeePercent:  req.BuyBrokerFeePercent,
+			SellBrokerFeePercent: req.SellBrokerFeePercent,
+			BuySalesTaxPercent:   req.BuySalesTaxPercent,
+			SellSalesTaxPercent:  req.SellSalesTaxPercent,
+			MinDailyVolume:       req.MinDailyVolume,
+			MinItemProfit:        req.MinItemProfit,
+			MinDemandPerDay:      req.MinDemandPerDay,
+			AvgPricePeriod:       req.AvgPricePeriod,
+			MinPeriodROI:         req.MinPeriodROI,
+			BvSRatioMin:          req.BvSRatioMin,
+			BvSRatioMax:          req.BvSRatioMax,
+			MaxPVI:               req.MaxPVI,
+			MaxSDS:               req.MaxSDS,
+			LimitBuyToPriceLow:   req.LimitBuyToPriceLow,
+			FlagExtremePrices:    req.FlagExtremePrices,
+			AccessToken:          accessToken,
 		}
 		// For "all stations in region" mode WITHOUT structures, pass nil StationIDs
 		// (when structures are included, stationIDs contains both NPC stations and structures)

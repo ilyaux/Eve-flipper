@@ -17,8 +17,16 @@ export interface ExecutionPlannerPopupProps {
   sellLocationID?: number;
   defaultQuantity?: number;
   isBuy?: boolean;
-  /** Sales tax % (такса с продажи). Deducted from sell revenue in profit calculation. */
+  /** Legacy broker fee % applied to both buy and sell sides when split is disabled. */
+  brokerFeePercent?: number;
+  /** Sales tax % (legacy sell tax). Deducted from sell revenue in profit calculation. */
   salesTaxPercent?: number;
+  /** Enables side-specific buy/sell fees in calculator output. */
+  splitTradeFees?: boolean;
+  buyBrokerFeePercent?: number;
+  sellBrokerFeePercent?: number;
+  buySalesTaxPercent?: number;
+  sellSalesTaxPercent?: number;
 }
 
 function formatISK(value: number): string {
@@ -26,6 +34,13 @@ function formatISK(value: number): string {
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
   return value.toFixed(0);
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
 }
 
 function PlanBlock({
@@ -91,7 +106,13 @@ export function ExecutionPlannerPopup({
   sellRegionID,
   sellLocationID,
   defaultQuantity = 100,
+  brokerFeePercent = 0,
   salesTaxPercent = 0,
+  splitTradeFees = false,
+  buyBrokerFeePercent,
+  sellBrokerFeePercent,
+  buySalesTaxPercent,
+  sellSalesTaxPercent,
 }: ExecutionPlannerPopupProps) {
   const { t } = useI18n();
   const [quantity, setQuantity] = useState(defaultQuantity);
@@ -152,9 +173,29 @@ export function ExecutionPlannerPopup({
 
   const buyCost = planBuy?.total_cost ?? 0;
   const sellRevenueGross = planSell?.total_cost ?? 0;
-  const taxMult = 1 - salesTaxPercent / 100;
-  const sellRevenueAfterTax = sellRevenueGross * taxMult;
-  const profit = sellRevenueAfterTax - buyCost;
+  const buyBrokerPct = clampPercent(
+    splitTradeFees
+      ? (buyBrokerFeePercent ?? brokerFeePercent)
+      : brokerFeePercent
+  );
+  const sellBrokerPct = clampPercent(
+    splitTradeFees
+      ? (sellBrokerFeePercent ?? brokerFeePercent)
+      : brokerFeePercent
+  );
+  const buyTaxPct = clampPercent(splitTradeFees ? (buySalesTaxPercent ?? 0) : 0);
+  const sellTaxPct = clampPercent(
+    splitTradeFees
+      ? (sellSalesTaxPercent ?? salesTaxPercent)
+      : salesTaxPercent
+  );
+  const effectiveBuyCost =
+    buyCost * (1 + (buyBrokerPct + buyTaxPct) / 100);
+  const sellRevenueAfterFees =
+    sellRevenueGross *
+    (1 - sellBrokerPct / 100) *
+    (1 - sellTaxPct / 100);
+  const profit = sellRevenueAfterFees - effectiveBuyCost;
   const canFillBoth = planBuy?.can_fill && planSell?.can_fill;
 
   return (
@@ -208,16 +249,16 @@ export function ExecutionPlannerPopup({
                   ✗ {!planBuy.can_fill ? t("execPlanBuy") : t("execPlanSell")} — {t("execPlanCanFill")} {t("execPlanCannotFill")}
                 </span>
               )}
-              {salesTaxPercent > 0 && (
+              {sellTaxPct > 0 && (
                 <span className="text-eve-dim text-xs">
-                  {t("execPlanAfterSalesTax", { pct: salesTaxPercent })}
+                  {t("execPlanAfterSalesTax", { pct: sellTaxPct })}
                 </span>
               )}
               <span className="text-eve-text">
                 {t("execPlanSummary", {
                   qty: quantity.toLocaleString(),
-                  buyCost: formatISK(buyCost),
-                  sellRevenue: formatISK(salesTaxPercent > 0 ? sellRevenueAfterTax : sellRevenueGross),
+                  buyCost: formatISK(effectiveBuyCost),
+                  sellRevenue: formatISK(sellRevenueAfterFees),
                   result:
                     profit >= 0
                       ? t("execPlanSummaryProfit", { profit: formatISK(profit) })

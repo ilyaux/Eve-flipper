@@ -101,6 +101,29 @@ func TestContractSellValueMultiplier_Estimate_IncludesBroker(t *testing.T) {
 	}
 }
 
+func TestContractSellValueMultiplier_SplitUsesSellSideOnly(t *testing.T) {
+	params := ScanParams{
+		SplitTradeFees:             true,
+		BuyBrokerFeePercent:        0.5,
+		SellBrokerFeePercent:       0.2,
+		BuySalesTaxPercent:         0,
+		SellSalesTaxPercent:        3.6,
+		ContractInstantLiquidation: false,
+	}
+	got := contractSellValueMultiplier(params)
+	want := 0.962 // 1 - (3.6% + 0.2%)
+	if got != want {
+		t.Errorf("contractSellValueMultiplier split estimate = %v, want %v", got, want)
+	}
+
+	params.ContractInstantLiquidation = true
+	got = contractSellValueMultiplier(params)
+	want = 0.964 // 1 - 3.6%
+	if got != want {
+		t.Errorf("contractSellValueMultiplier split instant = %v, want %v", got, want)
+	}
+}
+
 func TestContractHoldDays_DefaultAndClamp(t *testing.T) {
 	if got := contractHoldDays(ScanParams{}); got != DefaultContractHoldDays {
 		t.Errorf("contractHoldDays default = %d, want %d", got, DefaultContractHoldDays)

@@ -48,25 +48,25 @@ type FlipResult struct {
 
 // ContractResult represents a profitable public contract compared to market value.
 type ContractResult struct {
-	ContractID    int32
-	Title         string
-	Price         float64 // contract asking price
-	MarketValue   float64 // sum of market prices for all items
-	Profit        float64
-	MarginPercent float64
+	ContractID            int32
+	Title                 string
+	Price                 float64 // contract asking price
+	MarketValue           float64 // sum of market prices for all items
+	Profit                float64
+	MarginPercent         float64
 	ExpectedProfit        float64 // conservative horizon-aware expected profit
 	ExpectedMarginPercent float64 // expected profit / contract price * 100
 	SellConfidence        float64 // probability of full liquidation within hold horizon (0-100)
 	EstLiquidationDays    float64 // bottleneck fill-time estimate for full liquidation
 	ConservativeValue     float64 // conservative expected liquidation value after fees
 	CarryCost             float64 // opportunity/carry cost for hold horizon
-	Volume        float64 // contract volume in m³
-	StationName   string
-	SystemName    string `json:"SystemName,omitempty"`
-	RegionName    string `json:"RegionName,omitempty"`
-	ItemCount     int32
-	Jumps         int
-	ProfitPerJump float64
+	Volume                float64 // contract volume in m³
+	StationName           string
+	SystemName            string `json:"SystemName,omitempty"`
+	RegionName            string `json:"RegionName,omitempty"`
+	ItemCount             int32
+	Jumps                 int
+	ProfitPerJump         float64
 }
 
 // RouteHop represents a single buy-haul-sell leg within a multi-hop trade route.
@@ -105,9 +105,16 @@ type RouteParams struct {
 	MinMargin        float64
 	SalesTaxPercent  float64
 	BrokerFeePercent float64
-	MinHops          int
-	MaxHops          int
-	MinRouteSecurity float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7
+	// SplitTradeFees enables side-specific fee model.
+	// When false, legacy fields above are used.
+	SplitTradeFees       bool
+	BuyBrokerFeePercent  float64
+	SellBrokerFeePercent float64
+	BuySalesTaxPercent   float64
+	SellSalesTaxPercent  float64
+	MinHops              int
+	MaxHops              int
+	MinRouteSecurity     float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7
 }
 
 // ScanParams holds the input parameters for radius and region scans.
@@ -119,6 +126,13 @@ type ScanParams struct {
 	MinMargin        float64
 	SalesTaxPercent  float64
 	BrokerFeePercent float64 // 0 = no broker fee (instant trades); >0 = applied to both buy and sell sides
+	// SplitTradeFees enables side-specific fee model.
+	// When false, legacy fields above are used.
+	SplitTradeFees       bool
+	BuyBrokerFeePercent  float64
+	SellBrokerFeePercent float64
+	BuySalesTaxPercent   float64
+	SellSalesTaxPercent  float64
 	// Advanced filters
 	MinDailyVolume   int64   // 0 = no filter
 	MaxInvestment    float64 // 0 = no filter (max ISK per position)

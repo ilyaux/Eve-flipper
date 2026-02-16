@@ -24,6 +24,11 @@ export interface BuiltinPreset {
 export interface StationTradingSettings {
   brokerFee: number;
   salesTaxPercent: number;
+  splitTradeFees?: boolean;
+  buyBrokerFeePercent?: number;
+  sellBrokerFeePercent?: number;
+  buySalesTaxPercent?: number;
+  sellSalesTaxPercent?: number;
   radius: number;
   minDailyVolume: number;
   minItemProfit: number;
@@ -51,6 +56,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
       min_daily_volume: 10,
       sales_tax_percent: 8,
       broker_fee_percent: 3,
+      split_trade_fees: false,
     },
   },
   {
@@ -64,6 +70,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
       min_daily_volume: 0,
       sales_tax_percent: 8,
       broker_fee_percent: 3,
+      split_trade_fees: false,
     },
   },
   {
@@ -77,6 +84,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
       min_daily_volume: 0,
       sales_tax_percent: 8,
       broker_fee_percent: 3,
+      split_trade_fees: false,
     },
   },
 
@@ -91,6 +99,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
       cargo_capacity: 5000,
       sales_tax_percent: 8,
       broker_fee_percent: 3,
+      split_trade_fees: false,
     },
   },
   {
@@ -103,6 +112,7 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
       cargo_capacity: 60000,
       sales_tax_percent: 8,
       broker_fee_percent: 3,
+      split_trade_fees: false,
     },
   },
 
@@ -174,6 +184,7 @@ export const STATION_BUILTIN_PRESETS: BuiltinPreset[] = [
     params: {
       brokerFee: 3,
       salesTaxPercent: 8,
+      splitTradeFees: false,
       minDailyVolume: 10,
       minItemProfit: 500_000,
       minDemandPerDay: 5,
@@ -191,6 +202,7 @@ export const STATION_BUILTIN_PRESETS: BuiltinPreset[] = [
     params: {
       brokerFee: 3,
       salesTaxPercent: 8,
+      splitTradeFees: false,
       minDailyVolume: 5,
       minItemProfit: 0,
       minDemandPerDay: 1,
@@ -208,6 +220,7 @@ export const STATION_BUILTIN_PRESETS: BuiltinPreset[] = [
     params: {
       brokerFee: 3,
       salesTaxPercent: 8,
+      splitTradeFees: false,
       minDailyVolume: 0,
       minItemProfit: 0,
       minDemandPerDay: 0,

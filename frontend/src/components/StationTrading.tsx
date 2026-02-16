@@ -27,7 +27,6 @@ import {
   SettingsField,
   SettingsNumberInput,
   SettingsCheckbox,
-  SettingsGrid,
   SettingsSelect,
 } from "./TabSettingsPanel";
 import { SystemAutocomplete } from "./SystemAutocomplete";
@@ -129,6 +128,8 @@ const columnDefs: {
 
 // Sentinel value for "All stations"
 const ALL_STATIONS_ID = 0;
+const settingsSectionClass =
+  "rounded-sm border border-eve-border/60 bg-gradient-to-br from-eve-panel to-eve-dark/40";
 
 function stationDailyProfit(row: StationTrade): number {
   return row.DailyProfit ?? row.RealProfit ?? row.TotalProfit ?? 0;
@@ -154,6 +155,11 @@ export function StationTrading({
     useState<number>(ALL_STATIONS_ID);
   const [brokerFee, setBrokerFee] = useState(3.0);
   const [salesTaxPercent, setSalesTaxPercent] = useState(8);
+  const [splitTradeFees, setSplitTradeFees] = useState(false);
+  const [buyBrokerFeePercent, setBuyBrokerFeePercent] = useState(3.0);
+  const [sellBrokerFeePercent, setSellBrokerFeePercent] = useState(3.0);
+  const [buySalesTaxPercent, setBuySalesTaxPercent] = useState(0);
+  const [sellSalesTaxPercent, setSellSalesTaxPercent] = useState(8);
   const [radius, setRadius] = useState(0);
   const [minDailyVolume, setMinDailyVolume] = useState(5);
   const [results, setResults] = useState<StationTrade[]>([]);
@@ -186,6 +192,31 @@ export function StationTrading({
   // Price Limits
   const [limitBuyToPriceLow, setLimitBuyToPriceLow] = useState(false);
   const [flagExtremePrices, setFlagExtremePrices] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const activeAdvancedCount = useMemo(
+    () =>
+      Number(minDemandPerDay > 1) +
+      Number(avgPricePeriod !== 90) +
+      Number(minPeriodROI > 0) +
+      Number(bvsRatioMin > 0) +
+      Number(bvsRatioMax > 0) +
+      Number(maxPVI > 0) +
+      Number(maxSDS < 50) +
+      Number(limitBuyToPriceLow) +
+      Number(!flagExtremePrices),
+    [
+      minDemandPerDay,
+      avgPricePeriod,
+      minPeriodROI,
+      bvsRatioMin,
+      bvsRatioMax,
+      maxPVI,
+      maxSDS,
+      limitBuyToPriceLow,
+      flagExtremePrices,
+    ],
+  );
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("CTS");
@@ -228,6 +259,11 @@ export function StationTrading({
     () => ({
       brokerFee,
       salesTaxPercent,
+      splitTradeFees,
+      buyBrokerFeePercent,
+      sellBrokerFeePercent,
+      buySalesTaxPercent,
+      sellSalesTaxPercent,
       radius,
       minDailyVolume,
       minItemProfit,
@@ -244,6 +280,11 @@ export function StationTrading({
     [
       brokerFee,
       salesTaxPercent,
+      splitTradeFees,
+      buyBrokerFeePercent,
+      sellBrokerFeePercent,
+      buySalesTaxPercent,
+      sellSalesTaxPercent,
       radius,
       minDailyVolume,
       minItemProfit,
@@ -265,6 +306,15 @@ export function StationTrading({
     if (st.brokerFee !== undefined) setBrokerFee(st.brokerFee);
     if (st.salesTaxPercent !== undefined)
       setSalesTaxPercent(st.salesTaxPercent);
+    if (st.splitTradeFees !== undefined) setSplitTradeFees(st.splitTradeFees);
+    if (st.buyBrokerFeePercent !== undefined)
+      setBuyBrokerFeePercent(st.buyBrokerFeePercent);
+    if (st.sellBrokerFeePercent !== undefined)
+      setSellBrokerFeePercent(st.sellBrokerFeePercent);
+    if (st.buySalesTaxPercent !== undefined)
+      setBuySalesTaxPercent(st.buySalesTaxPercent);
+    if (st.sellSalesTaxPercent !== undefined)
+      setSellSalesTaxPercent(st.sellSalesTaxPercent);
     if (st.radius !== undefined) setRadius(st.radius);
     if (st.minDailyVolume !== undefined) setMinDailyVolume(st.minDailyVolume);
     if (st.minItemProfit !== undefined) setMinItemProfit(st.minItemProfit);
@@ -282,7 +332,7 @@ export function StationTrading({
       setFlagExtremePrices(st.flagExtremePrices);
   }, []);
 
-  // Sync sales tax from global params when they change (e.g. from ParametersPanel on other tabs)
+  // Keep station sales-tax aligned with global params.
   useEffect(() => {
     const pct = params.sales_tax_percent ?? 8;
     setSalesTaxPercent(pct);
@@ -393,8 +443,19 @@ export function StationTrading({
     try {
       const scanParams: Parameters<typeof scanStation>[0] = {
         min_margin: params.min_margin,
-        sales_tax_percent: salesTaxPercent,
-        broker_fee: brokerFee,
+        sales_tax_percent: splitTradeFees ? sellSalesTaxPercent : salesTaxPercent,
+        broker_fee: splitTradeFees ? sellBrokerFeePercent : brokerFee,
+        split_trade_fees: splitTradeFees,
+        buy_broker_fee_percent: splitTradeFees
+          ? buyBrokerFeePercent
+          : undefined,
+        sell_broker_fee_percent: splitTradeFees
+          ? sellBrokerFeePercent
+          : undefined,
+        buy_sales_tax_percent: splitTradeFees ? buySalesTaxPercent : undefined,
+        sell_sales_tax_percent: splitTradeFees
+          ? sellSalesTaxPercent
+          : undefined,
         min_daily_volume: minDailyVolume,
         // EVE Guru Profit Filters
         min_item_profit: minItemProfit > 0 ? minItemProfit : undefined,
@@ -447,6 +508,11 @@ export function StationTrading({
     params,
     brokerFee,
     salesTaxPercent,
+    splitTradeFees,
+    buyBrokerFeePercent,
+    sellBrokerFeePercent,
+    buySalesTaxPercent,
+    sellSalesTaxPercent,
     radius,
     minDailyVolume,
     minItemProfit,
@@ -598,181 +664,301 @@ export function StationTrading({
             />
           }
         >
-          {/* System (from global filter or geolocation) & Station */}
-          <SettingsGrid cols={5}>
-            <SettingsField label={t("system")}>
-              <SystemAutocomplete
-                value={params.system_name}
-                onChange={(v) => onChange?.({ ...params, system_name: v })}
-                showLocationButton={true}
-                isLoggedIn={isLoggedIn}
-              />
-            </SettingsField>
-            <SettingsField label={t("stationSelect")}>
-              {loadingStations || loadingStructures ? (
-                <div className="h-[34px] flex items-center text-xs text-eve-dim">
-                  {loadingStructures
-                    ? t("loadingStructures")
-                    : t("loadingStations")}
-                </div>
-              ) : allStations.length === 0 ? (
-                <div className="h-[34px] flex items-center text-xs text-eve-dim">
-                  {stations.length === 0 && !isLoggedIn
-                    ? t("noNpcStationsLoginHint")
-                    : stations.length === 0 && isLoggedIn && !includeStructures
-                      ? t("noNpcStationsToggleHint")
-                      : includeStructures
-                        ? t("noStationsOrInaccessible")
-                        : t("noStations")}
-                </div>
-              ) : (
-                <SettingsSelect
-                  value={selectedStationId}
-                  onChange={(v) => setSelectedStationId(Number(v))}
-                  options={stationOptions}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-3">
+              <section className={`${settingsSectionClass} xl:col-span-8 p-3`}>
+                <PanelSectionHeader
+                  icon="⌁"
+                  title={t("system")}
+                  subtitle={t("stationSelect")}
                 />
-              )}
-            </SettingsField>
-            {isLoggedIn && (
-              <SettingsField label={t("includeStructures")}>
-                <SettingsCheckbox
-                  checked={includeStructures}
-                  onChange={setIncludeStructures}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-3 mt-2">
+                  <SettingsField label={t("system")}>
+                    <SystemAutocomplete
+                      value={params.system_name}
+                      onChange={(v) => onChange?.({ ...params, system_name: v })}
+                      showLocationButton={true}
+                      isLoggedIn={isLoggedIn}
+                    />
+                  </SettingsField>
+
+                  <SettingsField label={t("stationSelect")}>
+                    {loadingStations || loadingStructures ? (
+                      <div className="h-[34px] flex items-center text-xs text-eve-dim">
+                        {loadingStructures
+                          ? t("loadingStructures")
+                          : t("loadingStations")}
+                      </div>
+                    ) : allStations.length === 0 ? (
+                      <div className="h-[34px] flex items-center text-xs text-eve-dim">
+                        {stations.length === 0 && !isLoggedIn
+                          ? t("noNpcStationsLoginHint")
+                          : stations.length === 0 &&
+                              isLoggedIn &&
+                              !includeStructures
+                            ? t("noNpcStationsToggleHint")
+                            : includeStructures
+                              ? t("noStationsOrInaccessible")
+                              : t("noStations")}
+                      </div>
+                    ) : (
+                      <SettingsSelect
+                        value={selectedStationId}
+                        onChange={(v) => setSelectedStationId(Number(v))}
+                        options={stationOptions}
+                      />
+                    )}
+                  </SettingsField>
+
+                  {isLoggedIn && (
+                    <SettingsField label={t("includeStructures")}>
+                      <SettingsCheckbox
+                        checked={includeStructures}
+                        onChange={setIncludeStructures}
+                      />
+                    </SettingsField>
+                  )}
+
+                  <SettingsField label={t("stationRadius")}>
+                    <SettingsNumberInput
+                      value={radius}
+                      onChange={(v) => setRadius(Math.max(0, Math.min(50, v)))}
+                      min={0}
+                      max={50}
+                    />
+                  </SettingsField>
+
+                  <SettingsField label={t("minDailyVolume")}>
+                    <SettingsNumberInput
+                      value={minDailyVolume}
+                      onChange={setMinDailyVolume}
+                      min={0}
+                    />
+                  </SettingsField>
+
+                  <SettingsField label={t("minItemProfit")}>
+                    <SettingsNumberInput
+                      value={minItemProfit}
+                      onChange={setMinItemProfit}
+                      min={0}
+                    />
+                  </SettingsField>
+                </div>
+              </section>
+
+              <section className={`${settingsSectionClass} xl:col-span-4 p-3`}>
+                <PanelSectionHeader
+                  icon="∑"
+                  title={t("splitTradeFees")}
+                  subtitle={t("splitTradeFeesHint")}
                 />
-              </SettingsField>
-            )}
 
-            <SettingsField label={t("stationRadius")}>
-              <SettingsNumberInput
-                value={radius}
-                onChange={(v) => setRadius(Math.max(0, Math.min(50, v)))}
-                min={0}
-                max={50}
-              />
-            </SettingsField>
-
-            <SettingsField label={t("brokerFee")}>
-              <SettingsNumberInput
-                value={brokerFee}
-                onChange={setBrokerFee}
-                min={0}
-                max={10}
-                step={0.1}
-              />
-            </SettingsField>
-
-            <SettingsField label={t("salesTax")}>
-              <SettingsNumberInput
-                value={salesTaxPercent}
-                onChange={(v) =>
-                  setSalesTaxPercent(Math.max(0, Math.min(100, v)))
-                }
-                min={0}
-                max={100}
-                step={0.1}
-              />
-            </SettingsField>
-
-            <SettingsField label={t("minDailyVolume")}>
-              <SettingsNumberInput
-                value={minDailyVolume}
-                onChange={setMinDailyVolume}
-                min={0}
-              />
-            </SettingsField>
-
-            <SettingsField label={t("minItemProfit")}>
-              <SettingsNumberInput
-                value={minItemProfit}
-                onChange={setMinItemProfit}
-                min={0}
-              />
-            </SettingsField>
-          </SettingsGrid>
-
-          {/* Advanced Filters - collapsible subsection */}
-          <details className="mt-3 group">
-            <summary className="cursor-pointer text-xs text-eve-dim hover:text-eve-accent transition-colors flex items-center gap-1">
-              <span className="group-open:rotate-90 transition-transform">
-                ▶
-              </span>
-              {t("advancedFilters")}
-            </summary>
-            <div className="mt-3 pt-3 border-t border-eve-border/30">
-              <SettingsGrid cols={5}>
-                <SettingsField label={t("minDemandPerDay")}>
-                  <SettingsNumberInput
-                    value={minDemandPerDay}
-                    onChange={setMinDemandPerDay}
-                    min={0}
-                    step={0.1}
-                  />
-                </SettingsField>
-                <SettingsField label={t("avgPricePeriod")}>
-                  <SettingsNumberInput
-                    value={avgPricePeriod}
-                    onChange={setAvgPricePeriod}
-                    min={7}
-                    max={365}
-                  />
-                </SettingsField>
-                <SettingsField label={t("minPeriodROI")}>
-                  <SettingsNumberInput
-                    value={minPeriodROI}
-                    onChange={setMinPeriodROI}
-                    min={0}
-                  />
-                </SettingsField>
-                <SettingsField label={t("maxPVI")}>
-                  <SettingsNumberInput
-                    value={maxPVI}
-                    onChange={setMaxPVI}
-                    min={0}
-                  />
-                </SettingsField>
-                <SettingsField label={t("maxSDS")}>
-                  <SettingsNumberInput
-                    value={maxSDS}
-                    onChange={setMaxSDS}
-                    min={0}
-                    max={100}
-                  />
-                </SettingsField>
-              </SettingsGrid>
-              <div className="mt-3">
-                <SettingsGrid cols={4}>
-                  <SettingsField label={t("bvsRatioMin")}>
-                    <SettingsNumberInput
-                      value={bvsRatioMin}
-                      onChange={setBvsRatioMin}
-                      min={0}
-                      step={0.1}
-                    />
+                <div className="mt-2">
+                  <SettingsField label={t("splitTradeFees")}>
+                    <div className="h-[34px] px-2.5 py-1.5 bg-eve-input border border-eve-border rounded text-eve-text text-sm flex items-center justify-between">
+                      <span className="text-eve-dim text-xs">
+                        {t("splitTradeFeesHint")}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={splitTradeFees}
+                        onChange={(e) => {
+                          const enabled = e.target.checked;
+                          if (enabled) {
+                            setBuyBrokerFeePercent(brokerFee);
+                            setSellBrokerFeePercent(brokerFee);
+                            setBuySalesTaxPercent(0);
+                            setSellSalesTaxPercent(salesTaxPercent);
+                          } else {
+                            setBrokerFee(sellBrokerFeePercent);
+                            setSalesTaxPercent(sellSalesTaxPercent);
+                          }
+                          setSplitTradeFees(enabled);
+                        }}
+                        className="accent-eve-accent"
+                      />
+                    </div>
                   </SettingsField>
-                  <SettingsField label={t("bvsRatioMax")}>
-                    <SettingsNumberInput
-                      value={bvsRatioMax}
-                      onChange={setBvsRatioMax}
-                      min={0}
-                      step={0.1}
-                    />
-                  </SettingsField>
-                  <SettingsField label={t("limitBuyToPriceLow")}>
-                    <SettingsCheckbox
-                      checked={limitBuyToPriceLow}
-                      onChange={setLimitBuyToPriceLow}
-                    />
-                  </SettingsField>
-                  <SettingsField label={t("flagExtremePrices")}>
-                    <SettingsCheckbox
-                      checked={flagExtremePrices}
-                      onChange={setFlagExtremePrices}
-                    />
-                  </SettingsField>
-                </SettingsGrid>
-              </div>
+                </div>
+
+                {!splitTradeFees && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3 mt-3">
+                    <SettingsField label={t("brokerFee")}>
+                      <SettingsNumberInput
+                        value={brokerFee}
+                        onChange={setBrokerFee}
+                        min={0}
+                        max={10}
+                        step={0.1}
+                      />
+                    </SettingsField>
+
+                    <SettingsField label={t("salesTax")}>
+                      <SettingsNumberInput
+                        value={salesTaxPercent}
+                        onChange={(v) =>
+                          setSalesTaxPercent(Math.max(0, Math.min(100, v)))
+                        }
+                        min={0}
+                        max={100}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                  </div>
+                )}
+
+                {splitTradeFees && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                    <SettingsField label={t("buyBrokerFee")}>
+                      <SettingsNumberInput
+                        value={buyBrokerFeePercent}
+                        onChange={(v) =>
+                          setBuyBrokerFeePercent(Math.max(0, Math.min(100, v)))
+                        }
+                        min={0}
+                        max={100}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("sellBrokerFee")}>
+                      <SettingsNumberInput
+                        value={sellBrokerFeePercent}
+                        onChange={(v) =>
+                          setSellBrokerFeePercent(Math.max(0, Math.min(100, v)))
+                        }
+                        min={0}
+                        max={100}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("buySalesTax")}>
+                      <SettingsNumberInput
+                        value={buySalesTaxPercent}
+                        onChange={(v) =>
+                          setBuySalesTaxPercent(Math.max(0, Math.min(100, v)))
+                        }
+                        min={0}
+                        max={100}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("sellSalesTax")}>
+                      <SettingsNumberInput
+                        value={sellSalesTaxPercent}
+                        onChange={(v) =>
+                          setSellSalesTaxPercent(Math.max(0, Math.min(100, v)))
+                        }
+                        min={0}
+                        max={100}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                  </div>
+                )}
+              </section>
             </div>
-          </details>
+
+            <section className={`${settingsSectionClass} p-3`}>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((prev) => !prev)}
+                className="w-full flex items-center justify-between gap-3 text-[11px] uppercase tracking-wider text-eve-dim hover:text-eve-accent font-medium transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className={`transition-transform ${
+                      showAdvanced ? "rotate-90" : ""
+                    }`}
+                  >
+                    ▸
+                  </span>
+                  {t("advancedFilters")}
+                </span>
+                {activeAdvancedCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-sm border border-eve-accent/40 text-eve-accent text-[10px] font-mono">
+                    {activeAdvancedCount}
+                  </span>
+                )}
+              </button>
+
+              {showAdvanced && (
+                <div className="mt-3 pt-3 border-t border-eve-border/40 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-x-3 gap-y-3">
+                    <SettingsField label={t("minDemandPerDay")}>
+                      <SettingsNumberInput
+                        value={minDemandPerDay}
+                        onChange={setMinDemandPerDay}
+                        min={0}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("avgPricePeriod")}>
+                      <SettingsNumberInput
+                        value={avgPricePeriod}
+                        onChange={setAvgPricePeriod}
+                        min={7}
+                        max={365}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("minPeriodROI")}>
+                      <SettingsNumberInput
+                        value={minPeriodROI}
+                        onChange={setMinPeriodROI}
+                        min={0}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("maxPVI")}>
+                      <SettingsNumberInput
+                        value={maxPVI}
+                        onChange={setMaxPVI}
+                        min={0}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("maxSDS")}>
+                      <SettingsNumberInput
+                        value={maxSDS}
+                        onChange={setMaxSDS}
+                        min={0}
+                        max={100}
+                      />
+                    </SettingsField>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-3">
+                    <SettingsField label={t("bvsRatioMin")}>
+                      <SettingsNumberInput
+                        value={bvsRatioMin}
+                        onChange={setBvsRatioMin}
+                        min={0}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("bvsRatioMax")}>
+                      <SettingsNumberInput
+                        value={bvsRatioMax}
+                        onChange={setBvsRatioMax}
+                        min={0}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("limitBuyToPriceLow")}>
+                      <SettingsCheckbox
+                        checked={limitBuyToPriceLow}
+                        onChange={setLimitBuyToPriceLow}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("flagExtremePrices")}>
+                      <SettingsCheckbox
+                        checked={flagExtremePrices}
+                        onChange={setFlagExtremePrices}
+                      />
+                    </SettingsField>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
 
           {/* Scan button inside settings */}
           <div className="mt-3 pt-3 border-t border-eve-border/30 flex justify-end">
@@ -893,7 +1079,33 @@ export function StationTrading({
                             : "text-eve-text"
                     }`}
                   >
-                    {formatCell(col, row)}
+                    {col.key === "TypeName" ? (
+                      <div className="flex items-center gap-1">
+                        <span className="truncate">{formatCell(col, row)}</span>
+                        {isLoggedIn && (
+                          <button
+                            type="button"
+                            className="shrink-0 text-eve-dim hover:text-eve-accent transition-colors"
+                            title={t("openMarket")}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await openMarketInGame(row.TypeID);
+                                addToast(t("actionSuccess"), "success", 2000);
+                              } catch (err: any) {
+                                const { messageKey, duration } =
+                                  handleEveUIError(err);
+                                addToast(t(messageKey), "error", duration);
+                              }
+                            }}
+                          >
+                            🎮
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      formatCell(col, row)
+                    )}
                   </td>
                 ))}
               </tr>
@@ -1082,10 +1294,40 @@ export function StationTrading({
         regionID={regionId}
         stationID={execPlanRow?.StationID ?? 0}
         defaultQuantity={100}
-        brokerFeePercent={brokerFee}
-        salesTaxPercent={salesTaxPercent}
+        brokerFeePercent={splitTradeFees ? undefined : brokerFee}
+        salesTaxPercent={splitTradeFees ? undefined : salesTaxPercent}
+        buyBrokerFeePercent={splitTradeFees ? buyBrokerFeePercent : undefined}
+        sellBrokerFeePercent={splitTradeFees ? sellBrokerFeePercent : undefined}
+        buySalesTaxPercent={splitTradeFees ? buySalesTaxPercent : undefined}
+        sellSalesTaxPercent={splitTradeFees ? sellSalesTaxPercent : undefined}
         impactDays={avgPricePeriod}
       />
+    </div>
+  );
+}
+
+function PanelSectionHeader({
+  title,
+  subtitle,
+  icon,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 border-b border-eve-border/40 pb-2">
+      {icon && (
+        <span className="text-[11px] text-eve-accent shrink-0">{icon}</span>
+      )}
+      <div className="min-w-0">
+        <h4 className="text-[11px] uppercase tracking-wider text-eve-text font-semibold truncate">
+          {title}
+        </h4>
+        {subtitle && (
+          <p className="text-[10px] text-eve-dim truncate">{subtitle}</p>
+        )}
+      </div>
     </div>
   );
 }

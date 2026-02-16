@@ -188,7 +188,7 @@ func TestFindSafeExecutionQuantity_CapsToFillableDepth(t *testing.T) {
 		{Price: 15, VolumeRemain: 60},
 	}
 
-	qty, planBuy, planSell, expected := findSafeExecutionQuantity(asks, bids, 80, 0, 1.0)
+	qty, planBuy, planSell, expected := findSafeExecutionQuantity(asks, bids, 80, 1.0, 1.0)
 
 	if qty != 60 {
 		t.Fatalf("qty = %d, want 60", qty)
@@ -210,7 +210,7 @@ func TestFindSafeExecutionQuantity_ReducesToProfitableQty(t *testing.T) {
 		{Price: 15, VolumeRemain: 200},
 	}
 
-	qty, _, _, expected := findSafeExecutionQuantity(asks, bids, 100, 0, 1.0)
+	qty, _, _, expected := findSafeExecutionQuantity(asks, bids, 100, 1.0, 1.0)
 
 	if qty != 99 {
 		t.Fatalf("qty = %d, want 99", qty)
@@ -228,7 +228,7 @@ func TestFindSafeExecutionQuantity_NoProfitableQty(t *testing.T) {
 		{Price: 10, VolumeRemain: 100},
 	}
 
-	qty, _, _, expected := findSafeExecutionQuantity(asks, bids, 50, 0, 1.0)
+	qty, _, _, expected := findSafeExecutionQuantity(asks, bids, 50, 1.0, 1.0)
 
 	if qty != 0 {
 		t.Fatalf("qty = %d, want 0", qty)

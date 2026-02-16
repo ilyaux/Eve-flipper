@@ -655,6 +655,7 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
         regionID={result?.region_id ?? 0}
         defaultQuantity={execPlanMaterial?.quantity ?? 100}
         isBuy={true}
+        brokerFeePercent={brokerFee}
         salesTaxPercent={salesTaxPercent}
       />
     </div>

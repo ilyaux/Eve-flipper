@@ -50,6 +50,24 @@ func (d *DB) LoadConfig() *config.Config {
 	if v, ok := m["sales_tax_percent"]; ok {
 		cfg.SalesTaxPercent, _ = strconv.ParseFloat(v, 64)
 	}
+	if v, ok := m["broker_fee_percent"]; ok {
+		cfg.BrokerFeePercent, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := m["split_trade_fees"]; ok {
+		cfg.SplitTradeFees, _ = strconv.ParseBool(v)
+	}
+	if v, ok := m["buy_broker_fee_percent"]; ok {
+		cfg.BuyBrokerFeePercent, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := m["sell_broker_fee_percent"]; ok {
+		cfg.SellBrokerFeePercent, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := m["buy_sales_tax_percent"]; ok {
+		cfg.BuySalesTaxPercent, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := m["sell_sales_tax_percent"]; ok {
+		cfg.SellSalesTaxPercent, _ = strconv.ParseFloat(v, 64)
+	}
 	if v, ok := m["alert_telegram"]; ok {
 		cfg.AlertTelegram, _ = strconv.ParseBool(v)
 	}
@@ -90,23 +108,29 @@ func (d *DB) LoadConfig() *config.Config {
 // SaveConfig writes config to SQLite (upsert all fields).
 func (d *DB) SaveConfig(cfg *config.Config) error {
 	pairs := map[string]string{
-		"system_name":            cfg.SystemName,
-		"cargo_capacity":         fmt.Sprintf("%g", cfg.CargoCapacity),
-		"buy_radius":             strconv.Itoa(cfg.BuyRadius),
-		"sell_radius":            strconv.Itoa(cfg.SellRadius),
-		"min_margin":             fmt.Sprintf("%g", cfg.MinMargin),
-		"sales_tax_percent":      fmt.Sprintf("%g", cfg.SalesTaxPercent),
-		"alert_telegram":         strconv.FormatBool(cfg.AlertTelegram),
-		"alert_discord":          strconv.FormatBool(cfg.AlertDiscord),
-		"alert_desktop":          strconv.FormatBool(cfg.AlertDesktop),
-		"alert_telegram_token":   cfg.AlertTelegramToken,
-		"alert_telegram_chat_id": cfg.AlertTelegramChatID,
-		"alert_discord_webhook":  cfg.AlertDiscordWebhook,
-		"opacity":                strconv.Itoa(cfg.Opacity),
-		"window_x":               strconv.Itoa(cfg.WindowX),
-		"window_y":               strconv.Itoa(cfg.WindowY),
-		"window_w":               strconv.Itoa(cfg.WindowW),
-		"window_h":               strconv.Itoa(cfg.WindowH),
+		"system_name":             cfg.SystemName,
+		"cargo_capacity":          fmt.Sprintf("%g", cfg.CargoCapacity),
+		"buy_radius":              strconv.Itoa(cfg.BuyRadius),
+		"sell_radius":             strconv.Itoa(cfg.SellRadius),
+		"min_margin":              fmt.Sprintf("%g", cfg.MinMargin),
+		"sales_tax_percent":       fmt.Sprintf("%g", cfg.SalesTaxPercent),
+		"broker_fee_percent":      fmt.Sprintf("%g", cfg.BrokerFeePercent),
+		"split_trade_fees":        strconv.FormatBool(cfg.SplitTradeFees),
+		"buy_broker_fee_percent":  fmt.Sprintf("%g", cfg.BuyBrokerFeePercent),
+		"sell_broker_fee_percent": fmt.Sprintf("%g", cfg.SellBrokerFeePercent),
+		"buy_sales_tax_percent":   fmt.Sprintf("%g", cfg.BuySalesTaxPercent),
+		"sell_sales_tax_percent":  fmt.Sprintf("%g", cfg.SellSalesTaxPercent),
+		"alert_telegram":          strconv.FormatBool(cfg.AlertTelegram),
+		"alert_discord":           strconv.FormatBool(cfg.AlertDiscord),
+		"alert_desktop":           strconv.FormatBool(cfg.AlertDesktop),
+		"alert_telegram_token":    cfg.AlertTelegramToken,
+		"alert_telegram_chat_id":  cfg.AlertTelegramChatID,
+		"alert_discord_webhook":   cfg.AlertDiscordWebhook,
+		"opacity":                 strconv.Itoa(cfg.Opacity),
+		"window_x":                strconv.Itoa(cfg.WindowX),
+		"window_y":                strconv.Itoa(cfg.WindowY),
+		"window_w":                strconv.Itoa(cfg.WindowW),
+		"window_h":                strconv.Itoa(cfg.WindowH),
 	}
 
 	tx, err := d.sql.Begin()
@@ -152,24 +176,30 @@ func (d *DB) MigrateFromJSON() {
 
 	// Parse the old config
 	var old struct {
-		SystemName          string                 `json:"system_name"`
-		CargoCapacity       float64                `json:"cargo_capacity"`
-		BuyRadius           int                    `json:"buy_radius"`
-		SellRadius          int                    `json:"sell_radius"`
-		MinMargin           float64                `json:"min_margin"`
-		SalesTaxPercent     float64                `json:"sales_tax_percent"`
-		AlertTelegram       bool                   `json:"alert_telegram"`
-		AlertDiscord        bool                   `json:"alert_discord"`
-		AlertDesktop        bool                   `json:"alert_desktop"`
-		AlertTelegramToken  string                 `json:"alert_telegram_token"`
-		AlertTelegramChatID string                 `json:"alert_telegram_chat_id"`
-		AlertDiscordWebhook string                 `json:"alert_discord_webhook"`
-		Opacity             int                    `json:"opacity"`
-		WindowX             int                    `json:"window_x"`
-		WindowY             int                    `json:"window_y"`
-		WindowW             int                    `json:"window_w"`
-		WindowH             int                    `json:"window_h"`
-		Watchlist           []config.WatchlistItem `json:"watchlist"`
+		SystemName           string                 `json:"system_name"`
+		CargoCapacity        float64                `json:"cargo_capacity"`
+		BuyRadius            int                    `json:"buy_radius"`
+		SellRadius           int                    `json:"sell_radius"`
+		MinMargin            float64                `json:"min_margin"`
+		SalesTaxPercent      float64                `json:"sales_tax_percent"`
+		BrokerFeePercent     *float64               `json:"broker_fee_percent"`
+		SplitTradeFees       *bool                  `json:"split_trade_fees"`
+		BuyBrokerFeePercent  *float64               `json:"buy_broker_fee_percent"`
+		SellBrokerFeePercent *float64               `json:"sell_broker_fee_percent"`
+		BuySalesTaxPercent   *float64               `json:"buy_sales_tax_percent"`
+		SellSalesTaxPercent  *float64               `json:"sell_sales_tax_percent"`
+		AlertTelegram        bool                   `json:"alert_telegram"`
+		AlertDiscord         bool                   `json:"alert_discord"`
+		AlertDesktop         bool                   `json:"alert_desktop"`
+		AlertTelegramToken   string                 `json:"alert_telegram_token"`
+		AlertTelegramChatID  string                 `json:"alert_telegram_chat_id"`
+		AlertDiscordWebhook  string                 `json:"alert_discord_webhook"`
+		Opacity              int                    `json:"opacity"`
+		WindowX              int                    `json:"window_x"`
+		WindowY              int                    `json:"window_y"`
+		WindowW              int                    `json:"window_w"`
+		WindowH              int                    `json:"window_h"`
+		Watchlist            []config.WatchlistItem `json:"watchlist"`
 	}
 	if err := json.Unmarshal(data, &old); err != nil {
 		log.Printf("[DB] Failed to parse config.json: %v", err)
@@ -184,6 +214,24 @@ func (d *DB) MigrateFromJSON() {
 	cfg.SellRadius = old.SellRadius
 	cfg.MinMargin = old.MinMargin
 	cfg.SalesTaxPercent = old.SalesTaxPercent
+	if old.BrokerFeePercent != nil {
+		cfg.BrokerFeePercent = *old.BrokerFeePercent
+	}
+	if old.SplitTradeFees != nil {
+		cfg.SplitTradeFees = *old.SplitTradeFees
+	}
+	if old.BuyBrokerFeePercent != nil {
+		cfg.BuyBrokerFeePercent = *old.BuyBrokerFeePercent
+	}
+	if old.SellBrokerFeePercent != nil {
+		cfg.SellBrokerFeePercent = *old.SellBrokerFeePercent
+	}
+	if old.BuySalesTaxPercent != nil {
+		cfg.BuySalesTaxPercent = *old.BuySalesTaxPercent
+	}
+	if old.SellSalesTaxPercent != nil {
+		cfg.SellSalesTaxPercent = *old.SellSalesTaxPercent
+	}
 	cfg.AlertTelegram = old.AlertTelegram
 	cfg.AlertDiscord = old.AlertDiscord
 	cfg.AlertDesktop = old.AlertDesktop

@@ -275,6 +275,11 @@ export interface ScanParams {
   min_margin: number;
   sales_tax_percent: number;
   broker_fee_percent: number;
+  split_trade_fees?: boolean;
+  buy_broker_fee_percent?: number;
+  sell_broker_fee_percent?: number;
+  buy_sales_tax_percent?: number;
+  sell_sales_tax_percent?: number;
   min_daily_volume?: number;
   max_investment?: number;
   /** Route security: 0 = all space, 0.45 = highsec only, 0.7 = min 0.7 */
@@ -301,6 +306,12 @@ export interface AppConfig {
   sell_radius: number;
   min_margin: number;
   sales_tax_percent: number;
+  broker_fee_percent: number;
+  split_trade_fees?: boolean;
+  buy_broker_fee_percent?: number;
+  sell_broker_fee_percent?: number;
+  buy_sales_tax_percent?: number;
+  sell_sales_tax_percent?: number;
   alert_telegram: boolean;
   alert_discord: boolean;
   alert_desktop: boolean;

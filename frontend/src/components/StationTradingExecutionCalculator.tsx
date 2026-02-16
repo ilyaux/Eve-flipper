@@ -14,8 +14,16 @@ export interface StationTradingExecutionCalculatorProps {
   defaultQuantity?: number;
   /** Broker fee % (e.g. 3) for profit estimate */
   brokerFeePercent?: number;
+  /** Buy-side broker fee %. Used when split fees are enabled. */
+  buyBrokerFeePercent?: number;
+  /** Sell-side broker fee %. Used when split fees are enabled. */
+  sellBrokerFeePercent?: number;
   /** Sales tax % (e.g. 8) — deducted from sell revenue in profit */
   salesTaxPercent?: number;
+  /** Buy-side tax %. Used when split fees are enabled. */
+  buySalesTaxPercent?: number;
+  /** Sell-side tax %. Used when split fees are enabled. */
+  sellSalesTaxPercent?: number;
   /** Days of market history for impact calibration (λ, η, n*). Optional. */
   impactDays?: number;
 }
@@ -277,7 +285,11 @@ export function StationTradingExecutionCalculator({
   stationID,
   defaultQuantity = 100,
   brokerFeePercent = 3,
+  buyBrokerFeePercent,
+  sellBrokerFeePercent,
   salesTaxPercent = 0,
+  buySalesTaxPercent,
+  sellSalesTaxPercent,
   impactDays,
 }: StationTradingExecutionCalculatorProps) {
   const { t } = useI18n();
@@ -336,9 +348,13 @@ export function StationTradingExecutionCalculator({
   // planBuy = ask side (sell orders), planSell = bid side (buy orders).
   const bidTotal = planSell?.total_cost ?? 0;   // what we pay when our buy order fills (we placed at bid)
   const askTotal = planBuy?.total_cost ?? 0;    // what we receive when our sell order fills (we placed at ask)
-  const brokerMult = 1 - brokerFeePercent / 100;
-  const taxMult = 1 - salesTaxPercent / 100;
-  const effectiveBuyCost = bidTotal * (1 + brokerFeePercent / 100);
+  const buyBrokerPct = buyBrokerFeePercent ?? brokerFeePercent;
+  const sellBrokerPct = sellBrokerFeePercent ?? brokerFeePercent;
+  const buyTaxPct = buySalesTaxPercent ?? 0;
+  const sellTaxPct = sellSalesTaxPercent ?? salesTaxPercent;
+  const brokerMult = 1 - sellBrokerPct / 100;
+  const taxMult = 1 - sellTaxPct / 100;
+  const effectiveBuyCost = bidTotal * (1 + (buyBrokerPct + buyTaxPct) / 100);
   const sellAfterBroker = askTotal * brokerMult;
   const sellAfterTax = sellAfterBroker * taxMult;
   const profit = sellAfterTax - effectiveBuyCost;
@@ -473,8 +489,13 @@ export function StationTradingExecutionCalculator({
                 </span>
                 <span>
                   {(() => {
-                    const placeBuyCost = planSell.best_price * (1 + brokerFeePercent / 100);
-                    const placeSellRev = planBuy.best_price * (1 - brokerFeePercent / 100) * (1 - salesTaxPercent / 100);
+                    const placeBuyCost =
+                      planSell.best_price *
+                      (1 + (buyBrokerPct + buyTaxPct) / 100);
+                    const placeSellRev =
+                      planBuy.best_price *
+                      (1 - sellBrokerPct / 100) *
+                      (1 - sellTaxPct / 100);
                     const placeProfit = placeSellRev - placeBuyCost;
                     return placeProfit >= 0
                       ? t("execPlanStationPlaceOrdersProfit", { profit: formatISK(placeProfit) })
@@ -495,9 +516,9 @@ export function StationTradingExecutionCalculator({
                     ✗ {!planSell.can_fill ? t("execPlanBuy") : t("execPlanSell")} — {t("execPlanCanFill")} {t("execPlanCannotFill")}
                   </span>
                 )}
-                {salesTaxPercent > 0 && (
+                {sellTaxPct > 0 && (
                   <span className="text-eve-dim text-xs">
-                    {t("execPlanAfterSalesTax", { pct: salesTaxPercent })}
+                    {t("execPlanAfterSalesTax", { pct: sellTaxPct })}
                   </span>
                 )}
                 <span className="text-eve-dim text-xs">

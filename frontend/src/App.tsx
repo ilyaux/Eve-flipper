@@ -68,6 +68,11 @@ function App() {
     min_margin: 5,
     sales_tax_percent: 8,
     broker_fee_percent: 0,
+    split_trade_fees: false,
+    buy_broker_fee_percent: 0,
+    sell_broker_fee_percent: 0,
+    buy_sales_tax_percent: 0,
+    sell_sales_tax_percent: 8,
     contract_hold_days: 7,
     contract_target_confidence: 80,
   });
@@ -296,7 +301,20 @@ function App() {
           sell_radius: cfg.sell_radius ?? prev.sell_radius,
           min_margin: cfg.min_margin ?? prev.min_margin,
           sales_tax_percent: cfg.sales_tax_percent ?? prev.sales_tax_percent,
-          broker_fee_percent: prev.broker_fee_percent,
+          broker_fee_percent: cfg.broker_fee_percent ?? prev.broker_fee_percent,
+          split_trade_fees: cfg.split_trade_fees ?? prev.split_trade_fees,
+          buy_broker_fee_percent:
+            cfg.buy_broker_fee_percent ?? prev.buy_broker_fee_percent,
+          sell_broker_fee_percent:
+            cfg.sell_broker_fee_percent ??
+            cfg.broker_fee_percent ??
+            prev.sell_broker_fee_percent,
+          buy_sales_tax_percent:
+            cfg.buy_sales_tax_percent ?? prev.buy_sales_tax_percent,
+          sell_sales_tax_percent:
+            cfg.sell_sales_tax_percent ??
+            cfg.sales_tax_percent ??
+            prev.sell_sales_tax_percent,
         }));
         setAlertChannels({
           telegram: cfg.alert_telegram ?? false,
@@ -843,6 +861,12 @@ function App() {
               scanning={scanning && tab === "radius"}
               progress={tab === "radius" ? progress : ""}
               salesTaxPercent={params.sales_tax_percent}
+              brokerFeePercent={params.broker_fee_percent}
+              splitTradeFees={params.split_trade_fees}
+              buyBrokerFeePercent={params.buy_broker_fee_percent}
+              sellBrokerFeePercent={params.sell_broker_fee_percent}
+              buySalesTaxPercent={params.buy_sales_tax_percent}
+              sellSalesTaxPercent={params.sell_sales_tax_percent}
               isLoggedIn={authStatus.logged_in}
             />
           </div>
@@ -854,6 +878,12 @@ function App() {
               scanning={scanning && tab === "region"}
               progress={tab === "region" ? progress : ""}
               salesTaxPercent={params.sales_tax_percent}
+              brokerFeePercent={params.broker_fee_percent}
+              splitTradeFees={params.split_trade_fees}
+              buyBrokerFeePercent={params.buy_broker_fee_percent}
+              sellBrokerFeePercent={params.sell_broker_fee_percent}
+              buySalesTaxPercent={params.buy_sales_tax_percent}
+              sellSalesTaxPercent={params.sell_sales_tax_percent}
               isLoggedIn={authStatus.logged_in}
               showRegions
             />
@@ -985,6 +1015,11 @@ function App() {
                 "min_margin",
                 "sales_tax_percent",
                 "broker_fee_percent",
+                "split_trade_fees",
+                "buy_broker_fee_percent",
+                "sell_broker_fee_percent",
+                "buy_sales_tax_percent",
+                "sell_sales_tax_percent",
                 "min_daily_volume",
                 "min_contract_price",
                 "max_contract_margin",

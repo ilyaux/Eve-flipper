@@ -112,11 +112,15 @@ func (s *Scanner) findBestTrades(idx *orderIndex, fromSystemID int32, params Rou
 		return nil
 	}
 
-	taxMult := 1.0 - params.SalesTaxPercent/100
-	if taxMult < 0 {
-		taxMult = 0
-	}
-	brokerFeeRate := params.BrokerFeePercent / 100 // fraction e.g. 0.03 for 3%
+	buyCostMult, sellRevenueMult := tradeFeeMultipliers(tradeFeeInputs{
+		SplitTradeFees:       params.SplitTradeFees,
+		BrokerFeePercent:     params.BrokerFeePercent,
+		SalesTaxPercent:      params.SalesTaxPercent,
+		BuyBrokerFeePercent:  params.BuyBrokerFeePercent,
+		SellBrokerFeePercent: params.SellBrokerFeePercent,
+		BuySalesTaxPercent:   params.BuySalesTaxPercent,
+		SellSalesTaxPercent:  params.SellSalesTaxPercent,
+	})
 
 	type candidate struct {
 		hop   RouteHop
@@ -153,8 +157,8 @@ func (s *Scanner) findBestTrades(idx *orderIndex, fromSystemID int32, params Rou
 				continue
 			}
 
-			effectiveBuy := sell.Price * (1 + brokerFeeRate)
-			effectiveSell := buy.Price * taxMult * (1 - brokerFeeRate)
+			effectiveBuy := sell.Price * buyCostMult
+			effectiveSell := buy.Price * sellRevenueMult
 			profitPerUnit := effectiveSell - effectiveBuy
 			if profitPerUnit <= 0 {
 				continue

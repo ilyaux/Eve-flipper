@@ -125,10 +125,20 @@ func getContractFilters(params ScanParams) (minPrice, maxMargin, minPricedRatio 
 }
 
 func contractSellValueMultiplier(params ScanParams) float64 {
+	_, _, sellBroker, sellTax := tradeFeePercents(tradeFeeInputs{
+		SplitTradeFees:       params.SplitTradeFees,
+		BrokerFeePercent:     params.BrokerFeePercent,
+		SalesTaxPercent:      params.SalesTaxPercent,
+		BuyBrokerFeePercent:  params.BuyBrokerFeePercent,
+		SellBrokerFeePercent: params.SellBrokerFeePercent,
+		BuySalesTaxPercent:   params.BuySalesTaxPercent,
+		SellSalesTaxPercent:  params.SellSalesTaxPercent,
+	})
+
 	// Instant liquidation sells immediately into existing buy orders:
 	// no broker fee is paid, only sales tax.
 	if params.ContractInstantLiquidation {
-		m := 1.0 - params.SalesTaxPercent/100
+		m := 1.0 - sellTax/100
 		if m < 0 {
 			return 0
 		}
@@ -136,7 +146,7 @@ func contractSellValueMultiplier(params ScanParams) float64 {
 	}
 	// Market-estimate mode assumes placing sell orders on market:
 	// sales tax + broker fee on sell side.
-	feePercent := params.SalesTaxPercent + params.BrokerFeePercent
+	feePercent := sellTax + sellBroker
 	m := 1.0 - feePercent/100
 	if m < 0 {
 		return 0

@@ -207,6 +207,12 @@ export function RouteBuilder({ params, loadedResults, isLoggedIn = false }: Prop
           onClose={() => setSelectedRoute(null)}
           onCopySystems={copyRouteSystems}
           salesTaxPercent={params.sales_tax_percent ?? 0}
+          brokerFeePercent={params.broker_fee_percent ?? 0}
+          splitTradeFees={params.split_trade_fees ?? false}
+          buyBrokerFeePercent={params.buy_broker_fee_percent}
+          sellBrokerFeePercent={params.sell_broker_fee_percent}
+          buySalesTaxPercent={params.buy_sales_tax_percent}
+          sellSalesTaxPercent={params.sell_sales_tax_percent}
           isLoggedIn={isLoggedIn}
         />
       )}
@@ -250,12 +256,24 @@ function RouteDetailPopup({
   onClose,
   onCopySystems,
   salesTaxPercent = 0,
+  brokerFeePercent = 0,
+  splitTradeFees = false,
+  buyBrokerFeePercent,
+  sellBrokerFeePercent,
+  buySalesTaxPercent,
+  sellSalesTaxPercent,
   isLoggedIn = false,
 }: {
   route: RouteResult;
   onClose: () => void;
   onCopySystems: (route: RouteResult) => void;
   salesTaxPercent?: number;
+  brokerFeePercent?: number;
+  splitTradeFees?: boolean;
+  buyBrokerFeePercent?: number;
+  sellBrokerFeePercent?: number;
+  buySalesTaxPercent?: number;
+  sellSalesTaxPercent?: number;
   isLoggedIn?: boolean;
 }) {
   const { t } = useI18n();
@@ -435,7 +453,13 @@ function RouteDetailPopup({
       regionID={execPlanHop?.RegionID ?? 0}
       defaultQuantity={execPlanHop?.Units ?? 100}
       isBuy={true}
+      brokerFeePercent={brokerFeePercent}
       salesTaxPercent={salesTaxPercent}
+      splitTradeFees={splitTradeFees}
+      buyBrokerFeePercent={buyBrokerFeePercent}
+      sellBrokerFeePercent={sellBrokerFeePercent}
+      buySalesTaxPercent={buySalesTaxPercent}
+      sellSalesTaxPercent={sellSalesTaxPercent}
     />
     </>
   );

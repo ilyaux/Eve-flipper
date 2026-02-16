@@ -167,6 +167,11 @@ export async function findRoutes(
       min_margin: params.min_margin,
       sales_tax_percent: params.sales_tax_percent,
       broker_fee_percent: params.broker_fee_percent,
+      split_trade_fees: params.split_trade_fees,
+      buy_broker_fee_percent: params.buy_broker_fee_percent,
+      sell_broker_fee_percent: params.sell_broker_fee_percent,
+      buy_sales_tax_percent: params.buy_sales_tax_percent,
+      sell_sales_tax_percent: params.sell_sales_tax_percent,
       min_hops: minHops,
       max_hops: maxHops,
       min_route_security: params.min_route_security,
@@ -280,6 +285,11 @@ export async function scanStation(
     min_margin: number;
     sales_tax_percent: number;
     broker_fee: number;
+    split_trade_fees?: boolean;
+    buy_broker_fee_percent?: number;
+    sell_broker_fee_percent?: number;
+    buy_sales_tax_percent?: number;
+    sell_sales_tax_percent?: number;
     min_daily_volume?: number;
     // EVE Guru Profit Filters
     min_item_profit?: number;

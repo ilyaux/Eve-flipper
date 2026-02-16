@@ -146,7 +146,14 @@ type StationTradeParams struct {
 	MinMargin       float64
 	SalesTaxPercent float64
 	BrokerFee       float64 // percent
-	MinDailyVolume  int64   // 0 = no filter
+	// SplitTradeFees enables side-specific fee model.
+	// When false, legacy fields above are used.
+	SplitTradeFees       bool
+	BuyBrokerFeePercent  float64
+	SellBrokerFeePercent float64
+	BuySalesTaxPercent   float64
+	SellSalesTaxPercent  float64
+	MinDailyVolume       int64 // 0 = no filter
 
 	// --- EVE Guru Profit Filters ---
 	MinItemProfit   float64 // Min profit per unit ISK (e.g. 1,000,000)
@@ -223,14 +230,15 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 
 	progress(fmt.Sprintf("Analyzing %d items...", len(groups)))
 
-	taxMult := 1.0 - params.SalesTaxPercent/100
-	brokerFeeRate := params.BrokerFee / 100 // fraction e.g. 0.03 for 3%
-	if taxMult < 0 {
-		taxMult = 0
-	}
-	if brokerFeeRate > 1 {
-		brokerFeeRate = 1
-	}
+	buyCostMult, sellRevenueMult := tradeFeeMultipliers(tradeFeeInputs{
+		SplitTradeFees:       params.SplitTradeFees,
+		BrokerFeePercent:     params.BrokerFee,
+		SalesTaxPercent:      params.SalesTaxPercent,
+		BuyBrokerFeePercent:  params.BuyBrokerFeePercent,
+		SellBrokerFeePercent: params.SellBrokerFeePercent,
+		BuySalesTaxPercent:   params.BuySalesTaxPercent,
+		SellSalesTaxPercent:  params.SellSalesTaxPercent,
+	})
 
 	var results []StationTrade
 	// Store order groups for advanced metrics calculation
@@ -275,8 +283,8 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 		if revenueFromSell <= costToBuy {
 			continue // no spread
 		}
-		effectiveBuy := costToBuy * (1 + params.BrokerFee/100)
-		effectiveSell := revenueFromSell * taxMult * (1 - brokerFeeRate)
+		effectiveBuy := costToBuy * buyCostMult
+		effectiveSell := revenueFromSell * sellRevenueMult
 		profitPerUnit := effectiveSell - effectiveBuy
 
 		if profitPerUnit <= 0 {
@@ -388,9 +396,9 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 				r.SlippageBuyPct = planBuy.SlippagePercent
 				r.SlippageSellPct = planSell.SlippagePercent
 				if r.ExpectedBuyPrice > 0 && r.ExpectedSellPrice > 0 {
-					// Account for fees: buy side pays broker fee, sell side pays broker fee + sales tax
-					effectiveBuy := r.ExpectedBuyPrice * (1 + params.BrokerFee/100)
-					effectiveSell := r.ExpectedSellPrice * taxMult * (1 - brokerFeeRate)
+					// Account for configured buy/sell-side fees.
+					effectiveBuy := r.ExpectedBuyPrice * buyCostMult
+					effectiveSell := r.ExpectedSellPrice * sellRevenueMult
 					r.ExpectedProfit = effectiveSell - effectiveBuy // per unit, net of fees
 				}
 			}
@@ -535,17 +543,15 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 	if avgPeriod <= 0 {
 		avgPeriod = 90
 	}
-	taxMult := 1.0 - params.SalesTaxPercent/100
-	if taxMult < 0 {
-		taxMult = 0
-	}
-	brokerFeeRate := params.BrokerFee / 100
-	if brokerFeeRate < 0 {
-		brokerFeeRate = 0
-	}
-	if brokerFeeRate > 1 {
-		brokerFeeRate = 1
-	}
+	buyCostMult, sellRevenueMult := tradeFeeMultipliers(tradeFeeInputs{
+		SplitTradeFees:       params.SplitTradeFees,
+		BrokerFeePercent:     params.BrokerFee,
+		SalesTaxPercent:      params.SalesTaxPercent,
+		BuyBrokerFeePercent:  params.BuyBrokerFeePercent,
+		SellBrokerFeePercent: params.SellBrokerFeePercent,
+		BuySalesTaxPercent:   params.BuySalesTaxPercent,
+		SellSalesTaxPercent:  params.SellSalesTaxPercent,
+	})
 
 	type histResult struct {
 		idx     int
@@ -602,8 +608,8 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 					g.sellOrders, // asks we buy from
 					g.buyOrders,  // bids we sell into
 					desiredQty,
-					brokerFeeRate,
-					taxMult,
+					buyCostMult,
+					sellRevenueMult,
 				)
 				results[idx].CanFill = safeQty >= desiredQty && safeQty > 0
 				if safeQty > 0 {

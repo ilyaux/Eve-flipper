@@ -19,6 +19,12 @@ interface Props {
   progress: string;
   scanCompletedWithZero?: boolean;
   salesTaxPercent?: number;
+  brokerFeePercent?: number;
+  splitTradeFees?: boolean;
+  buyBrokerFeePercent?: number;
+  sellBrokerFeePercent?: number;
+  buySalesTaxPercent?: number;
+  sellSalesTaxPercent?: number;
   showRegions?: boolean;
   isLoggedIn?: boolean;
 }
@@ -292,6 +298,12 @@ export function ScanResultsTable({
   progress,
   scanCompletedWithZero,
   salesTaxPercent,
+  brokerFeePercent,
+  splitTradeFees,
+  buyBrokerFeePercent,
+  sellBrokerFeePercent,
+  buySalesTaxPercent,
+  sellSalesTaxPercent,
   showRegions = false,
   isLoggedIn = false,
 }: Props) {
@@ -973,7 +985,13 @@ export function ScanResultsTable({
         sellRegionID={execPlanRow?.SellRegionID}
         sellLocationID={execPlanRow?.SellLocationID ?? 0}
         defaultQuantity={execPlanRow?.UnitsToBuy ?? 100}
+        brokerFeePercent={brokerFeePercent}
         salesTaxPercent={salesTaxPercent}
+        splitTradeFees={splitTradeFees}
+        buyBrokerFeePercent={buyBrokerFeePercent}
+        sellBrokerFeePercent={sellBrokerFeePercent}
+        buySalesTaxPercent={buySalesTaxPercent}
+        sellSalesTaxPercent={sellSalesTaxPercent}
       />
     </div>
   );

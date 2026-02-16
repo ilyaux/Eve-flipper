@@ -324,11 +324,15 @@ func (s *Scanner) calculateResults(
 	buyOrders := idx.buyOrders
 
 	progress("Calculating profits...")
-	taxMult := 1.0 - params.SalesTaxPercent/100
-	if taxMult < 0 {
-		taxMult = 0
-	}
-	brokerFeeRate := params.BrokerFeePercent / 100 // 0 for instant trades; fraction e.g. 0.03 for 3%
+	buyCostMult, sellRevenueMult := tradeFeeMultipliers(tradeFeeInputs{
+		SplitTradeFees:       params.SplitTradeFees,
+		BrokerFeePercent:     params.BrokerFeePercent,
+		SalesTaxPercent:      params.SalesTaxPercent,
+		BuyBrokerFeePercent:  params.BuyBrokerFeePercent,
+		SellBrokerFeePercent: params.SellBrokerFeePercent,
+		BuySalesTaxPercent:   params.BuySalesTaxPercent,
+		SellSalesTaxPercent:  params.SellSalesTaxPercent,
+	})
 
 	// For each (typeID, sellLocationID, buyLocationID) keep only the best-profit pair.
 	// This deduplicates multiple orders at the same location while preserving
@@ -419,8 +423,8 @@ func (s *Scanner) calculateResults(
 				expensiveBuy = buy.Price
 			}
 		}
-		bestEffBuy := cheapestSell * (1 + brokerFeeRate)
-		bestEffSell := expensiveBuy * taxMult * (1 - brokerFeeRate)
+		bestEffBuy := cheapestSell * buyCostMult
+		bestEffSell := expensiveBuy * sellRevenueMult
 		if bestEffSell <= bestEffBuy {
 			continue
 		}
@@ -439,8 +443,8 @@ func (s *Scanner) calculateResults(
 					continue
 				}
 
-				effectiveBuyPrice := sell.Price * (1 + brokerFeeRate)
-				effectiveSellPrice := buy.Price * taxMult * (1 - brokerFeeRate)
+				effectiveBuyPrice := sell.Price * buyCostMult
+				effectiveSellPrice := buy.Price * sellRevenueMult
 				profitPerUnit := effectiveSellPrice - effectiveBuyPrice
 				if profitPerUnit <= 0 {
 					continue
@@ -460,7 +464,7 @@ func (s *Scanner) calculateResults(
 
 				// MaxInvestment filter
 				if params.MaxInvestment > 0 {
-					maxAfford := int32(params.MaxInvestment / sell.Price)
+					maxAfford := int32(params.MaxInvestment / effectiveBuyPrice)
 					if maxAfford <= 0 {
 						continue
 					}
@@ -583,8 +587,8 @@ func (s *Scanner) calculateResults(
 				sellByLT[locTypeKey{r.BuyLocationID, r.TypeID}],
 				buyByLT[locTypeKey{r.SellLocationID, r.TypeID}],
 				requestedQty,
-				brokerFeeRate,
-				taxMult,
+				buyCostMult,
+				sellRevenueMult,
 			)
 			if safeQty <= 0 {
 				continue
@@ -763,8 +767,8 @@ func findSafeExecutionQuantity(
 	askOrdersAtBuy []esi.MarketOrder, // sell orders we buy from
 	bidOrdersAtSell []esi.MarketOrder, // buy orders we sell into
 	desiredQty int32,
-	brokerFeeRate float64,
-	taxMult float64,
+	buyCostMult float64,
+	sellRevenueMult float64,
 ) (int32, ExecutionPlanResult, ExecutionPlanResult, float64) {
 	var zeroBuy ExecutionPlanResult
 	var zeroSell ExecutionPlanResult
@@ -778,7 +782,7 @@ func findSafeExecutionQuantity(
 		}
 		planBuy := ComputeExecutionPlan(askOrdersAtBuy, q, true)
 		planSell := ComputeExecutionPlan(bidOrdersAtSell, q, false)
-		expectedProfit := expectedProfitForPlans(planBuy, planSell, q, brokerFeeRate, taxMult)
+		expectedProfit := expectedProfitForPlans(planBuy, planSell, q, buyCostMult, sellRevenueMult)
 		ok := planBuy.CanFill && planSell.CanFill && expectedProfit > 0
 		return ok, planBuy, planSell, expectedProfit
 	}
@@ -834,14 +838,14 @@ func expectedProfitForPlans(
 	planBuy ExecutionPlanResult,
 	planSell ExecutionPlanResult,
 	qty int32,
-	brokerFeeRate float64,
-	taxMult float64,
+	buyCostMult float64,
+	sellRevenueMult float64,
 ) float64 {
 	if qty <= 0 || planBuy.ExpectedPrice <= 0 || planSell.ExpectedPrice <= 0 {
 		return 0
 	}
-	effBuy := planBuy.ExpectedPrice * (1 + brokerFeeRate)
-	effSell := planSell.ExpectedPrice * taxMult * (1 - brokerFeeRate)
+	effBuy := planBuy.ExpectedPrice * buyCostMult
+	effSell := planSell.ExpectedPrice * sellRevenueMult
 	return (effSell - effBuy) * float64(qty)
 }
 
