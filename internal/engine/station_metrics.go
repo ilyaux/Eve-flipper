@@ -313,7 +313,62 @@ func countTightSpreadOrders(orders []esi.MarketOrder) int {
 //     opportunity cost of locked-up ISK.
 //   - CI         (10%): Competition matters but is partially captured by spread
 //     compression already; kept at lower weight to avoid double-counting.
-func CalcCTS(spreadROI, obds, drvi float64, ci, sds int, dailyVolume float64) float64 {
+type CTSWeights struct {
+	SpreadROI float64
+	OBDS      float64
+	DRVI      float64
+	CI        float64
+	SDS       float64
+	Volume    float64
+}
+
+var DefaultCTSWeights = CTSWeights{
+	SpreadROI: 0.25,
+	OBDS:      0.15,
+	DRVI:      0.15,
+	CI:        0.10,
+	SDS:       0.20,
+	Volume:    0.15,
+}
+
+func normalizeCTSWeights(weights CTSWeights) CTSWeights {
+	// Guard against invalid negative weights.
+	if weights.SpreadROI < 0 {
+		weights.SpreadROI = 0
+	}
+	if weights.OBDS < 0 {
+		weights.OBDS = 0
+	}
+	if weights.DRVI < 0 {
+		weights.DRVI = 0
+	}
+	if weights.CI < 0 {
+		weights.CI = 0
+	}
+	if weights.SDS < 0 {
+		weights.SDS = 0
+	}
+	if weights.Volume < 0 {
+		weights.Volume = 0
+	}
+
+	total := weights.SpreadROI + weights.OBDS + weights.DRVI + weights.CI + weights.SDS + weights.Volume
+	if total <= 0 {
+		return DefaultCTSWeights
+	}
+	return CTSWeights{
+		SpreadROI: weights.SpreadROI / total,
+		OBDS:      weights.OBDS / total,
+		DRVI:      weights.DRVI / total,
+		CI:        weights.CI / total,
+		SDS:       weights.SDS / total,
+		Volume:    weights.Volume / total,
+	}
+}
+
+func CalcCTSWithWeights(spreadROI, obds, drvi float64, ci, sds int, dailyVolume float64, weights CTSWeights) float64 {
+	weights = normalizeCTSWeights(weights)
+
 	// Normalize each component to 0-100 scale
 	roiScore := normalize(spreadROI, 0, 300) * 100        // Higher spread ROI = better (300% cap for lowsec/null)
 	obdsScore := normalize(obds, 0, 2) * 100              // Higher depth = better
@@ -328,13 +383,16 @@ func CalcCTS(spreadROI, obds, drvi float64, ci, sds int, dailyVolume float64) fl
 		volScore = normalize(math.Log10(dailyVolume), 0, 4) * 100 // 0..10000 units/day mapped to 0..100
 	}
 
-	// Weighted sum (weights sum to 1.0)
-	return roiScore*0.25 +
-		obdsScore*0.15 +
-		pviScore*0.15 +
-		ciScore*0.10 +
-		sdsScore*0.20 +
-		volScore*0.15
+	return roiScore*weights.SpreadROI +
+		obdsScore*weights.OBDS +
+		pviScore*weights.DRVI +
+		ciScore*weights.CI +
+		sdsScore*weights.SDS +
+		volScore*weights.Volume
+}
+
+func CalcCTS(spreadROI, obds, drvi float64, ci, sds int, dailyVolume float64) float64 {
+	return CalcCTSWithWeights(spreadROI, obds, drvi, ci, sds, dailyVolume, DefaultCTSWeights)
 }
 
 // normalize clamps value to [0, 1] range based on min/max.

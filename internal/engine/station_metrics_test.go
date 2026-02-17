@@ -188,6 +188,79 @@ func TestCalcCTS_MonotoneCoreFactors(t *testing.T) {
 	}
 }
 
+func TestNormalizeCTSWeights(t *testing.T) {
+	got := normalizeCTSWeights(CTSWeights{
+		SpreadROI: 2,
+		OBDS:      1,
+		DRVI:      -1, // should clamp to 0
+		CI:        1,
+		SDS:       0,
+		Volume:    0,
+	})
+	sum := got.SpreadROI + got.OBDS + got.DRVI + got.CI + got.SDS + got.Volume
+	if math.Abs(sum-1) > 1e-12 {
+		t.Fatalf("normalized weight sum = %v, want 1", sum)
+	}
+	if got.DRVI != 0 {
+		t.Fatalf("DRVI weight should be clamped to 0, got %v", got.DRVI)
+	}
+
+	fallback := normalizeCTSWeights(CTSWeights{})
+	if math.Abs(fallback.SpreadROI-DefaultCTSWeights.SpreadROI) > 1e-12 {
+		t.Fatalf("zero weights should fallback to default, got %+v", fallback)
+	}
+}
+
+func TestCalcCTSWithWeights_DefaultParity(t *testing.T) {
+	cases := []struct {
+		spreadROI float64
+		obds      float64
+		drvi      float64
+		ci        int
+		sds       int
+		dailyVol  float64
+	}{
+		{20, 0.5, 20, 20, 20, 100},
+		{80, 1.2, 10, 5, 5, 2000},
+		{5, 0.1, 40, 80, 70, 20},
+	}
+	for _, tc := range cases {
+		base := CalcCTS(tc.spreadROI, tc.obds, tc.drvi, tc.ci, tc.sds, tc.dailyVol)
+		custom := CalcCTSWithWeights(tc.spreadROI, tc.obds, tc.drvi, tc.ci, tc.sds, tc.dailyVol, DefaultCTSWeights)
+		if math.Abs(base-custom) > 1e-12 {
+			t.Fatalf("default parity mismatch: base=%v custom=%v", base, custom)
+		}
+	}
+}
+
+func TestCalcCTSSensitivityHarness_MonotoneUnderWeightPerturbation(t *testing.T) {
+	weights := []CTSWeights{
+		DefaultCTSWeights,
+		// ROI-heavy profile
+		{SpreadROI: 0.40, OBDS: 0.10, DRVI: 0.10, CI: 0.10, SDS: 0.15, Volume: 0.15},
+		// Risk-heavy profile
+		{SpreadROI: 0.20, OBDS: 0.10, DRVI: 0.20, CI: 0.10, SDS: 0.30, Volume: 0.10},
+		// Liquidity-heavy profile
+		{SpreadROI: 0.20, OBDS: 0.20, DRVI: 0.10, CI: 0.10, SDS: 0.15, Volume: 0.25},
+	}
+
+	for i, w := range weights {
+		base := CalcCTSWithWeights(20, 0.5, 20, 20, 20, 100, w)
+		higherROI := CalcCTSWithWeights(60, 0.5, 20, 20, 20, 100, w)
+		if higherROI <= base {
+			t.Fatalf("profile %d: higher ROI should raise CTS (base=%v highROI=%v)", i, base, higherROI)
+		}
+		lowerSDS := CalcCTSWithWeights(20, 0.5, 20, 20, 10, 100, w)
+		if lowerSDS <= base {
+			t.Fatalf("profile %d: lower SDS should raise CTS (base=%v lowSDS=%v)", i, base, lowerSDS)
+		}
+		higherVolume := CalcCTSWithWeights(20, 0.5, 20, 20, 20, 2000, w)
+		if higherVolume <= base {
+			t.Fatalf("profile %d: higher volume should raise CTS (base=%v highVol=%v)", i, base, higherVolume)
+		}
+	}
+}
+
 func TestAvgDailyVolume_UsesWindow(t *testing.T) {
 	old := time.Now().AddDate(0, 0, -20).Format("2006-01-02")
 	d1 := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
