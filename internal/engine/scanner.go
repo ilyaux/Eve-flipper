@@ -662,8 +662,11 @@ func (s *Scanner) calculateResults(
 	// Derive A4E-style tradability proxies from daily traded flow and current
 	// book imbalance for this specific buy->sell pair.
 	for i := range results {
-		s2b := float64(results[i].DailyVolume)
-		bfs := estimateBfSPerDay(s2b, results[i].BuyOrderRemain, results[i].SellOrderRemain)
+		s2b, bfs := estimateSideFlowsPerDay(
+			float64(results[i].DailyVolume),
+			results[i].BuyOrderRemain,
+			results[i].SellOrderRemain,
+		)
 		results[i].S2BPerDay = sanitizeFloat(s2b)
 		results[i].BfSPerDay = sanitizeFloat(bfs)
 		if results[i].BfSPerDay > 0 {
@@ -808,14 +811,27 @@ func harmonicDailyShare(dailyVolume int64, competitors int) int64 {
 	return result
 }
 
-// estimateBfSPerDay approximates "buys from sell orders" flow for a specific
-// arbitrage pair using observed S2B flow and current order-book imbalance.
-// S2B/BfS ~= buyDepth/sellDepth to keep the ratio symmetric with book depth.
-func estimateBfSPerDay(s2bPerDay float64, buyDepth, sellDepth int32) float64 {
-	if s2bPerDay <= 0 || buyDepth <= 0 || sellDepth <= 0 {
-		return 0
+// estimateSideFlowsPerDay splits total traded daily flow into S2B and BfS parts
+// using current book imbalance as a proxy for aggressor-side pressure.
+// It preserves mass-balance: S2B + BfS = totalPerDay.
+func estimateSideFlowsPerDay(totalPerDay float64, buyDepth, sellDepth int32) (float64, float64) {
+	if totalPerDay <= 0 {
+		return 0, 0
 	}
-	return s2bPerDay * float64(sellDepth) / float64(buyDepth)
+	switch {
+	case buyDepth <= 0 && sellDepth <= 0:
+		half := totalPerDay / 2
+		return half, totalPerDay - half
+	case buyDepth <= 0:
+		return 0, totalPerDay
+	case sellDepth <= 0:
+		return totalPerDay, 0
+	default:
+		totalDepth := float64(buyDepth + sellDepth)
+		s2b := totalPerDay * float64(buyDepth) / totalDepth
+		bfs := totalPerDay - s2b
+		return s2b, bfs
+	}
 }
 
 // findSafeExecutionQuantity returns the largest executable and profitable quantity

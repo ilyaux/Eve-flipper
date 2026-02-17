@@ -56,7 +56,7 @@ type MetricTooltipKey =
   | "VWAP"
   | "OBDS"
   | "DOS"
-  | "BvSRatio"
+  | "S2BBfSRatio"
   | "PeriodROI"
   | "NowROI";
 
@@ -67,7 +67,7 @@ const metricTooltipKeys: Partial<Record<SortKey, MetricTooltipKey>> = {
   VWAP: "VWAP",
   OBDS: "OBDS",
   DOS: "DOS",
-  BvSRatio: "BvSRatio",
+  S2BBfSRatio: "S2BBfSRatio",
   PeriodROI: "PeriodROI",
   NowROI: "NowROI",
 };
@@ -110,19 +110,19 @@ const columnDefs: {
     numeric: true,
   },
   {
-    key: "BuyUnitsPerDay",
+    key: "S2BPerDay",
     labelKey: "colS2BPerDay",
     width: "min-w-[80px]",
     numeric: true,
   },
   {
-    key: "SellUnitsPerDay",
+    key: "BfSPerDay",
     labelKey: "colBfSPerDay",
     width: "min-w-[80px]",
     numeric: true,
   },
   {
-    key: "BvSRatio",
+    key: "S2BBfSRatio",
     labelKey: "colS2BBfSRatio",
     width: "min-w-[90px]",
     numeric: true,
@@ -150,6 +150,16 @@ function normalizeStationResults(rows: StationTrade[]): StationTrade[] {
   return rows.map((r) => ({
     ...r,
     DailyProfit: stationDailyProfit(r),
+    S2BPerDay: r.S2BPerDay ?? r.BuyUnitsPerDay ?? 0,
+    BfSPerDay: r.BfSPerDay ?? r.SellUnitsPerDay ?? 0,
+    S2BBfSRatio:
+      r.S2BBfSRatio ??
+      r.BvSRatio ??
+      ((r.S2BPerDay ?? r.BuyUnitsPerDay ?? 0) > 0 &&
+      (r.BfSPerDay ?? r.SellUnitsPerDay ?? 0) > 0
+        ? (r.S2BPerDay ?? r.BuyUnitsPerDay ?? 0) /
+          (r.BfSPerDay ?? r.SellUnitsPerDay ?? 0)
+        : 0),
   }));
 }
 
@@ -612,7 +622,7 @@ export function StationTrading({
       const n = val as number | undefined;
       return n != null && Number.isFinite(n) ? formatMargin(n) : "\u2014";
     }
-    if (col.key === "BvSRatio" || col.key === "DOS" || col.key === "OBDS") {
+    if (col.key === "S2BBfSRatio" || col.key === "DOS" || col.key === "OBDS") {
       return (val as number).toFixed(2);
     }
     if (col.key === "CTS") {
@@ -1420,7 +1430,7 @@ function MetricTooltipContent({
       goodKey: "metricDOSGood",
       badKey: "metricDOSBad",
     },
-    BvSRatio: {
+    S2BBfSRatio: {
       titleKey: "metricBvSTitle",
       descKey: "metricBvSDesc",
       goodKey: "metricBvSGood",

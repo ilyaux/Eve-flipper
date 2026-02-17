@@ -293,21 +293,25 @@ function rowS2BPerDay(row: FlipResult): number {
   if (row.S2BPerDay != null && Number.isFinite(row.S2BPerDay)) {
     return row.S2BPerDay;
   }
-  const fallback = Number(row.DailyVolume);
-  return Number.isFinite(fallback) ? fallback : 0;
+  const total = Number(row.DailyVolume);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  const buyDepth = Number(row.BuyOrderRemain);
+  const sellDepth = Number(row.SellOrderRemain);
+  if (buyDepth <= 0 && sellDepth <= 0) return total / 2;
+  if (buyDepth <= 0) return 0;
+  if (sellDepth <= 0) return total;
+  return (total * buyDepth) / (buyDepth + sellDepth);
 }
 
 function rowBfSPerDay(row: FlipResult): number {
   if (row.BfSPerDay != null && Number.isFinite(row.BfSPerDay)) {
     return row.BfSPerDay;
   }
+  const total = Number(row.DailyVolume);
+  if (!Number.isFinite(total) || total <= 0) return 0;
   const s2b = rowS2BPerDay(row);
-  const buyDepth = Number(row.BuyOrderRemain);
-  const sellDepth = Number(row.SellOrderRemain);
-  if (!Number.isFinite(s2b) || s2b <= 0 || buyDepth <= 0 || sellDepth <= 0) {
-    return 0;
-  }
-  return (s2b * sellDepth) / buyDepth;
+  const bfs = total - s2b;
+  return bfs > 0 ? bfs : 0;
 }
 
 function rowS2BBfSRatio(row: FlipResult): number {

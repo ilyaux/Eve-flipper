@@ -506,12 +506,12 @@ func applyStationTradeFilters(results []StationTrade, params StationTradeParams)
 			dropROI++
 			continue
 		}
-		// B v S Ratio range
-		if params.BvSRatioMin > 0 && r.BvSRatio < params.BvSRatioMin {
+		// S2B/BfS ratio range
+		if params.BvSRatioMin > 0 && r.S2BBfSRatio < params.BvSRatioMin {
 			dropBvS++
 			continue
 		}
-		if params.BvSRatioMax > 0 && r.BvSRatio > params.BvSRatioMax {
+		if params.BvSRatioMax > 0 && r.S2BBfSRatio > params.BvSRatioMax {
 			dropBvS++
 			continue
 		}
@@ -674,10 +674,17 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 		if results[idx].SellUnitsPerDay > 0 {
 			results[idx].BvSRatio = sanitizeFloat(results[idx].BuyUnitsPerDay / results[idx].SellUnitsPerDay)
 		}
-		// A4E-style aliases
-		results[idx].S2BPerDay = results[idx].BuyUnitsPerDay
-		results[idx].BfSPerDay = results[idx].SellUnitsPerDay
-		results[idx].S2BBfSRatio = results[idx].BvSRatio
+		// A4E-style aliases with mass-balance: S2B + BfS = traded flow.
+		s2b, bfs := estimateSideFlowsPerDay(
+			dailyVol,
+			results[idx].BuyVolume,
+			results[idx].SellVolume,
+		)
+		results[idx].S2BPerDay = sanitizeFloat(s2b)
+		results[idx].BfSPerDay = sanitizeFloat(bfs)
+		if results[idx].BfSPerDay > 0 {
+			results[idx].S2BBfSRatio = sanitizeFloat(results[idx].S2BPerDay / results[idx].BfSPerDay)
+		}
 
 		// Days of Supply
 		if results[idx].BuyUnitsPerDay > 0 {
