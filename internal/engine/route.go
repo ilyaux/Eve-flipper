@@ -124,7 +124,7 @@ func (s *Scanner) findBestTrades(idx *orderIndex, fromSystemID int32, params Rou
 
 	type candidate struct {
 		hop   RouteHop
-		score float64 // profit per jump for ranking
+		score float64 // total profit for consistent beam objective
 	}
 
 	var candidates []candidate
@@ -182,8 +182,6 @@ func (s *Scanner) findBestTrades(idx *orderIndex, fromSystemID int32, params Rou
 				continue
 			}
 
-			ppj := profit / float64(jumps)
-
 			regionID := int32(0)
 			if sys, ok := s.SDE.Systems[fromSystemID]; ok {
 				regionID = sys.RegionID
@@ -205,13 +203,18 @@ func (s *Scanner) findBestTrades(idx *orderIndex, fromSystemID int32, params Rou
 					Profit:         profit,
 					Jumps:          jumps,
 				},
-				score: ppj,
+				score: profit,
 			})
 		}
 	}
 
-	// Sort by profit per jump, take top N
+	// Sort by total profit, take top N.
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			leftPPJ := candidates[i].hop.Profit / float64(candidates[i].hop.Jumps)
+			rightPPJ := candidates[j].hop.Profit / float64(candidates[j].hop.Jumps)
+			return leftPPJ > rightPPJ
+		}
 		return candidates[i].score > candidates[j].score
 	})
 	if len(candidates) > topN {

@@ -307,6 +307,21 @@ func TestExpectedProfitForPlans_LinearAndFeeSensitive(t *testing.T) {
 	}
 }
 
+func TestEstimateFlipDailyExecutableUnitsPerDay_CycleBounded(t *testing.T) {
+	if got := estimateFlipDailyExecutableUnitsPerDay(1_000, 600, 200); got != 200 {
+		t.Fatalf("cycle bound should be min(S2B,BfS): got=%d want=200", got)
+	}
+	if got := estimateFlipDailyExecutableUnitsPerDay(150, 600, 200); got != 150 {
+		t.Fatalf("units cap should apply: got=%d want=150", got)
+	}
+	if got := estimateFlipDailyExecutableUnitsPerDay(1_000, 0, 200); got != 0 {
+		t.Fatalf("zero side-flow should yield zero executable units, got=%d", got)
+	}
+	if got := estimateFlipDailyExecutableUnitsPerDay(1_000, -5, 200); got != 0 {
+		t.Fatalf("negative side-flow should yield zero executable units, got=%d", got)
+	}
+}
+
 func TestFindSafeExecutionQuantity_MatchesExhaustiveLargestProfitableQty(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 

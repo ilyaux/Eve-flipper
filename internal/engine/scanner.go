@@ -714,16 +714,15 @@ func (s *Scanner) calculateResults(
 		}
 	}
 
-	// Compute DailyProfit = ProfitPerUnit * min(UnitsToBuy, estimatedDailyShare).
-	// Uses harmonic distribution: top-of-book gets more volume than deeper positions.
+	// Compute DailyProfit using cycle-constrained daily executable units.
+	// A cycle needs both flows (BfS for sourcing + S2B for liquidation), so throughput
+	// is bounded by min(S2B, BfS), then capped by unitsToBuy.
 	for i := range results {
-		sellablePerDay := int64(results[i].UnitsToBuy)
-		if results[i].DailyVolume > 0 {
-			dailyShare := harmonicDailyShare(results[i].DailyVolume, results[i].SellCompetitors)
-			if dailyShare < sellablePerDay {
-				sellablePerDay = dailyShare
-			}
-		}
+		sellablePerDay := estimateFlipDailyExecutableUnitsPerDay(
+			results[i].UnitsToBuy,
+			results[i].S2BPerDay,
+			results[i].BfSPerDay,
+		)
 		profitPerUnit := results[i].ProfitPerUnit
 		if results[i].FilledQty > 0 {
 			profitPerUnit = results[i].RealProfit / float64(results[i].FilledQty)
@@ -863,6 +862,24 @@ func harmonicDailyShare(dailyVolume int64, competitors int) int64 {
 		result = 1
 	}
 	return result
+}
+
+// estimateFlipDailyExecutableUnitsPerDay estimates cycle throughput for flipper/regional
+// arbitrage from side-flow bounds. A full cycle needs both sides:
+// buy from sell-book (BfS flow) and sell into buy-book (S2B flow),
+// therefore daily executable units are bounded by min(S2B, BfS).
+func estimateFlipDailyExecutableUnitsPerDay(unitsToBuy int32, s2bPerDay, bfsPerDay float64) int64 {
+	if unitsToBuy <= 0 {
+		return 0
+	}
+	boundByFlow := int64(math.Round(math.Min(s2bPerDay, bfsPerDay)))
+	if boundByFlow <= 0 {
+		return 0
+	}
+	if boundByFlow > int64(unitsToBuy) {
+		return int64(unitsToBuy)
+	}
+	return boundByFlow
 }
 
 // estimateSideFlowsPerDay splits total traded daily flow into S2B and BfS parts
