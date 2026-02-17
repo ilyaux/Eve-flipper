@@ -659,6 +659,18 @@ func (s *Scanner) calculateResults(
 	// Enrich with market history (volume, velocity, trend)
 	s.enrichWithHistory(results, progress)
 
+	// Derive A4E-style tradability proxies from daily traded flow and current
+	// book imbalance for this specific buy->sell pair.
+	for i := range results {
+		s2b := float64(results[i].DailyVolume)
+		bfs := estimateBfSPerDay(s2b, results[i].BuyOrderRemain, results[i].SellOrderRemain)
+		results[i].S2BPerDay = sanitizeFloat(s2b)
+		results[i].BfSPerDay = sanitizeFloat(bfs)
+		if results[i].BfSPerDay > 0 {
+			results[i].S2BBfSRatio = sanitizeFloat(results[i].S2BPerDay / results[i].BfSPerDay)
+		}
+	}
+
 	// Compute DailyProfit = ProfitPerUnit * min(UnitsToBuy, estimatedDailyShare).
 	// Uses harmonic distribution: top-of-book gets more volume than deeper positions.
 	for i := range results {
@@ -681,6 +693,42 @@ func (s *Scanner) calculateResults(
 		filtered := make([]FlipResult, 0, len(results))
 		for _, r := range results {
 			if r.DailyVolume >= params.MinDailyVolume {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+	if params.MinS2BPerDay > 0 {
+		filtered := make([]FlipResult, 0, len(results))
+		for _, r := range results {
+			if r.S2BPerDay >= params.MinS2BPerDay {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+	if params.MinBfSPerDay > 0 {
+		filtered := make([]FlipResult, 0, len(results))
+		for _, r := range results {
+			if r.BfSPerDay >= params.MinBfSPerDay {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+	if params.MinS2BBfSRatio > 0 {
+		filtered := make([]FlipResult, 0, len(results))
+		for _, r := range results {
+			if r.S2BBfSRatio >= params.MinS2BBfSRatio {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+	if params.MaxS2BBfSRatio > 0 {
+		filtered := make([]FlipResult, 0, len(results))
+		for _, r := range results {
+			if r.S2BBfSRatio <= params.MaxS2BBfSRatio {
 				filtered = append(filtered, r)
 			}
 		}
@@ -758,6 +806,16 @@ func harmonicDailyShare(dailyVolume int64, competitors int) int64 {
 		result = 1
 	}
 	return result
+}
+
+// estimateBfSPerDay approximates "buys from sell orders" flow for a specific
+// arbitrage pair using observed S2B flow and current order-book imbalance.
+// S2B/BfS ~= buyDepth/sellDepth to keep the ratio symmetric with book depth.
+func estimateBfSPerDay(s2bPerDay float64, buyDepth, sellDepth int32) float64 {
+	if s2bPerDay <= 0 || buyDepth <= 0 || sellDepth <= 0 {
+		return 0
+	}
+	return s2bPerDay * float64(sellDepth) / float64(buyDepth)
 }
 
 // findSafeExecutionQuantity returns the largest executable and profitable quantity

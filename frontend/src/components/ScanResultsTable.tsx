@@ -142,6 +142,24 @@ const baseColumnDefs: ColumnDef[] = [
     numeric: true,
   },
   {
+    key: "S2BPerDay",
+    labelKey: "colS2BPerDay",
+    width: "min-w-[90px]",
+    numeric: true,
+  },
+  {
+    key: "BfSPerDay",
+    labelKey: "colBfSPerDay",
+    width: "min-w-[90px]",
+    numeric: true,
+  },
+  {
+    key: "S2BBfSRatio",
+    labelKey: "colS2BBfSRatio",
+    width: "min-w-[90px]",
+    numeric: true,
+  },
+  {
     key: "DailyProfit",
     labelKey: "colDailyProfit",
     width: "min-w-[110px]",
@@ -271,6 +289,36 @@ function rowIskPerM3(row: FlipResult): number {
   return rowProfitPerUnit(row) / volume;
 }
 
+function rowS2BPerDay(row: FlipResult): number {
+  if (row.S2BPerDay != null && Number.isFinite(row.S2BPerDay)) {
+    return row.S2BPerDay;
+  }
+  const fallback = Number(row.DailyVolume);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function rowBfSPerDay(row: FlipResult): number {
+  if (row.BfSPerDay != null && Number.isFinite(row.BfSPerDay)) {
+    return row.BfSPerDay;
+  }
+  const s2b = rowS2BPerDay(row);
+  const buyDepth = Number(row.BuyOrderRemain);
+  const sellDepth = Number(row.SellOrderRemain);
+  if (!Number.isFinite(s2b) || s2b <= 0 || buyDepth <= 0 || sellDepth <= 0) {
+    return 0;
+  }
+  return (s2b * sellDepth) / buyDepth;
+}
+
+function rowS2BBfSRatio(row: FlipResult): number {
+  if (row.S2BBfSRatio != null && Number.isFinite(row.S2BBfSRatio)) {
+    return row.S2BBfSRatio;
+  }
+  const bfs = rowBfSPerDay(row);
+  if (bfs <= 0) return 0;
+  return rowS2BPerDay(row) / bfs;
+}
+
 function getCellValue(row: FlipResult, key: SortKey): unknown {
   if (key === "IskPerM3") {
     if (row.IskPerM3 != null && Number.isFinite(row.IskPerM3)) {
@@ -278,6 +326,9 @@ function getCellValue(row: FlipResult, key: SortKey): unknown {
     }
     return rowIskPerM3(row);
   }
+  if (key === "S2BPerDay") return rowS2BPerDay(row);
+  if (key === "BfSPerDay") return rowBfSPerDay(row);
+  if (key === "S2BBfSRatio") return rowS2BBfSRatio(row);
   return row[key];
 }
 
@@ -312,6 +363,10 @@ function fmtCell(col: ColumnDef, row: FlipResult): string {
     return formatISK(val as number);
   }
   if (col.key === "MarginPercent") return formatMargin(val as number);
+  if (col.key === "S2BBfSRatio") {
+    const ratio = Number(val);
+    return Number.isFinite(ratio) ? ratio.toFixed(2) : "\u2014";
+  }
   if (col.key === "PriceTrend") {
     const v = val as number;
     return (v >= 0 ? "+" : "") + v.toFixed(1) + "%";

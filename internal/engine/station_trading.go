@@ -41,6 +41,9 @@ type StationTrade struct {
 	SellUnitsPerDay float64 `json:"SellUnitsPerDay"` // Estimated from order counts
 	BvSRatio        float64 `json:"BvSRatio"`        // BuyUnitsPerDay / SellUnitsPerDay
 	DOS             float64 `json:"DOS"`             // Days of Supply = SellVolume / BuyUnitsPerDay
+	S2BPerDay       float64 `json:"S2BPerDay"`       // Alias: sells to buy orders per day
+	BfSPerDay       float64 `json:"BfSPerDay"`       // Alias: buys from sell orders per day
+	S2BBfSRatio     float64 `json:"S2BBfSRatio"`     // Alias: S2BPerDay / BfSPerDay
 
 	// Advanced risk metrics
 	VWAP float64 `json:"VWAP"` // Volume-Weighted Average Price (30 days)
@@ -157,7 +160,9 @@ type StationTradeParams struct {
 
 	// --- EVE Guru Profit Filters ---
 	MinItemProfit   float64 // Min profit per unit ISK (e.g. 1,000,000)
-	MinDemandPerDay float64 // Min daily buy volume (e.g. 1.0)
+	MinDemandPerDay float64 // Legacy alias for MinS2BPerDay
+	MinS2BPerDay    float64 // Min daily S2B flow
+	MinBfSPerDay    float64 // Min daily BfS flow
 
 	// --- Risk Profile ---
 	AvgPricePeriod int     // Days for Period ROI calc (default 90)
@@ -472,9 +477,13 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 // applyStationTradeFilters applies post-history filters based on params.
 func applyStationTradeFilters(results []StationTrade, params StationTradeParams) []StationTrade {
 	filtered := make([]StationTrade, 0, len(results))
+	minS2B := params.MinS2BPerDay
+	if params.MinDemandPerDay > minS2B {
+		minS2B = params.MinDemandPerDay
+	}
 
 	// Debug counters
-	var dropVol, dropDemand, dropROI, dropBvS, dropPVI, dropSDS, dropPrice int
+	var dropVol, dropS2B, dropBfS, dropROI, dropBvS, dropPVI, dropSDS, dropPrice int
 
 	for _, r := range results {
 		// Min daily volume
@@ -482,9 +491,14 @@ func applyStationTradeFilters(results []StationTrade, params StationTradeParams)
 			dropVol++
 			continue
 		}
-		// Min demand per day
-		if params.MinDemandPerDay > 0 && r.BuyUnitsPerDay < params.MinDemandPerDay {
-			dropDemand++
+		// Min S2B/day (legacy: MinDemandPerDay)
+		if minS2B > 0 && r.S2BPerDay < minS2B {
+			dropS2B++
+			continue
+		}
+		// Min BfS/day
+		if params.MinBfSPerDay > 0 && r.BfSPerDay < params.MinBfSPerDay {
+			dropBfS++
 			continue
 		}
 		// Min Period ROI
@@ -523,8 +537,8 @@ func applyStationTradeFilters(results []StationTrade, params StationTradeParams)
 	}
 
 	if len(results) != len(filtered) {
-		log.Printf("[DEBUG] StationFilter drops: vol=%d demand=%d roi=%d bvs=%d pvi=%d sds=%d price=%d",
-			dropVol, dropDemand, dropROI, dropBvS, dropPVI, dropSDS, dropPrice)
+		log.Printf("[DEBUG] StationFilter drops: vol=%d s2b=%d bfs=%d roi=%d bvs=%d pvi=%d sds=%d price=%d",
+			dropVol, dropS2B, dropBfS, dropROI, dropBvS, dropPVI, dropSDS, dropPrice)
 	}
 
 	return filtered
@@ -660,6 +674,10 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 		if results[idx].SellUnitsPerDay > 0 {
 			results[idx].BvSRatio = sanitizeFloat(results[idx].BuyUnitsPerDay / results[idx].SellUnitsPerDay)
 		}
+		// A4E-style aliases
+		results[idx].S2BPerDay = results[idx].BuyUnitsPerDay
+		results[idx].BfSPerDay = results[idx].SellUnitsPerDay
+		results[idx].S2BBfSRatio = results[idx].BvSRatio
 
 		// Days of Supply
 		if results[idx].BuyUnitsPerDay > 0 {

@@ -30,6 +30,9 @@ export interface FlipResult {
   DailyVolume: number;
   Velocity: number;
   PriceTrend: number;
+  S2BPerDay?: number;
+  BfSPerDay?: number;
+  S2BBfSRatio?: number;
   BuyCompetitors: number;
   SellCompetitors: number;
   DailyProfit: number;
@@ -184,6 +187,9 @@ export interface StationTrade {
   BuyUnitsPerDay: number;
   SellUnitsPerDay: number;
   BvSRatio: number;
+  S2BPerDay?: number;
+  BfSPerDay?: number;
+  S2BBfSRatio?: number;
   DOS: number;
   VWAP: number;
   PVI: number;
@@ -283,6 +289,10 @@ export interface ScanParams {
   sell_sales_tax_percent?: number;
   min_daily_volume?: number;
   max_investment?: number;
+  min_s2b_per_day?: number;
+  min_bfs_per_day?: number;
+  min_s2b_bfs_ratio?: number;
+  max_s2b_bfs_ratio?: number;
   /** Route security: 0 = all space, 0.45 = highsec only, 0.7 = min 0.7 */
   min_route_security?: number;
   /** Target region name for regional arbitrage (empty = search all by radius) */

@@ -1141,6 +1141,10 @@ type scanRequest struct {
 	// Advanced filters
 	MinDailyVolume   int64   `json:"min_daily_volume"`
 	MaxInvestment    float64 `json:"max_investment"`
+	MinS2BPerDay     float64 `json:"min_s2b_per_day"`
+	MinBfSPerDay     float64 `json:"min_bfs_per_day"`
+	MinS2BBfSRatio   float64 `json:"min_s2b_bfs_ratio"`
+	MaxS2BBfSRatio   float64 `json:"max_s2b_bfs_ratio"`
 	MinRouteSecurity float64 `json:"min_route_security"` // 0 = all; 0.45 = highsec only; 0.7 = min 0.7
 	TargetRegion     string  `json:"target_region"`      // Empty = search all by radius; region name = search only in that region
 	// Contract-specific filters
@@ -1196,6 +1200,10 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 		SellSalesTaxPercent:        req.SellSalesTaxPercent,
 		MinDailyVolume:             req.MinDailyVolume,
 		MaxInvestment:              req.MaxInvestment,
+		MinS2BPerDay:               req.MinS2BPerDay,
+		MinBfSPerDay:               req.MinBfSPerDay,
+		MinS2BBfSRatio:             req.MinS2BBfSRatio,
+		MaxS2BBfSRatio:             req.MaxS2BBfSRatio,
 		MinRouteSecurity:           req.MinRouteSecurity,
 		TargetRegionID:             targetRegionID,
 		MinContractPrice:           req.MinContractPrice,
@@ -1754,7 +1762,9 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		MinDailyVolume       int64   `json:"min_daily_volume"`
 		// EVE Guru Profit Filters
 		MinItemProfit   float64 `json:"min_item_profit"`
-		MinDemandPerDay float64 `json:"min_demand_per_day"`
+		MinDemandPerDay float64 `json:"min_demand_per_day"` // legacy alias for min_s2b_per_day
+		MinS2BPerDay    float64 `json:"min_s2b_per_day"`
+		MinBfSPerDay    float64 `json:"min_bfs_per_day"`
 		// Risk Profile
 		AvgPricePeriod     int     `json:"avg_price_period"`
 		MinPeriodROI       float64 `json:"min_period_roi"`
@@ -1881,6 +1891,8 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 			MinDailyVolume:       req.MinDailyVolume,
 			MinItemProfit:        req.MinItemProfit,
 			MinDemandPerDay:      req.MinDemandPerDay,
+			MinS2BPerDay:         req.MinS2BPerDay,
+			MinBfSPerDay:         req.MinBfSPerDay,
 			AvgPricePeriod:       req.AvgPricePeriod,
 			MinPeriodROI:         req.MinPeriodROI,
 			BvSRatioMin:          req.BvSRatioMin,

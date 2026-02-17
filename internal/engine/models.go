@@ -32,6 +32,9 @@ type FlipResult struct {
 	DailyVolume     int64   `json:"DailyVolume"`
 	Velocity        float64 `json:"Velocity"`
 	PriceTrend      float64 `json:"PriceTrend"`
+	S2BPerDay       float64 `json:"S2BPerDay"`   // Estimated daily "sells to buy orders" flow
+	BfSPerDay       float64 `json:"BfSPerDay"`   // Estimated daily "buys from sell orders" flow
+	S2BBfSRatio     float64 `json:"S2BBfSRatio"` // S2BPerDay / BfSPerDay
 	BuyCompetitors  int     `json:"BuyCompetitors"`
 	SellCompetitors int     `json:"SellCompetitors"`
 	DailyProfit     float64 `json:"DailyProfit"` // ProfitPerUnit * min(UnitsToBuy, DailyVolume)
@@ -136,6 +139,10 @@ type ScanParams struct {
 	// Advanced filters
 	MinDailyVolume   int64   // 0 = no filter
 	MaxInvestment    float64 // 0 = no filter (max ISK per position)
+	MinS2BPerDay     float64 // 0 = no filter
+	MinBfSPerDay     float64 // 0 = no filter
+	MinS2BBfSRatio   float64 // 0 = no filter
+	MaxS2BBfSRatio   float64 // 0 = no filter
 	SecurityFilter   string  // "" = all, "highsec", "lowsec", "nullsec"
 	MinRouteSecurity float64 // 0 = all space; 0.45 = highsec only; 0.7 = min 0.7 (route must stay in this security)
 	TargetRegionID   int32   // 0 = search all by radius; >0 = search only in this specific region

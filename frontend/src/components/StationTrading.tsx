@@ -111,11 +111,22 @@ const columnDefs: {
   },
   {
     key: "BuyUnitsPerDay",
-    labelKey: "colBuyPerDay",
+    labelKey: "colS2BPerDay",
     width: "min-w-[80px]",
     numeric: true,
   },
-  { key: "BvSRatio", labelKey: "colBvS", width: "min-w-[60px]", numeric: true },
+  {
+    key: "SellUnitsPerDay",
+    labelKey: "colBfSPerDay",
+    width: "min-w-[80px]",
+    numeric: true,
+  },
+  {
+    key: "BvSRatio",
+    labelKey: "colS2BBfSRatio",
+    width: "min-w-[90px]",
+    numeric: true,
+  },
   { key: "DOS", labelKey: "colDOS", width: "min-w-[60px]", numeric: true },
   { key: "SDS", labelKey: "colSDS", width: "min-w-[50px]", numeric: true },
   {
@@ -180,6 +191,7 @@ export function StationTrading({
   // EVE Guru Profit Filters
   const [minItemProfit, setMinItemProfit] = useState(0);
   const [minDemandPerDay, setMinDemandPerDay] = useState(1);
+  const [minBfSPerDay, setMinBfSPerDay] = useState(0);
 
   // Risk Profile
   const [avgPricePeriod, setAvgPricePeriod] = useState(90);
@@ -197,6 +209,7 @@ export function StationTrading({
   const activeAdvancedCount = useMemo(
     () =>
       Number(minDemandPerDay > 1) +
+      Number(minBfSPerDay > 0) +
       Number(avgPricePeriod !== 90) +
       Number(minPeriodROI > 0) +
       Number(bvsRatioMin > 0) +
@@ -207,6 +220,7 @@ export function StationTrading({
       Number(!flagExtremePrices),
     [
       minDemandPerDay,
+      minBfSPerDay,
       avgPricePeriod,
       minPeriodROI,
       bvsRatioMin,
@@ -268,6 +282,7 @@ export function StationTrading({
       minDailyVolume,
       minItemProfit,
       minDemandPerDay,
+      minBfSPerDay,
       avgPricePeriod,
       minPeriodROI,
       bvsRatioMin,
@@ -289,6 +304,7 @@ export function StationTrading({
       minDailyVolume,
       minItemProfit,
       minDemandPerDay,
+      minBfSPerDay,
       avgPricePeriod,
       minPeriodROI,
       bvsRatioMin,
@@ -320,6 +336,7 @@ export function StationTrading({
     if (st.minItemProfit !== undefined) setMinItemProfit(st.minItemProfit);
     if (st.minDemandPerDay !== undefined)
       setMinDemandPerDay(st.minDemandPerDay);
+    if (st.minBfSPerDay !== undefined) setMinBfSPerDay(st.minBfSPerDay);
     if (st.avgPricePeriod !== undefined) setAvgPricePeriod(st.avgPricePeriod);
     if (st.minPeriodROI !== undefined) setMinPeriodROI(st.minPeriodROI);
     if (st.bvsRatioMin !== undefined) setBvsRatioMin(st.bvsRatioMin);
@@ -460,6 +477,8 @@ export function StationTrading({
         // EVE Guru Profit Filters
         min_item_profit: minItemProfit > 0 ? minItemProfit : undefined,
         min_demand_per_day: minDemandPerDay > 0 ? minDemandPerDay : undefined,
+        min_s2b_per_day: minDemandPerDay > 0 ? minDemandPerDay : undefined,
+        min_bfs_per_day: minBfSPerDay > 0 ? minBfSPerDay : undefined,
         // Risk Profile
         avg_price_period: avgPricePeriod,
         min_period_roi: minPeriodROI > 0 ? minPeriodROI : undefined,
@@ -517,6 +536,7 @@ export function StationTrading({
     minDailyVolume,
     minItemProfit,
     minDemandPerDay,
+    minBfSPerDay,
     avgPricePeriod,
     minPeriodROI,
     bvsRatioMin,
@@ -885,10 +905,18 @@ export function StationTrading({
               {showAdvanced && (
                 <div className="mt-3 pt-3 border-t border-eve-border/40 space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-x-3 gap-y-3">
-                    <SettingsField label={t("minDemandPerDay")}>
+                    <SettingsField label={t("minS2BPerDay")}>
                       <SettingsNumberInput
                         value={minDemandPerDay}
                         onChange={setMinDemandPerDay}
+                        min={0}
+                        step={0.1}
+                      />
+                    </SettingsField>
+                    <SettingsField label={t("minBfSPerDay")}>
+                      <SettingsNumberInput
+                        value={minBfSPerDay}
+                        onChange={setMinBfSPerDay}
                         min={0}
                         step={0.1}
                       />

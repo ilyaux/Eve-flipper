@@ -33,6 +33,7 @@ export interface StationTradingSettings {
   minDailyVolume: number;
   minItemProfit: number;
   minDemandPerDay: number;
+  minBfSPerDay?: number;
   avgPricePeriod: number;
   minPeriodROI: number;
   bvsRatioMin: number;

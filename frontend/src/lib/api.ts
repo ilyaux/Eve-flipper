@@ -294,6 +294,8 @@ export async function scanStation(
     // EVE Guru Profit Filters
     min_item_profit?: number;
     min_demand_per_day?: number;
+    min_s2b_per_day?: number;
+    min_bfs_per_day?: number;
     // Risk Profile
     avg_price_period?: number;
     min_period_roi?: number;
