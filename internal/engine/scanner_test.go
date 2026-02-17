@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -303,5 +304,51 @@ func TestExpectedProfitForPlans_LinearAndFeeSensitive(t *testing.T) {
 	}
 	if lowerSellRevenue >= base {
 		t.Fatalf("profit should decrease with lower sell revenue: base=%f lowSellRev=%f", base, lowerSellRevenue)
+	}
+}
+
+func TestFindSafeExecutionQuantity_MatchesExhaustiveLargestProfitableQty(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+
+	for tc := 0; tc < 250; tc++ {
+		askLevels := 1 + rng.Intn(5)
+		bidLevels := 1 + rng.Intn(5)
+
+		asks := make([]esi.MarketOrder, 0, askLevels)
+		bids := make([]esi.MarketOrder, 0, bidLevels)
+
+		askBase := 90.0 + rng.Float64()*20.0  // 90..110
+		bidBase := 100.0 + rng.Float64()*20.0 // 100..120
+		for i := 0; i < askLevels; i++ {
+			asks = append(asks, esi.MarketOrder{
+				Price:        askBase + float64(i)*rng.Float64()*3.0,
+				VolumeRemain: int32(10 + rng.Intn(80)),
+			})
+		}
+		for i := 0; i < bidLevels; i++ {
+			bids = append(bids, esi.MarketOrder{
+				Price:        bidBase - float64(i)*rng.Float64()*3.0,
+				VolumeRemain: int32(10 + rng.Intn(80)),
+			})
+		}
+
+		desired := int32(1 + rng.Intn(150))
+
+		var bruteQty int32
+		for q := int32(1); q <= desired; q++ {
+			pb := ComputeExecutionPlan(asks, q, true)
+			ps := ComputeExecutionPlan(bids, q, false)
+			if !pb.CanFill || !ps.CanFill {
+				continue
+			}
+			if expectedProfitForPlans(pb, ps, q, 1.0, 1.0) > 0 {
+				bruteQty = q
+			}
+		}
+
+		gotQty, _, _, _ := findSafeExecutionQuantity(asks, bids, desired, 1.0, 1.0)
+		if gotQty != bruteQty {
+			t.Fatalf("tc=%d desired=%d gotQty=%d bruteQty=%d", tc, desired, gotQty, bruteQty)
+		}
 	}
 }
