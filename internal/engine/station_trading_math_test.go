@@ -4,8 +4,8 @@ import "testing"
 
 func TestEstimateSellUnitsPerDay_AllowsBvSBelowOne(t *testing.T) {
 	daily := 100.0
-	buyVol := int32(500)
-	sellVol := int32(1000)
+	buyVol := int64(500)
+	sellVol := int64(1000)
 
 	sellPerDay := estimateSellUnitsPerDay(daily, buyVol, sellVol)
 	if sellPerDay <= daily {
@@ -20,8 +20,8 @@ func TestEstimateSellUnitsPerDay_AllowsBvSBelowOne(t *testing.T) {
 
 func TestEstimateSellUnitsPerDay_AllowsBvSAboveOne(t *testing.T) {
 	daily := 100.0
-	buyVol := int32(1000)
-	sellVol := int32(500)
+	buyVol := int64(1000)
+	sellVol := int64(500)
 
 	sellPerDay := estimateSellUnitsPerDay(daily, buyVol, sellVol)
 	if sellPerDay >= daily {
@@ -55,6 +55,44 @@ func TestStationExecutionDesiredQtyFromDailyShare(t *testing.T) {
 	}
 	if got := stationExecutionDesiredQtyFromDailyShare(120, 1000, 90); got != 90 {
 		t.Fatalf("strict daily-share qty with depth cap = %d, want 90", got)
+	}
+}
+
+func TestResetExecutionDerivedFields(t *testing.T) {
+	row := StationTrade{
+		MarginPercent:        12.5,
+		NowROI:               99,
+		ExpectedBuyPrice:     10,
+		ExpectedSellPrice:    20,
+		ExpectedProfit:       3,
+		RealProfit:           300,
+		FilledQty:            100,
+		CanFill:              true,
+		SlippageBuyPct:       1.1,
+		SlippageSellPct:      2.2,
+		RealMarginPercent:    9.9,
+		HasExecutionEvidence: true,
+	}
+
+	resetExecutionDerivedFields(&row)
+
+	if row.ExpectedBuyPrice != 0 || row.ExpectedSellPrice != 0 {
+		t.Fatalf("expected buy/sell prices to reset, got buy=%v sell=%v", row.ExpectedBuyPrice, row.ExpectedSellPrice)
+	}
+	if row.ExpectedProfit != 0 || row.RealProfit != 0 {
+		t.Fatalf("expected profits to reset, got expected=%v real=%v", row.ExpectedProfit, row.RealProfit)
+	}
+	if row.FilledQty != 0 || row.CanFill {
+		t.Fatalf("expected fill state reset, got qty=%d canFill=%v", row.FilledQty, row.CanFill)
+	}
+	if row.SlippageBuyPct != 0 || row.SlippageSellPct != 0 {
+		t.Fatalf("expected slippage reset, got buy=%v sell=%v", row.SlippageBuyPct, row.SlippageSellPct)
+	}
+	if row.RealMarginPercent != 0 || row.HasExecutionEvidence {
+		t.Fatalf("expected execution evidence reset, got margin=%v hasEvidence=%v", row.RealMarginPercent, row.HasExecutionEvidence)
+	}
+	if row.NowROI != row.MarginPercent {
+		t.Fatalf("expected NowROI fallback to MarginPercent, got now=%v margin=%v", row.NowROI, row.MarginPercent)
 	}
 }
 
@@ -122,7 +160,63 @@ func TestApplyStationTradeFilters_UsesExecutionAwareMarginsAndHistory(t *testing
 	rows[0].FilledQty = 0
 	rows[0].DailyVolume = 50
 	out = applyStationTradeFilters(rows, StationTradeParams{})
-	if len(out) != 0 {
-		t.Fatalf("expected row to be dropped as unexecutable with positive history flow, got %d rows", len(out))
+	if len(out) != 1 {
+		t.Fatalf("expected row to fallback to baseline maker economics, got %d rows", len(out))
+	}
+}
+
+func TestStationMakerFallbackRealizationFactor_BoundsAndMonotone(t *testing.T) {
+	lowConfHighComp := stationMakerFallbackRealizationFactor(10, 40)
+	highConfLowComp := stationMakerFallbackRealizationFactor(90, 1)
+
+	if lowConfHighComp < 0.2 || lowConfHighComp > 0.9 {
+		t.Fatalf("lowConfHighComp out of bounds: %v", lowConfHighComp)
+	}
+	if highConfLowComp < 0.2 || highConfLowComp > 0.9 {
+		t.Fatalf("highConfLowComp out of bounds: %v", highConfLowComp)
+	}
+	if highConfLowComp <= lowConfHighComp {
+		t.Fatalf("expected high confidence + low competition to realize more: low=%v high=%v", lowConfHighComp, highConfLowComp)
+	}
+
+	sameConfLowComp := stationMakerFallbackRealizationFactor(60, 1)
+	sameConfHighComp := stationMakerFallbackRealizationFactor(60, 60)
+	if sameConfLowComp <= sameConfHighComp {
+		t.Fatalf("expected queue penalty from higher competition: lowComp=%v highComp=%v", sameConfLowComp, sameConfHighComp)
+	}
+}
+
+func TestStationConfidenceScore_SignalsAndPenalties(t *testing.T) {
+	row := &StationTrade{
+		HistoryAvailable: true,
+		OBDS:             0.8,
+		SDS:              10,
+		PVI:              8,
+		S2BPerDay:        600,
+		BfSPerDay:        500,
+	}
+	base := stationConfidenceScore(row, 550, false)
+	withExecution := stationConfidenceScore(row, 550, true)
+	if withExecution <= base {
+		t.Fatalf("execution evidence should increase confidence: base=%v withExecution=%v", base, withExecution)
+	}
+
+	row.IsExtremePriceFlag = true
+	row.IsHighRiskFlag = true
+	risky := stationConfidenceScore(row, 550, true)
+	if risky >= withExecution {
+		t.Fatalf("risk flags should decrease confidence: risky=%v withExecution=%v", risky, withExecution)
+	}
+}
+
+func TestStationConfidenceLabelBuckets(t *testing.T) {
+	if got := stationConfidenceLabel(10); got != "low" {
+		t.Fatalf("low bucket = %q, want low", got)
+	}
+	if got := stationConfidenceLabel(55); got != "medium" {
+		t.Fatalf("medium bucket = %q, want medium", got)
+	}
+	if got := stationConfidenceLabel(90); got != "high" {
+		t.Fatalf("high bucket = %q, want high", got)
 	}
 }

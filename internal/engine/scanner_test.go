@@ -186,7 +186,7 @@ func TestFindSafeExecutionQuantity_CapsToFillableDepth(t *testing.T) {
 		{Price: 10, VolumeRemain: 100},
 	}
 	bids := []esi.MarketOrder{
-		{Price: 15, VolumeRemain: 60},
+		{Price: 15, VolumeRemain: 60, IsBuyOrder: true},
 	}
 
 	qty, planBuy, planSell, expected := findSafeExecutionQuantity(asks, bids, 80, 1.0, 1.0)
@@ -208,7 +208,7 @@ func TestFindSafeExecutionQuantity_ReducesToProfitableQty(t *testing.T) {
 		{Price: 20, VolumeRemain: 100},
 	}
 	bids := []esi.MarketOrder{
-		{Price: 15, VolumeRemain: 200},
+		{Price: 15, VolumeRemain: 200, IsBuyOrder: true},
 	}
 
 	qty, _, _, expected := findSafeExecutionQuantity(asks, bids, 100, 1.0, 1.0)
@@ -226,7 +226,7 @@ func TestFindSafeExecutionQuantity_NoProfitableQty(t *testing.T) {
 		{Price: 20, VolumeRemain: 100},
 	}
 	bids := []esi.MarketOrder{
-		{Price: 10, VolumeRemain: 100},
+		{Price: 10, VolumeRemain: 100, IsBuyOrder: true},
 	}
 
 	qty, _, _, expected := findSafeExecutionQuantity(asks, bids, 50, 1.0, 1.0)
@@ -258,6 +258,47 @@ func TestHarmonicDailyShare_MonotoneAndBounded(t *testing.T) {
 			t.Fatalf("non-monotone share: competitors=%d share=%d > previous=%d", competitors, got, prev)
 		}
 		prev = got
+	}
+}
+
+func TestHarmonicDailyShare_SumOfSharesLEVolume(t *testing.T) {
+	// Property: rounded harmonic shares across all positions should conserve
+	// daily volume up to bounded rounding error (<= number of positions).
+	const daily = int64(1_000)
+	for n := 1; n <= 50; n++ {
+		hn := 0.0
+		for k := 1; k <= n; k++ {
+			hn += 1.0 / float64(k)
+		}
+
+		var roundedTotal int64
+		for pos := 1; pos <= n; pos++ {
+			share := float64(daily) * (1.0 / float64(pos)) / hn
+			rounded := int64(math.Round(share))
+			if rounded < 1 {
+				rounded = 1
+			}
+			roundedTotal += rounded
+		}
+
+		diff := roundedTotal - daily
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > int64(n) {
+			t.Fatalf("n=%d: rounded total=%d daily=%d diff=%d (too large)", n, roundedTotal, daily, diff)
+		}
+
+		// Player share should match the median-position harmonic share model.
+		got := harmonicDailyShare(daily, n-1)
+		medianPos := (n + 1) / 2
+		expected := int64(math.Round(float64(daily) * (1.0 / float64(medianPos)) / hn))
+		if expected < 1 {
+			expected = 1
+		}
+		if got != expected {
+			t.Fatalf("n=%d: harmonicDailyShare=%d, expected median share=%d", n, got, expected)
+		}
 	}
 }
 

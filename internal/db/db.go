@@ -713,6 +713,49 @@ func (d *DB) migrate() error {
 		logger.Info("DB", "Applied migration v17 (scan history liquidity + execution fields)")
 	}
 
+	if version < 18 {
+		// Extend station_results with full metric fields that were previously
+		// computed at scan time but not persisted to the database.
+		stationCols := []struct {
+			name string
+			def  string
+		}{
+			{name: "profit_per_unit", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "total_profit", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "roi", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "now_roi", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "capital_required", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "ci", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "buy_order_count", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "sell_order_count", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "buy_units_per_day", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "sell_units_per_day", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "avg_price", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "price_high", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "price_low", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "confidence_score", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "confidence_label", def: "TEXT NOT NULL DEFAULT ''"},
+			{name: "has_execution_evidence", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "is_extreme_price", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "is_high_risk", def: "INTEGER NOT NULL DEFAULT 0"},
+		}
+		stationResultsExists, err := d.tableExists("station_results")
+		if err != nil {
+			return fmt.Errorf("migration v18 check station_results exists: %w", err)
+		}
+		if stationResultsExists {
+			for _, c := range stationCols {
+				if err := d.ensureTableColumn("station_results", c.name, c.def); err != nil {
+					return fmt.Errorf("migration v18 add station_results.%s: %w", c.name, err)
+				}
+			}
+		}
+		if _, err := d.sql.Exec(`INSERT OR IGNORE INTO schema_version (version) VALUES (18);`); err != nil {
+			return fmt.Errorf("migration v18: %w", err)
+		}
+		logger.Info("DB", "Applied migration v18 (station_results full metric persistence)")
+	}
+
 	return nil
 }
 

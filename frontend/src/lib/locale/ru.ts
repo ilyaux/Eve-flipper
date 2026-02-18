@@ -35,6 +35,10 @@ export const ru = {
     minBfSPerDay: "Мин. BfS/день",
     minS2BBfSRatio: "Мин. S2B/BfS",
     maxS2BBfSRatio: "Макс. S2B/BfS",
+    ctsProfile: "Профиль CTS",
+    ctsProfileBalanced: "Сбалансированный",
+    ctsProfileAggressive: "Агрессивный",
+    ctsProfileDefensive: "Защитный",
     maxResults: "Лимит результатов",
     paramsCargo: "Груз m³",
     paramsBuy: "Радиус покупки",
@@ -931,7 +935,7 @@ export const ru = {
     metricPeriodROIDesc: "Доходность за период. Процент прибыли относительно вложенного капитала за выбранный период.",
     
     metricNowROITitle: "Now ROI",
-    metricNowROIDesc: "Текущая доходность. ROI на основе текущих цен покупки и продажи.",
+    metricNowROIDesc: "Текущий ROI по исполнению в стакане (с учетом проскальзывания при наличии данных глубины).",
 
     // PLEX+ Tab
     tabPlex: "PLEX+",

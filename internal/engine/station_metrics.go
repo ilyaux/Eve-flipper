@@ -3,6 +3,7 @@ package engine
 import (
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"eve-flipper/internal/esi"
@@ -13,7 +14,11 @@ func filterLastNDays(history []esi.HistoryEntry, days int) []esi.HistoryEntry {
 	if len(history) == 0 || days <= 0 {
 		return nil
 	}
-	cutoff := time.Now().AddDate(0, 0, -days)
+	// Truncate to UTC midnight so the cutoff is an exact day boundary.
+	// ESI history dates parse as midnight UTC; without truncation, a
+	// time-of-day offset causes entries from the Nth day ago to be
+	// included or excluded depending on when the scan runs.
+	cutoff := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -days)
 	var filtered []esi.HistoryEntry
 	for _, h := range history {
 		t, err := time.Parse("2006-01-02", h.Date)
@@ -161,7 +166,8 @@ func sumVolumeWithinPercent(orders []esi.MarketOrder, refPrice, pct float64, isB
 }
 
 // CalcSDS calculates Scam Detection Score (0-100).
-func CalcSDS(buyOrders []esi.MarketOrder, history []esi.HistoryEntry, vwap float64) int {
+// Checks both buy-side and sell-side manipulation patterns.
+func CalcSDS(buyOrders, sellOrders []esi.MarketOrder, history []esi.HistoryEntry, vwap float64) int {
 	score := 0
 	if len(buyOrders) == 0 {
 		return 100 // No buy orders = suspicious
@@ -169,21 +175,34 @@ func CalcSDS(buyOrders []esi.MarketOrder, history []esi.HistoryEntry, vwap float
 
 	bestBuy := maxBuyPrice(buyOrders)
 
-	// +30: Best buy < 50% of VWAP (price deviation)
+	// +30: Best buy < 50% of VWAP (buy-side price deviation)
 	if vwap > 0 && bestBuy < vwap*0.5 {
 		score += 30
 	}
 
-	// +25: Order volume >> daily volume * 10 (volume mismatch)
+	// +15: Best sell > 200% of VWAP (sell-side price deviation / bait ask)
+	if vwap > 0 && len(sellOrders) > 0 {
+		bestSell := minSellPrice(sellOrders)
+		if bestSell > vwap*2 {
+			score += 15
+		}
+	}
+
+	// +25: Buy order volume >> daily volume * 10 (volume mismatch)
 	dailyVol := avgDailyVolume(history, 7)
 	totalOrderVol := sumOrderVolume(buyOrders)
 	if dailyVol > 0 && float64(totalOrderVol) > dailyVol*10 {
 		score += 25
 	}
 
-	// +25: Single order dominates >90% volume
+	// +15: Single buy order dominates >90% volume
 	if singleOrderDominance(buyOrders) > 0.9 {
-		score += 25
+		score += 15
+	}
+
+	// +10: Single sell order dominates >90% volume
+	if len(sellOrders) > 0 && singleOrderDominance(sellOrders) > 0.9 {
+		score += 10
 	}
 
 	// +20: No trades in last 7 days
@@ -191,11 +210,21 @@ func CalcSDS(buyOrders []esi.MarketOrder, history []esi.HistoryEntry, vwap float
 		score += 20
 	}
 
+	if score > 100 {
+		score = 100
+	}
 	return score
 }
 
 // avgDailyVolume calculates average daily volume from history.
+// Divides by the window size (days), not by len(entries), so that items
+// which only trade on some days within the window are not over-estimated.
+// For example, if an item traded on 2 out of 7 days with total volume 700,
+// the result is 700/7=100/day, not 700/2=350/day.
 func avgDailyVolume(history []esi.HistoryEntry, days int) float64 {
+	if days <= 0 {
+		return 0
+	}
 	entries := filterLastNDays(history, days)
 	if len(entries) == 0 {
 		return 0
@@ -204,7 +233,7 @@ func avgDailyVolume(history []esi.HistoryEntry, days int) float64 {
 	for _, h := range entries {
 		total += h.Volume
 	}
-	return float64(total) / float64(len(entries))
+	return float64(total) / float64(days)
 }
 
 // sumOrderVolume sums total volume of orders.
@@ -217,16 +246,18 @@ func sumOrderVolume(orders []esi.MarketOrder) int64 {
 }
 
 // singleOrderDominance returns ratio of largest order to total volume.
+// Uses int64 to avoid overflow on high-volume items (e.g. Tritanium).
 func singleOrderDominance(orders []esi.MarketOrder) float64 {
 	if len(orders) == 0 {
 		return 0
 	}
-	var maxVol int32
-	var total int32
+	var maxVol int64
+	var total int64
 	for _, o := range orders {
-		total += o.VolumeRemain
-		if o.VolumeRemain > maxVol {
-			maxVol = o.VolumeRemain
+		v := int64(o.VolumeRemain)
+		total += v
+		if v > maxVol {
+			maxVol = v
 		}
 	}
 	if total == 0 {
@@ -331,6 +362,50 @@ var DefaultCTSWeights = CTSWeights{
 	Volume:    0.15,
 }
 
+const (
+	CTSProfileBalanced   = "balanced"
+	CTSProfileAggressive = "aggressive"
+	CTSProfileDefensive  = "defensive"
+)
+
+func normalizeCTSProfile(profile string) string {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case CTSProfileAggressive:
+		return CTSProfileAggressive
+	case CTSProfileDefensive:
+		return CTSProfileDefensive
+	default:
+		return CTSProfileBalanced
+	}
+}
+
+func CTSWeightsForProfile(profile string) CTSWeights {
+	switch normalizeCTSProfile(profile) {
+	case CTSProfileAggressive:
+		// Even aggressive traders need scam protection; SDS floor ≥ 0.10
+		// prevents ranking obviously manipulated books highly.
+		return CTSWeights{
+			SpreadROI: 0.50,
+			OBDS:      0.18,
+			DRVI:      0.05,
+			CI:        0.07,
+			SDS:       0.10,
+			Volume:    0.10,
+		}
+	case CTSProfileDefensive:
+		return CTSWeights{
+			SpreadROI: 0.10,
+			OBDS:      0.25,
+			DRVI:      0.25,
+			CI:        0.10,
+			SDS:       0.25,
+			Volume:    0.05,
+		}
+	default:
+		return DefaultCTSWeights
+	}
+}
+
 func normalizeCTSWeights(weights CTSWeights) CTSWeights {
 	// Guard against invalid negative weights.
 	if weights.SpreadROI < 0 {
@@ -369,9 +444,15 @@ func normalizeCTSWeights(weights CTSWeights) CTSWeights {
 func CalcCTSWithWeights(spreadROI, obds, drvi float64, ci, sds int, dailyVolume float64, weights CTSWeights) float64 {
 	weights = normalizeCTSWeights(weights)
 
-	// Normalize each component to 0-100 scale
-	roiScore := normalize(spreadROI, 0, 300) * 100        // Higher spread ROI = better (300% cap for lowsec/null)
-	obdsScore := normalize(obds, 0, 2) * 100              // Higher depth = better
+	// Normalize each component to 0-100 scale.
+	// Cap rationale:
+	//   SpreadROI 300%: covers lowsec/null niche items; highsec hubs rarely exceed 50%.
+	//   OBDS 2.0: depth = 2× cycle capital is "very liquid"; diminishing returns above.
+	//   DRVI 50%: items with >50% daily range are effectively un-tradeable for makers.
+	//   CI 100: ~50 competing orders on each side saturates the ranking signal.
+	//   Volume log10(10000)=4: 10k units/day = max score; covers 99% of hub items.
+	roiScore := normalize(spreadROI, 0, 300) * 100
+	obdsScore := normalize(obds, 0, 2) * 100
 	pviScore := 100 - normalize(drvi, 0, 50)*100          // Lower volatility = better
 	ciScore := 100 - normalize(float64(ci), 0, 100)*100   // Lower competition = better
 	sdsScore := 100 - normalize(float64(sds), 0, 100)*100 // Lower scam score = better
@@ -410,11 +491,11 @@ func normalize(value, minVal, maxVal float64) float64 {
 	return normalized
 }
 
-// CalcSpreadROI estimates the typical buy-sell spread as a percentage, using
-// 10th percentile of daily lows (typical buy entry) and 90th percentile of
-// daily highs (typical sell exit) over N days. This measures the realistic
-// trading spread available to a station trader, not buy-and-hold ROI.
-// Outlier spikes and crashes are filtered by the percentile approach.
+// CalcSpreadROI estimates the typical intraday maker spread as a percentage.
+// For each trading day it computes (high − low) / low, then returns the median
+// of those daily spreads. This avoids the previous cross-day P10(lows)/P90(highs)
+// approach which captured multi-day price trends as apparent spread, inflating
+// the metric for trending assets.
 //
 // The result populates the JSON field "PeriodROI" for backward compatibility.
 func CalcSpreadROI(history []esi.HistoryEntry, days int) float64 {
@@ -423,36 +504,19 @@ func CalcSpreadROI(history []esi.HistoryEntry, days int) float64 {
 		return 0
 	}
 
-	// Collect all daily low and high prices
-	lows := make([]float64, 0, len(entries))
-	highs := make([]float64, 0, len(entries))
+	// Compute per-day spread: (high - low) / low * 100
+	spreads := make([]float64, 0, len(entries))
 	for _, h := range entries {
-		if h.Lowest > 0 {
-			lows = append(lows, h.Lowest)
-		}
-		if h.Highest > 0 {
-			highs = append(highs, h.Highest)
+		if h.Lowest > 0 && h.Highest > 0 {
+			spreads = append(spreads, (h.Highest-h.Lowest)/h.Lowest*100)
 		}
 	}
-	if len(lows) < 2 || len(highs) < 2 {
+	if len(spreads) < 2 {
 		return 0
 	}
 
-	sort.Float64s(lows)
-	sort.Float64s(highs)
-
-	// Use 10th percentile of lows (typical buy) and 90th percentile of highs (typical sell)
-	// to filter out outlier spikes / crashes.
-	// Using pure percentiles avoids VWAP-blending which compresses the spread
-	// and systematically underestimates ROI.
-	typicalBuy := percentile(lows, 10)
-	typicalSell := percentile(highs, 90)
-
-	if typicalBuy <= 0 {
-		return 0
-	}
-
-	return (typicalSell - typicalBuy) / typicalBuy * 100
+	sort.Float64s(spreads)
+	return percentile(spreads, 50) // median
 }
 
 // percentile returns the p-th percentile from a sorted slice (p in 0..100).

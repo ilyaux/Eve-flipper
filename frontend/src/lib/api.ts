@@ -242,13 +242,13 @@ export async function getAlertHistory(typeId?: number, limit?: number, offset?: 
 
 // --- Station Trading ---
 
-export async function getStations(systemName: string): Promise<StationsResponse> {
-  const res = await fetch(`${BASE}/api/stations?system=${encodeURIComponent(systemName)}`);
+export async function getStations(systemName: string, signal?: AbortSignal): Promise<StationsResponse> {
+  const res = await fetch(`${BASE}/api/stations?system=${encodeURIComponent(systemName)}`, { signal });
   return handleResponse<StationsResponse>(res);
 }
 
-export async function getStructures(systemId: number, regionId: number): Promise<StationInfo[]> {
-  const res = await fetch(`${BASE}/api/auth/structures?system_id=${systemId}&region_id=${regionId}`);
+export async function getStructures(systemId: number, regionId: number, signal?: AbortSignal): Promise<StationInfo[]> {
+  const res = await fetch(`${BASE}/api/auth/structures?system_id=${systemId}&region_id=${regionId}`, { signal });
   return handleResponse<StationInfo[]>(res);
 }
 
@@ -260,10 +260,12 @@ export async function getExecutionPlan(params: {
   is_buy: boolean;
   /** Days of history for impact calibration (λ, η, n*). From station trading "Period (days)" when present. */
   impact_days?: number;
+  signal?: AbortSignal;
 }): Promise<ExecutionPlanResult> {
   const res = await fetch(`${BASE}/api/execution/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: params.signal,
     body: JSON.stringify({
       type_id: params.type_id,
       region_id: params.region_id,
@@ -285,6 +287,7 @@ export async function scanStation(
     min_margin: number;
     sales_tax_percent: number;
     broker_fee: number;
+    cts_profile?: "balanced" | "aggressive" | "defensive";
     split_trade_fees?: boolean;
     buy_broker_fee_percent?: number;
     sell_broker_fee_percent?: number;

@@ -46,7 +46,7 @@ func (d *DB) InsertFlipResults(scanID int64, results []engine.FlipResult) {
 		if r.HistoryAvailable {
 			historyAvailable = 1
 		}
-		stmt.Exec(
+		if _, err := stmt.Exec(
 			scanID, r.TypeID, r.TypeName, r.Volume,
 			r.BuyPrice, r.BuyStation, r.BuySystemName, r.BuySystemID,
 			r.SellPrice, r.SellStation, r.SellSystemName, r.SellSystemID,
@@ -58,7 +58,11 @@ func (d *DB) InsertFlipResults(scanID int64, results []engine.FlipResult) {
 			r.DailyProfit, r.RealProfit, r.RealMarginPercent, r.FilledQty, canFill,
 			r.ExpectedProfit, r.ExpectedBuyPrice, r.ExpectedSellPrice,
 			r.SlippageBuyPct, r.SlippageSellPct, historyAvailable,
-		)
+		); err != nil {
+			tx.Rollback()
+			log.Printf("[DB] InsertFlipResults exec row type_id=%d: %v", r.TypeID, err)
+			return
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -92,7 +96,7 @@ func (d *DB) GetFlipResults(scanID int64) []engine.FlipResult {
 		var r engine.FlipResult
 		var canFill int
 		var historyAvailable int
-		rows.Scan(
+		if err := rows.Scan(
 			&r.TypeID, &r.TypeName, &r.Volume,
 			&r.BuyPrice, &r.BuyStation, &r.BuySystemName, &r.BuySystemID,
 			&r.SellPrice, &r.SellStation, &r.SellSystemName, &r.SellSystemID,
@@ -104,7 +108,10 @@ func (d *DB) GetFlipResults(scanID int64) []engine.FlipResult {
 			&r.DailyProfit, &r.RealProfit, &r.RealMarginPercent, &r.FilledQty, &canFill,
 			&r.ExpectedProfit, &r.ExpectedBuyPrice, &r.ExpectedSellPrice,
 			&r.SlippageBuyPct, &r.SlippageSellPct, &historyAvailable,
-		)
+		); err != nil {
+			log.Printf("[DB] GetFlipResults scan row: %v", err)
+			continue
+		}
 		r.CanFill = canFill != 0
 		r.HistoryAvailable = historyAvailable != 0
 		results = append(results, r)
@@ -139,13 +146,17 @@ func (d *DB) InsertContractResults(scanID int64, results []engine.ContractResult
 	defer stmt.Close()
 
 	for _, r := range results {
-		stmt.Exec(
+		if _, err := stmt.Exec(
 			scanID, r.ContractID, r.Title, r.Price, r.MarketValue,
 			r.Profit, r.MarginPercent, r.ExpectedProfit, r.ExpectedMarginPercent,
 			r.SellConfidence, r.EstLiquidationDays, r.ConservativeValue, r.CarryCost,
 			r.Volume, r.StationName,
 			r.ItemCount, r.Jumps, r.ProfitPerJump,
-		)
+		); err != nil {
+			tx.Rollback()
+			log.Printf("[DB] InsertContractResults exec contract_id=%d: %v", r.ContractID, err)
+			return
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -171,13 +182,16 @@ func (d *DB) GetContractResults(scanID int64) []engine.ContractResult {
 	var results []engine.ContractResult
 	for rows.Next() {
 		var r engine.ContractResult
-		rows.Scan(
+		if err := rows.Scan(
 			&r.ContractID, &r.Title, &r.Price, &r.MarketValue,
 			&r.Profit, &r.MarginPercent, &r.ExpectedProfit, &r.ExpectedMarginPercent,
 			&r.SellConfidence, &r.EstLiquidationDays, &r.ConservativeValue, &r.CarryCost,
 			&r.Volume, &r.StationName,
 			&r.ItemCount, &r.Jumps, &r.ProfitPerJump,
-		)
+		); err != nil {
+			log.Printf("[DB] GetContractResults scan row: %v", err)
+			continue
+		}
 		results = append(results, r)
 	}
 	return results
@@ -203,8 +217,14 @@ func (d *DB) InsertStationResults(scanID int64, results []engine.StationTrade) {
 		s2b_per_day, bfs_per_day, s2b_bfs_ratio, real_margin_percent, history_available,
 		daily_profit, real_profit, filled_qty, can_fill,
 		expected_profit, expected_buy_price, expected_sell_price,
-		slippage_buy_pct, slippage_sell_pct
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		slippage_buy_pct, slippage_sell_pct,
+		profit_per_unit, total_profit, roi, now_roi, capital_required,
+		ci, buy_order_count, sell_order_count,
+		buy_units_per_day, sell_units_per_day,
+		avg_price, price_high, price_low,
+		confidence_score, confidence_label, has_execution_evidence,
+		is_extreme_price, is_high_risk
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("[DB] InsertStationResults prepare: %v", err)
@@ -221,7 +241,19 @@ func (d *DB) InsertStationResults(scanID int64, results []engine.StationTrade) {
 		if r.HistoryAvailable {
 			historyAvailable = 1
 		}
-		stmt.Exec(
+		hasExecEvidence := 0
+		if r.HasExecutionEvidence {
+			hasExecEvidence = 1
+		}
+		isExtremePrice := 0
+		if r.IsExtremePriceFlag {
+			isExtremePrice = 1
+		}
+		isHighRisk := 0
+		if r.IsHighRiskFlag {
+			isHighRisk = 1
+		}
+		if _, err := stmt.Exec(
 			scanID, r.TypeID, r.TypeName, r.BuyPrice, r.SellPrice,
 			r.Spread, r.MarginPercent, r.DailyVolume, r.BuyVolume, r.SellVolume,
 			r.StationID, r.StationName, r.CTS, r.SDS, r.PeriodROI,
@@ -230,7 +262,17 @@ func (d *DB) InsertStationResults(scanID int64, results []engine.StationTrade) {
 			r.DailyProfit, r.RealProfit, r.FilledQty, canFill,
 			r.ExpectedProfit, r.ExpectedBuyPrice, r.ExpectedSellPrice,
 			r.SlippageBuyPct, r.SlippageSellPct,
-		)
+			r.ProfitPerUnit, r.TotalProfit, r.ROI, r.NowROI, r.CapitalRequired,
+			r.CI, r.BuyOrderCount, r.SellOrderCount,
+			r.BuyUnitsPerDay, r.SellUnitsPerDay,
+			r.AvgPrice, r.PriceHigh, r.PriceLow,
+			r.ConfidenceScore, r.ConfidenceLabel, hasExecEvidence,
+			isExtremePrice, isHighRisk,
+		); err != nil {
+			tx.Rollback()
+			log.Printf("[DB] InsertStationResults exec type_id=%d: %v", r.TypeID, err)
+			return
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -248,7 +290,15 @@ func (d *DB) GetStationResults(scanID int64) []engine.StationTrade {
 			s2b_per_day, bfs_per_day, s2b_bfs_ratio, real_margin_percent, history_available,
 			daily_profit, real_profit, filled_qty, can_fill,
 			expected_profit, expected_buy_price, expected_sell_price,
-			slippage_buy_pct, slippage_sell_pct
+			slippage_buy_pct, slippage_sell_pct,
+			COALESCE(profit_per_unit, 0), COALESCE(total_profit, 0),
+			COALESCE(roi, 0), COALESCE(now_roi, 0), COALESCE(capital_required, 0),
+			COALESCE(ci, 0), COALESCE(buy_order_count, 0), COALESCE(sell_order_count, 0),
+			COALESCE(buy_units_per_day, 0), COALESCE(sell_units_per_day, 0),
+			COALESCE(avg_price, 0), COALESCE(price_high, 0), COALESCE(price_low, 0),
+			COALESCE(confidence_score, 0), COALESCE(confidence_label, ''),
+			COALESCE(has_execution_evidence, 0),
+			COALESCE(is_extreme_price, 0), COALESCE(is_high_risk, 0)
 		FROM station_results WHERE scan_id = ?
 	`, scanID)
 	if err != nil {
@@ -259,9 +309,8 @@ func (d *DB) GetStationResults(scanID int64) []engine.StationTrade {
 	var results []engine.StationTrade
 	for rows.Next() {
 		var r engine.StationTrade
-		var canFill int
-		var historyAvailable int
-		rows.Scan(
+		var canFill, historyAvailable, hasExecEvidence, isExtremePrice, isHighRisk int
+		if err := rows.Scan(
 			&r.TypeID, &r.TypeName, &r.BuyPrice, &r.SellPrice,
 			&r.Spread, &r.MarginPercent, &r.DailyVolume, &r.BuyVolume, &r.SellVolume,
 			&r.StationID, &r.StationName, &r.CTS, &r.SDS, &r.PeriodROI,
@@ -270,9 +319,22 @@ func (d *DB) GetStationResults(scanID int64) []engine.StationTrade {
 			&r.DailyProfit, &r.RealProfit, &r.FilledQty, &canFill,
 			&r.ExpectedProfit, &r.ExpectedBuyPrice, &r.ExpectedSellPrice,
 			&r.SlippageBuyPct, &r.SlippageSellPct,
-		)
+			&r.ProfitPerUnit, &r.TotalProfit, &r.ROI, &r.NowROI, &r.CapitalRequired,
+			&r.CI, &r.BuyOrderCount, &r.SellOrderCount,
+			&r.BuyUnitsPerDay, &r.SellUnitsPerDay,
+			&r.AvgPrice, &r.PriceHigh, &r.PriceLow,
+			&r.ConfidenceScore, &r.ConfidenceLabel,
+			&hasExecEvidence,
+			&isExtremePrice, &isHighRisk,
+		); err != nil {
+			log.Printf("[DB] GetStationResults scan row: %v", err)
+			continue
+		}
 		r.CanFill = canFill != 0
 		r.HistoryAvailable = historyAvailable != 0
+		r.HasExecutionEvidence = hasExecEvidence != 0
+		r.IsExtremePriceFlag = isExtremePrice != 0
+		r.IsHighRiskFlag = isHighRisk != 0
 		results = append(results, r)
 	}
 	return results
@@ -305,12 +367,16 @@ func (d *DB) InsertRouteResults(scanID int64, routes []engine.RouteResult) {
 
 	for ri, route := range routes {
 		for hi, hop := range route.Hops {
-			stmt.Exec(
+			if _, err := stmt.Exec(
 				scanID, ri, hi,
 				hop.SystemName, hop.StationName, hop.DestSystemName, hop.DestStationName,
 				hop.TypeName, hop.TypeID, hop.BuyPrice, hop.SellPrice, hop.Units, hop.Profit, hop.Jumps,
 				route.TotalProfit, route.TotalJumps, route.ProfitPerJump, route.HopCount,
-			)
+			); err != nil {
+				tx.Rollback()
+				log.Printf("[DB] InsertRouteResults exec route=%d hop=%d: %v", ri, hi, err)
+				return
+			}
 		}
 	}
 
@@ -340,12 +406,15 @@ func (d *DB) GetRouteResults(scanID int64) []engine.RouteResult {
 		var hop engine.RouteHop
 		var totalProfit, profitPerJump float64
 		var totalJumps, hopCount int
-		rows.Scan(
+		if err := rows.Scan(
 			&ri, &hi,
 			&hop.SystemName, &hop.StationName, &hop.DestSystemName, &hop.DestStationName,
 			&hop.TypeName, &hop.TypeID, &hop.BuyPrice, &hop.SellPrice, &hop.Units, &hop.Profit, &hop.Jumps,
 			&totalProfit, &totalJumps, &profitPerJump, &hopCount,
-		)
+		); err != nil {
+			log.Printf("[DB] GetRouteResults scan row: %v", err)
+			continue
+		}
 		if _, ok := routeMap[ri]; !ok {
 			routeMap[ri] = &engine.RouteResult{
 				TotalProfit:   totalProfit,

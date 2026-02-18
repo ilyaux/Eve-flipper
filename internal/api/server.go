@@ -605,7 +605,8 @@ func stationTradeKPIProfit(r engine.StationTrade) float64 {
 	if r.RealProfit > 0 {
 		return r.RealProfit
 	}
-	return r.TotalProfit
+	// TotalProfit is full-book notional, not a daily metric — do not use as fallback.
+	return 0
 }
 
 func contractResultKPIProfit(r engine.ContractResult) float64 {
@@ -1754,6 +1755,7 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		MinMargin            float64 `json:"min_margin"`
 		SalesTaxPercent      float64 `json:"sales_tax_percent"`
 		BrokerFee            float64 `json:"broker_fee"`
+		CTSProfile           string  `json:"cts_profile"`
 		SplitTradeFees       bool    `json:"split_trade_fees"`
 		BuyBrokerFeePercent  float64 `json:"buy_broker_fee_percent"`
 		SellBrokerFeePercent float64 `json:"sell_broker_fee_percent"`
@@ -1861,8 +1863,8 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("[API] ScanStation starting: stations=%d, regions=%d, margin=%.1f, tax=%.1f, broker=%.1f",
-		len(stationIDs), len(regionIDs), req.MinMargin, req.SalesTaxPercent, req.BrokerFee)
+	log.Printf("[API] ScanStation starting: stations=%d, regions=%d, margin=%.1f, tax=%.1f, broker=%.1f, cts_profile=%s",
+		len(stationIDs), len(regionIDs), req.MinMargin, req.SalesTaxPercent, req.BrokerFee, strings.TrimSpace(req.CTSProfile))
 
 	// Get auth token if available (for structure name resolution)
 	accessToken := ""
@@ -1883,6 +1885,7 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 			MinMargin:            req.MinMargin,
 			SalesTaxPercent:      req.SalesTaxPercent,
 			BrokerFee:            req.BrokerFee,
+			CTSProfile:           req.CTSProfile,
 			SplitTradeFees:       req.SplitTradeFees,
 			BuyBrokerFeePercent:  req.BuyBrokerFeePercent,
 			SellBrokerFeePercent: req.SellBrokerFeePercent,

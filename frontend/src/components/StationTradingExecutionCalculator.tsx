@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Modal } from "./Modal";
 import { getExecutionPlan } from "../lib/api";
 import { useI18n, type TranslationKey } from "../lib/i18n";
@@ -298,10 +298,16 @@ export function StationTradingExecutionCalculator({
   const [error, setError] = useState<string | null>(null);
   const [planBuy, setPlanBuy] = useState<ExecutionPlanResult | null>(null);
   const [planSell, setPlanSell] = useState<ExecutionPlanResult | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef(0);
 
   const fetchBoth = useCallback(
     (qty: number) => {
       if (!typeID || !regionID || !stationID) return;
+      const requestID = ++requestSeqRef.current;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       setError(null);
       setLoading(true);
       const loc = stationID || undefined;
@@ -313,6 +319,7 @@ export function StationTradingExecutionCalculator({
           quantity: qty,
           is_buy: true,
           impact_days: impactDays,
+          signal: controller.signal,
         }),
         getExecutionPlan({
           type_id: typeID,
@@ -321,25 +328,38 @@ export function StationTradingExecutionCalculator({
           quantity: qty,
           is_buy: false,
           impact_days: impactDays,
+          signal: controller.signal,
         }),
       ])
         .then(([buy, sell]) => {
+          if (controller.signal.aborted || requestID !== requestSeqRef.current) return;
           setPlanBuy(buy);
           setPlanSell(sell);
         })
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false));
+        .catch((e: unknown) => {
+          if (controller.signal.aborted || requestID !== requestSeqRef.current) return;
+          const message = e instanceof Error ? e.message : "Failed to calculate execution plan";
+          setError(message);
+        })
+        .finally(() => {
+          if (controller.signal.aborted || requestID !== requestSeqRef.current) return;
+          setLoading(false);
+        });
     },
     [typeID, regionID, stationID, impactDays]
   );
 
   useEffect(() => {
-    if (!open || !typeID || !regionID || !stationID) return;
+    if (!open || !typeID || !regionID || !stationID) {
+      abortRef.current?.abort();
+      return;
+    }
     const q = defaultQuantity > 0 ? defaultQuantity : 100;
     setQuantity(q);
     setPlanBuy(null);
     setPlanSell(null);
     fetchBoth(q);
+    return () => abortRef.current?.abort();
   }, [open, typeID, regionID, stationID, defaultQuantity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCalculate = () => fetchBoth(quantity);
@@ -352,11 +372,9 @@ export function StationTradingExecutionCalculator({
   const sellBrokerPct = sellBrokerFeePercent ?? brokerFeePercent;
   const buyTaxPct = buySalesTaxPercent ?? 0;
   const sellTaxPct = sellSalesTaxPercent ?? salesTaxPercent;
-  const brokerMult = 1 - sellBrokerPct / 100;
-  const taxMult = 1 - sellTaxPct / 100;
+  const sellRevenueMult = Math.max(0, 1 - (sellBrokerPct + sellTaxPct) / 100);
   const effectiveBuyCost = bidTotal * (1 + (buyBrokerPct + buyTaxPct) / 100);
-  const sellAfterBroker = askTotal * brokerMult;
-  const sellAfterTax = sellAfterBroker * taxMult;
+  const sellAfterTax = askTotal * sellRevenueMult;
   const profit = sellAfterTax - effectiveBuyCost;
   const canFillBoth = planBuy?.can_fill && planSell?.can_fill;
 
@@ -492,10 +510,7 @@ export function StationTradingExecutionCalculator({
                     const placeBuyCost =
                       planSell.best_price *
                       (1 + (buyBrokerPct + buyTaxPct) / 100);
-                    const placeSellRev =
-                      planBuy.best_price *
-                      (1 - sellBrokerPct / 100) *
-                      (1 - sellTaxPct / 100);
+                    const placeSellRev = planBuy.best_price * sellRevenueMult;
                     const placeProfit = placeSellRev - placeBuyCost;
                     return placeProfit >= 0
                       ? t("execPlanStationPlaceOrdersProfit", { profit: formatISK(placeProfit) })

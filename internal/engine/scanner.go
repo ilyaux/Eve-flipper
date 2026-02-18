@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"eve-flipper/internal/esi"
 	"eve-flipper/internal/sde"
@@ -994,9 +995,15 @@ func expectedProfitForPlans(
 	return (effSell - effBuy) * float64(qty)
 }
 
+// sanitizeFloatCount tracks how many NaN/Inf values were replaced per scan.
+// Exposed for observability; reset by callers between scans if needed.
+var sanitizeFloatCount int64
+
 // sanitizeFloat replaces NaN/Inf with 0 to prevent JSON marshal errors.
+// Increments sanitizeFloatCount for observability.
 func sanitizeFloat(f float64) float64 {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
+		atomic.AddInt64(&sanitizeFloatCount, 1)
 		return 0
 	}
 	return f

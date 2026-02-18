@@ -42,8 +42,8 @@ func TestComputeExecutionPlan_Buy_Exact(t *testing.T) {
 func TestComputeExecutionPlan_Sell_Exact(t *testing.T) {
 	// Buy orders: 90@100, 85@200. Sell 150: fill 100@90 + 50@85. Revenue = 9000+4250=13250, expected = 13250/150 = 88.333...
 	buyOrders := []esi.MarketOrder{
-		{Price: 90, VolumeRemain: 100},
-		{Price: 85, VolumeRemain: 200},
+		{Price: 90, VolumeRemain: 100, IsBuyOrder: true},
+		{Price: 85, VolumeRemain: 200, IsBuyOrder: true},
 	}
 	got := ComputeExecutionPlan(buyOrders, 150, false)
 	if math.Abs(got.BestPrice-90) > 1e-9 {
@@ -77,7 +77,7 @@ func TestComputeExecutionPlan_CannotFill(t *testing.T) {
 }
 
 func TestComputeExecutionPlan_CannotFill_SellTotalCostUsesFilledQuantity(t *testing.T) {
-	orders := []esi.MarketOrder{{Price: 80, VolumeRemain: 40}}
+	orders := []esi.MarketOrder{{Price: 80, VolumeRemain: 40, IsBuyOrder: true}}
 	got := ComputeExecutionPlan(orders, 100, false)
 	if got.CanFill {
 		t.Error("CanFill want false when depth < quantity")
@@ -116,5 +116,34 @@ func TestComputeExecutionPlan_SamePriceAggregated(t *testing.T) {
 	}
 	if got.TotalDepth != 100 {
 		t.Errorf("TotalDepth = %v, want 100", got.TotalDepth)
+	}
+}
+
+func TestComputeExecutionPlan_WrongSideReturnsEmpty(t *testing.T) {
+	// Buy simulation given only buy orders (wrong side) → should return empty.
+	buyOrders := []esi.MarketOrder{
+		{Price: 100, VolumeRemain: 50, IsBuyOrder: true},
+	}
+	got := ComputeExecutionPlan(buyOrders, 10, true)
+	if got.BestPrice != 0 {
+		t.Errorf("BestPrice = %v, want 0 (wrong-side orders should be ignored)", got.BestPrice)
+	}
+	if got.CanFill {
+		t.Error("CanFill should be false for wrong-side orders")
+	}
+}
+
+func TestComputeExecutionPlan_MixedOrders_FiltersBySide(t *testing.T) {
+	// Mixed buy and sell orders; buy simulation should only walk sell orders.
+	orders := []esi.MarketOrder{
+		{Price: 100, VolumeRemain: 50, IsBuyOrder: false}, // sell order
+		{Price: 80, VolumeRemain: 50, IsBuyOrder: true},   // buy order (ignored for buy simulation)
+	}
+	got := ComputeExecutionPlan(orders, 30, true)
+	if math.Abs(got.BestPrice-100) > 1e-9 {
+		t.Errorf("BestPrice = %v, want 100 (only sell order)", got.BestPrice)
+	}
+	if got.TotalDepth != 50 {
+		t.Errorf("TotalDepth = %v, want 50 (only sell order depth)", got.TotalDepth)
 	}
 }

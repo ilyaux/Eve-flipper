@@ -38,6 +38,7 @@ import {
 
 type SortKey = keyof StationTrade;
 type SortDir = "asc" | "desc";
+type CTSProfile = "balanced" | "aggressive" | "defensive";
 
 interface Props {
   params: ScanParams;
@@ -139,11 +140,19 @@ const columnDefs: {
 
 // Sentinel value for "All stations"
 const ALL_STATIONS_ID = 0;
+const STATION_PAGE_SIZE = 100;
 const settingsSectionClass =
   "rounded-sm border border-eve-border/60 bg-gradient-to-br from-eve-panel to-eve-dark/40";
 
 function stationDailyProfit(row: StationTrade): number {
-  return row.DailyProfit ?? row.RealProfit ?? row.TotalProfit ?? 0;
+  // TotalProfit is full-book notional, not a daily metric — excluded from cascade.
+  return (
+    row.DailyProfit ??
+    row.RealizableDailyProfit ??
+    row.RealProfit ??
+    row.TheoreticalDailyProfit ??
+    0
+  );
 }
 
 function normalizeStationResults(rows: StationTrade[]): StationTrade[] {
@@ -175,6 +184,7 @@ export function StationTrading({
   const [stations, setStations] = useState<StationInfo[]>([]);
   const [selectedStationId, setSelectedStationId] =
     useState<number>(ALL_STATIONS_ID);
+  const [minMargin, setMinMargin] = useState(params.min_margin ?? 0);
   const [brokerFee, setBrokerFee] = useState(3.0);
   const [salesTaxPercent, setSalesTaxPercent] = useState(8);
   const [splitTradeFees, setSplitTradeFees] = useState(false);
@@ -182,6 +192,7 @@ export function StationTrading({
   const [sellBrokerFeePercent, setSellBrokerFeePercent] = useState(3.0);
   const [buySalesTaxPercent, setBuySalesTaxPercent] = useState(0);
   const [sellSalesTaxPercent, setSellSalesTaxPercent] = useState(8);
+  const [ctsProfile, setCTSProfile] = useState<CTSProfile>("balanced");
   const [radius, setRadius] = useState(0);
   const [minDailyVolume, setMinDailyVolume] = useState(5);
   const [results, setResults] = useState<StationTrade[]>([]);
@@ -221,6 +232,7 @@ export function StationTrading({
     () =>
       Number(minDemandPerDay > 1) +
       Number(minBfSPerDay > 0) +
+      Number(ctsProfile !== "balanced") +
       Number(avgPricePeriod !== 90) +
       Number(minPeriodROI > 0) +
       Number(bvsRatioMin > 0) +
@@ -232,6 +244,7 @@ export function StationTrading({
     [
       minDemandPerDay,
       minBfSPerDay,
+      ctsProfile,
       avgPricePeriod,
       minPeriodROI,
       bvsRatioMin,
@@ -246,6 +259,7 @@ export function StationTrading({
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("CTS");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(0);
 
   // Execution plan popup
   const [execPlanRow, setExecPlanRow] = useState<StationTrade | null>(null);
@@ -261,7 +275,7 @@ export function StationTrading({
 
   // Accept externally loaded results (from history)
   useEffect(() => {
-    if (loadedResults && loadedResults.length > 0) {
+    if (loadedResults !== undefined && loadedResults !== null) {
       setResults(normalizeStationResults(loadedResults));
     }
   }, [loadedResults]);
@@ -282,6 +296,7 @@ export function StationTrading({
   // Current settings object for preset system
   const stationSettings = useMemo<StationTradingSettings>(
     () => ({
+      minMargin,
       brokerFee,
       salesTaxPercent,
       splitTradeFees,
@@ -289,6 +304,7 @@ export function StationTrading({
       sellBrokerFeePercent,
       buySalesTaxPercent,
       sellSalesTaxPercent,
+      ctsProfile,
       radius,
       minDailyVolume,
       minItemProfit,
@@ -304,6 +320,7 @@ export function StationTrading({
       flagExtremePrices,
     }),
     [
+      minMargin,
       brokerFee,
       salesTaxPercent,
       splitTradeFees,
@@ -311,6 +328,7 @@ export function StationTrading({
       sellBrokerFeePercent,
       buySalesTaxPercent,
       sellSalesTaxPercent,
+      ctsProfile,
       radius,
       minDailyVolume,
       minItemProfit,
@@ -330,6 +348,7 @@ export function StationTrading({
   const handlePresetApply = useCallback((s: Record<string, any>) => {
     // eslint-disable-line @typescript-eslint/no-explicit-any
     const st = s as StationTradingSettings;
+    if (st.minMargin !== undefined) setMinMargin(st.minMargin);
     if (st.brokerFee !== undefined) setBrokerFee(st.brokerFee);
     if (st.salesTaxPercent !== undefined)
       setSalesTaxPercent(st.salesTaxPercent);
@@ -342,6 +361,13 @@ export function StationTrading({
       setBuySalesTaxPercent(st.buySalesTaxPercent);
     if (st.sellSalesTaxPercent !== undefined)
       setSellSalesTaxPercent(st.sellSalesTaxPercent);
+    if (
+      st.ctsProfile === "balanced" ||
+      st.ctsProfile === "aggressive" ||
+      st.ctsProfile === "defensive"
+    ) {
+      setCTSProfile(st.ctsProfile);
+    }
     if (st.radius !== undefined) setRadius(st.radius);
     if (st.minDailyVolume !== undefined) setMinDailyVolume(st.minDailyVolume);
     if (st.minItemProfit !== undefined) setMinItemProfit(st.minItemProfit);
@@ -369,9 +395,11 @@ export function StationTrading({
   // Load stations when system changes
   useEffect(() => {
     if (!params.system_name) return;
+    const controller = new AbortController();
     setLoadingStations(true);
-    getStations(params.system_name)
+    getStations(params.system_name, controller.signal)
       .then((resp) => {
+        if (controller.signal.aborted) return;
         setStations(resp.stations);
         setSystemRegionId(resp.region_id);
         setSystemId(resp.system_id);
@@ -379,11 +407,15 @@ export function StationTrading({
         setStructureStations([]); // reset structures on system change
       })
       .catch(() => {
+        if (controller.signal.aborted) return;
         setStations([]);
         setSystemRegionId(0);
         setSystemId(0);
       })
-      .finally(() => setLoadingStations(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingStations(false);
+      });
+    return () => controller.abort();
   }, [params.system_name]);
 
   // Fetch structures when toggle is enabled
@@ -392,11 +424,21 @@ export function StationTrading({
       setStructureStations([]);
       return;
     }
+    const controller = new AbortController();
     setLoadingStructures(true);
-    getStructures(systemId, systemRegionId)
-      .then(setStructureStations)
-      .catch(() => setStructureStations([]))
-      .finally(() => setLoadingStructures(false));
+    getStructures(systemId, systemRegionId, controller.signal)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setStructureStations(data);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setStructureStations([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingStructures(false);
+      });
+    return () => controller.abort();
   }, [includeStructures, systemId, systemRegionId]);
 
   // Combined stations (NPC + structures when toggle is on)
@@ -412,7 +454,7 @@ export function StationTrading({
 
   const canScan =
     params.system_name &&
-    (allStations.length > 0 || radius > 0) &&
+    (allStations.length > 0 || radius > 0 || selectedStationId === ALL_STATIONS_ID) &&
     regionId > 0;
 
   function stationRowKey(row: StationTrade) {
@@ -470,9 +512,10 @@ export function StationTrading({
 
     try {
       const scanParams: Parameters<typeof scanStation>[0] = {
-        min_margin: params.min_margin,
+        min_margin: minMargin,
         sales_tax_percent: splitTradeFees ? sellSalesTaxPercent : salesTaxPercent,
         broker_fee: splitTradeFees ? sellBrokerFeePercent : brokerFee,
+        cts_profile: ctsProfile,
         split_trade_fees: splitTradeFees,
         buy_broker_fee_percent: splitTradeFees
           ? buyBrokerFeePercent
@@ -487,7 +530,6 @@ export function StationTrading({
         min_daily_volume: minDailyVolume,
         // EVE Guru Profit Filters
         min_item_profit: minItemProfit > 0 ? minItemProfit : undefined,
-        min_demand_per_day: minDemandPerDay > 0 ? minDemandPerDay : undefined,
         min_s2b_per_day: minDemandPerDay > 0 ? minDemandPerDay : undefined,
         min_bfs_per_day: minBfSPerDay > 0 ? minBfSPerDay : undefined,
         // Risk Profile
@@ -536,6 +578,7 @@ export function StationTrading({
     selectedStationId,
     regionId,
     params,
+    minMargin,
     brokerFee,
     salesTaxPercent,
     splitTradeFees,
@@ -543,6 +586,7 @@ export function StationTrading({
     sellBrokerFeePercent,
     buySalesTaxPercent,
     sellSalesTaxPercent,
+    ctsProfile,
     radius,
     minDailyVolume,
     minItemProfit,
@@ -574,6 +618,20 @@ export function StationTrading({
         : String(bv).localeCompare(String(av));
     });
     return copy;
+  }, [results, sortKey, sortDir]);
+
+  const { pageRows, totalPages, safePage } = useMemo(() => {
+    const totalPages = Math.max(1, Math.ceil(sorted.length / STATION_PAGE_SIZE));
+    const safePage = Math.min(page, totalPages - 1);
+    const pageRows = sorted.slice(
+      safePage * STATION_PAGE_SIZE,
+      (safePage + 1) * STATION_PAGE_SIZE,
+    );
+    return { pageRows, totalPages, safePage };
+  }, [sorted, page]);
+
+  useEffect(() => {
+    setPage(0);
   }, [results, sortKey, sortDir]);
 
   const toggleSort = (key: SortKey) => {
@@ -760,6 +818,15 @@ export function StationTrading({
                     />
                   </SettingsField>
 
+                  <SettingsField label={t("minMargin")}>
+                    <SettingsNumberInput
+                      value={minMargin}
+                      onChange={setMinMargin}
+                      min={0}
+                      step={0.1}
+                    />
+                  </SettingsField>
+
                   <SettingsField label={t("minDailyVolume")}>
                     <SettingsNumberInput
                       value={minDailyVolume}
@@ -932,6 +999,36 @@ export function StationTrading({
                         step={0.1}
                       />
                     </SettingsField>
+                    <SettingsField label={t("ctsProfile")}>
+                      <SettingsSelect
+                        value={ctsProfile}
+                        onChange={(v) => {
+                          if (
+                            v === "balanced" ||
+                            v === "aggressive" ||
+                            v === "defensive"
+                          ) {
+                            setCTSProfile(v);
+                            return;
+                          }
+                          setCTSProfile("balanced");
+                        }}
+                        options={[
+                          {
+                            value: "balanced",
+                            label: t("ctsProfileBalanced"),
+                          },
+                          {
+                            value: "aggressive",
+                            label: t("ctsProfileAggressive"),
+                          },
+                          {
+                            value: "defensive",
+                            label: t("ctsProfileDefensive"),
+                          },
+                        ]}
+                      />
+                    </SettingsField>
                     <SettingsField label={t("avgPricePeriod")}>
                       <SettingsNumberInput
                         value={avgPricePeriod}
@@ -1033,6 +1130,42 @@ export function StationTrading({
             </span>
           </span>
         ) : null}
+        <div className="flex-1" />
+        {!scanning && sorted.length > STATION_PAGE_SIZE && (
+          <div className="flex items-center gap-1 text-eve-dim">
+            <button
+              onClick={() => setPage(0)}
+              disabled={safePage === 0}
+              className="px-1.5 py-0.5 rounded-sm hover:text-eve-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              «
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={safePage === 0}
+              className="px-1.5 py-0.5 rounded-sm hover:text-eve-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              ‹
+            </button>
+            <span className="px-2 text-eve-text font-mono tabular-nums">
+              {safePage + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={safePage >= totalPages - 1}
+              className="px-1.5 py-0.5 rounded-sm hover:text-eve-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              ›
+            </button>
+            <button
+              onClick={() => setPage(totalPages - 1)}
+              disabled={safePage >= totalPages - 1}
+              className="px-1.5 py-0.5 rounded-sm hover:text-eve-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              »
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -1076,10 +1209,10 @@ export function StationTrading({
             </tr>
           </thead>
           <tbody>
-            {sorted.map((row, i) => (
+            {pageRows.map((row, i) => (
               <tr
                 key={stationRowKey(row)}
-                className={`${getRowClass(row, i)} ${pinnedKeys.has(stationRowKey(row)) ? "bg-eve-accent/10 border-l-2 border-l-eve-accent" : ""}`}
+                className={`${getRowClass(row, safePage * STATION_PAGE_SIZE + i)} ${pinnedKeys.has(stationRowKey(row)) ? "bg-eve-accent/10 border-l-2 border-l-eve-accent" : ""}`}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setContextMenu({ x: e.clientX, y: e.clientY, row });

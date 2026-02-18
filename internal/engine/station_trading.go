@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"eve-flipper/internal/esi"
 )
@@ -14,6 +15,8 @@ const (
 	stationFlowWindowDays       = 7
 	stationVWAPWindowDays       = 30
 	stationVolatilityWindowDays = 30
+	// Cap returned station rows to keep hosted UI responsive on large hubs.
+	maxStationReturnedResults = 1500
 )
 
 // StationTrade represents a same-station flip opportunity (buy via buy order, sell via sell order).
@@ -29,10 +32,20 @@ type StationTrade struct {
 	DailyVolume    int64   `json:"DailyVolume"`
 	BuyOrderCount  int     `json:"BuyOrderCount"`
 	SellOrderCount int     `json:"SellOrderCount"`
-	BuyVolume      int32   `json:"BuyVolume"`  // total volume of buy orders
-	SellVolume     int32   `json:"SellVolume"` // total volume of sell orders
+	BuyVolume      int64   `json:"BuyVolume"`  // total volume of buy orders
+	SellVolume     int64   `json:"SellVolume"` // total volume of sell orders
 	TotalProfit    float64 `json:"TotalProfit"`
 	DailyProfit    float64 `json:"DailyProfit"` // estimated executable daily profit
+	// TheoreticalDailyProfit is spread-only maker estimate (before execution realism).
+	TheoreticalDailyProfit float64 `json:"TheoreticalDailyProfit,omitempty"`
+	// RealizableDailyProfit is conservative realizable estimate used for KPI.
+	RealizableDailyProfit float64 `json:"RealizableDailyProfit,omitempty"`
+	// Confidence score for the station-trading signal quality (0-100).
+	ConfidenceScore float64 `json:"ConfidenceScore,omitempty"`
+	// ConfidenceLabel buckets confidence score into low|medium|high.
+	ConfidenceLabel string `json:"ConfidenceLabel,omitempty"`
+	// True when depth-based execution model found positive executable quantity.
+	HasExecutionEvidence bool `json:"HasExecutionEvidence,omitempty"`
 	// Execution-aware effective margin after slippage and fees.
 	RealMarginPercent float64 `json:"RealMarginPercent,omitempty"`
 	// True when market history for this type/region was fetched successfully.
@@ -42,8 +55,8 @@ type StationTrade struct {
 	StationID        int64   `json:"StationID"`
 
 	// --- EVE Guru style metrics ---
-	CapitalRequired float64 `json:"CapitalRequired"` // Sum of all buy orders ISK
-	NowROI          float64 `json:"NowROI"`          // ProfitPerUnit / CapitalPerUnit * 100
+	CapitalRequired float64 `json:"CapitalRequired"` // Cycle capital: effectiveBuy * tradableUnits
+	NowROI          float64 `json:"NowROI"`          // Execution-aware ROI (slippage-aware when available; falls back to margin)
 	PeriodROI       float64 `json:"PeriodROI"`       // (AvgSell - AvgBuy) / AvgBuy * 100
 
 	// Volume/Liquidity metrics
@@ -128,10 +141,118 @@ func minInt64(a, b int64) int64 {
 	return b
 }
 
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func stationConfidenceLabel(score float64) string {
+	switch {
+	case score >= 75:
+		return "high"
+	case score >= 50:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// stationConfidenceScore computes confidence of a station-trading signal.
+// It is intentionally orthogonal to profitability: a trade may be profitable
+// but still low-confidence due to thin book/manipulation/volatility cues.
+func stationConfidenceScore(row *StationTrade, flowPerDay float64, hasExecutionEvidence bool) float64 {
+	if row == nil {
+		return 0
+	}
+
+	score := 0.0
+	if row.HistoryAvailable {
+		score += 20
+	}
+
+	// Liquidity / depth quality.
+	score += 20 * normalize(row.OBDS, 0, 1)
+	// Lower manipulation risk is better.
+	score += 20 * (1 - normalize(float64(row.SDS), 0, 100))
+	// Lower volatility is better for maker fills.
+	score += 15 * (1 - normalize(row.PVI, 0, 50))
+
+	// Throughput quality (log-scaled).
+	if flowPerDay > 1 {
+		score += 10 * normalize(math.Log10(flowPerDay), 0, 4)
+	}
+
+	// Balanced two-sided flow is more reliable than one-sided pressure.
+	balanceScore := 0.25 // weak prior if side flow unavailable
+	if row.S2BPerDay > 0 && row.BfSPerDay > 0 {
+		ratio := row.S2BPerDay / row.BfSPerDay
+		if ratio > 0 {
+			balanceScore = 1 - normalize(math.Abs(math.Log(ratio)), 0, 1.5)
+		}
+	}
+	score += 10 * clamp01(balanceScore)
+
+	if hasExecutionEvidence {
+		score += 5
+	}
+	if row.IsExtremePriceFlag {
+		score -= 10
+	}
+	if row.IsHighRiskFlag {
+		score -= 10
+	}
+
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	return sanitizeFloat(score)
+}
+
+// stationMakerFallbackRealizationFactor maps confidence + competition into a
+// conservative realizability factor for maker-mode daily PnL when direct
+// execution evidence is not available.
+func stationMakerFallbackRealizationFactor(confidenceScore float64, competitionIndex int) float64 {
+	conf := normalize(confidenceScore, 0, 100) // 0..1
+	base := 0.45 + 0.45*conf                   // 0.45..0.90
+
+	ci := maxInt(0, competitionIndex)
+	queuePenalty := 1.0 / math.Sqrt(float64(ci+1))
+	if queuePenalty < 0.40 {
+		queuePenalty = 0.40
+	}
+	if queuePenalty > 1.0 {
+		queuePenalty = 1.0
+	}
+
+	factor := base * queuePenalty
+	if factor < 0.20 {
+		factor = 0.20
+	}
+	if factor > 0.90 {
+		factor = 0.90
+	}
+	return sanitizeFloat(factor)
+}
+
 // estimateSellUnitsPerDay derives supply-side daily throughput from recent traded
 // volume and current book imbalance. This keeps BvS mathematically symmetric:
 // BvS = BuyUnitsPerDay / SellUnitsPerDay ~= BuyVolume / SellVolume.
-func estimateSellUnitsPerDay(dailyVolume float64, buyVolume, sellVolume int32) float64 {
+func estimateSellUnitsPerDay(dailyVolume float64, buyVolume, sellVolume int64) float64 {
 	if dailyVolume <= 0 || buyVolume <= 0 || sellVolume <= 0 {
 		return 0
 	}
@@ -141,27 +262,36 @@ func estimateSellUnitsPerDay(dailyVolume float64, buyVolume, sellVolume int32) f
 // stationExecutionDesiredQty picks the quantity for execution simulation.
 // If daily share is known, we target that share capped by current depth.
 // Otherwise we fall back to a bounded probe size to avoid over-weighting huge books.
-func stationExecutionDesiredQty(dailyShare int64, buyVolume, sellVolume int32) int32 {
-	depthCap := minInt32(buyVolume, sellVolume)
+func stationExecutionDesiredQty(dailyShare int64, buyVolume, sellVolume int64) int32 {
+	depthCap := minInt64(buyVolume, sellVolume)
 	if depthCap <= 0 {
 		return 0
 	}
 	if dailyShare > 0 {
-		if dailyShare > int64(depthCap) {
-			return depthCap
+		if dailyShare > depthCap {
+			if depthCap > math.MaxInt32 {
+				return math.MaxInt32
+			}
+			return int32(depthCap)
+		}
+		if dailyShare > math.MaxInt32 {
+			return math.MaxInt32
 		}
 		return int32(dailyShare)
 	}
-	const fallbackQty int32 = 1000
+	const fallbackQty int64 = 1000
 	if depthCap < fallbackQty {
-		return depthCap
+		if depthCap > math.MaxInt32 {
+			return math.MaxInt32
+		}
+		return int32(depthCap)
 	}
-	return fallbackQty
+	return int32(fallbackQty)
 }
 
 // stationExecutionDesiredQtyFromDailyShare is strict daily-throughput mode:
 // if daily share is unknown/non-positive, we do not assume synthetic fallback qty.
-func stationExecutionDesiredQtyFromDailyShare(dailyShare int64, buyVolume, sellVolume int32) int32 {
+func stationExecutionDesiredQtyFromDailyShare(dailyShare int64, buyVolume, sellVolume int64) int32 {
 	if dailyShare <= 0 {
 		return 0
 	}
@@ -172,6 +302,22 @@ func stationFlowPerDay(entries []esi.HistoryEntry) float64 {
 	return avgDailyVolume(entries, stationFlowWindowDays)
 }
 
+// resetExecutionDerivedFields clears depth-simulation outputs and keeps maker
+// fallback ROI consistent with baseline spread economics.
+func resetExecutionDerivedFields(r *StationTrade) {
+	r.ExpectedBuyPrice = 0
+	r.ExpectedSellPrice = 0
+	r.ExpectedProfit = 0
+	r.RealProfit = 0
+	r.FilledQty = 0
+	r.CanFill = false
+	r.SlippageBuyPct = 0
+	r.SlippageSellPct = 0
+	r.RealMarginPercent = 0
+	r.HasExecutionEvidence = false
+	r.NowROI = sanitizeFloat(r.MarginPercent)
+}
+
 // StationTradeParams holds input parameters for station trading scan.
 type StationTradeParams struct {
 	StationIDs      map[int64]bool // nil or empty = all stations in region
@@ -179,6 +325,7 @@ type StationTradeParams struct {
 	MinMargin       float64
 	SalesTaxPercent float64
 	BrokerFee       float64 // percent
+	CTSProfile      string  // balanced|aggressive|defensive
 	// SplitTradeFees enables side-specific fee model.
 	// When false, legacy fields above are used.
 	SplitTradeFees       bool
@@ -230,6 +377,9 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 
 	// Group orders by (locationID, typeID) — supports multi-station scan
 	groups := make(map[stationTypeKey]*orderGroup)
+	// Depth denominator for station-share scaling, scoped to the same
+	// order universe we actually scan (respects StationIDs/structure mode).
+	regionDepthByType := make(map[int32]int64)
 
 	filterStations := len(params.StationIDs) > 0
 
@@ -248,6 +398,7 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 				continue
 			}
 		}
+		regionDepthByType[o.TypeID] += int64(o.VolumeRemain)
 		key := stationTypeKey{o.LocationID, o.TypeID}
 		g, ok := groups[key]
 		if !ok {
@@ -336,15 +487,13 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 			continue
 		}
 
-		// Total volumes and capital required
-		var totalBuyVol, totalSellVol int32
-		var capitalRequired float64
+		// Total volumes (int64 to avoid overflow on high-liquidity items)
+		var totalBuyVol, totalSellVol int64
 		for _, o := range g.buyOrders {
-			totalBuyVol += o.VolumeRemain
-			capitalRequired += o.Price * float64(o.VolumeRemain)
+			totalBuyVol += int64(o.VolumeRemain)
 		}
 		for _, o := range g.sellOrders {
-			totalSellVol += o.VolumeRemain
+			totalSellVol += int64(o.VolumeRemain)
 		}
 
 		if totalBuyVol <= 0 || totalSellVol <= 0 {
@@ -359,20 +508,17 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 		// Calculate order book metrics
 		// OBDS denominator should reflect actionable cycle capital, not full
 		// long-tail book not touched by this strategy.
-		tradableUnits := minInt32(totalBuyVol, totalSellVol)
+		tradableUnits := minInt64(totalBuyVol, totalSellVol)
+		// Cycle capital: ISK required to place the buy side of the trade
+		// for all tradable units (minimum of buy/sell depth).
+		capitalRequired := effectiveBuy * float64(tradableUnits)
 		// Keep OBDS denominator in raw order-book ISK units (same unit as depth).
 		obdsCapital := costToBuy * float64(tradableUnits)
 		if obdsCapital <= 0 {
-			obdsCapital = capitalRequired
+			obdsCapital = effectiveBuy // minimal non-zero fallback
 		}
 		ci := CalcCI(append(g.buyOrders, g.sellOrders...))
 		obds := CalcOBDS(g.buyOrders, g.sellOrders, obdsCapital)
-
-		// NowROI = profit per unit / effective cost per unit (including broker fee) * 100
-		nowROI := 0.0
-		if effectiveBuy > 0 {
-			nowROI = profitPerUnit / effectiveBuy * 100
-		}
 
 		results = append(results, StationTrade{
 			TypeID:          typeID,
@@ -390,7 +536,7 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 			ROI:             sanitizeFloat(margin),
 			StationID:       key.locationID,
 			CapitalRequired: sanitizeFloat(capitalRequired),
-			NowROI:          sanitizeFloat(nowROI),
+			NowROI:          sanitizeFloat(margin), // initial fallback; refined from execution plans below
 			CI:              ci,
 			OBDS:            sanitizeFloat(obds),
 			// History-dependent fields will be calculated in enrichStationWithHistory
@@ -413,7 +559,9 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 
 	// Cap internal working set for history enrichment to prevent server overload
 	if len(results) > MaxUnlimitedResults {
+		excluded := len(results) - MaxUnlimitedResults
 		results = results[:MaxUnlimitedResults]
+		progress(fmt.Sprintf("Capped to %d items for enrichment (%d excluded by proxy rank)", MaxUnlimitedResults, excluded))
 	}
 
 	// Initial expected fill prices from execution plan — per-unit signal.
@@ -436,6 +584,10 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 					effectiveBuy := r.ExpectedBuyPrice * buyCostMult
 					effectiveSell := r.ExpectedSellPrice * sellRevenueMult
 					r.ExpectedProfit = effectiveSell - effectiveBuy // per unit, net of fees
+					if effectiveBuy > 0 {
+						// NowROI is execution-aware current ROI from live depth.
+						r.NowROI = sanitizeFloat((r.ExpectedProfit / effectiveBuy) * 100)
+					}
 				}
 			}
 		}
@@ -489,7 +641,7 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 	}
 
 	// Enrich with market history and calculate advanced metrics
-	s.enrichStationWithHistory(results, params.RegionID, orderGroups, params, progress)
+	s.enrichStationWithHistory(results, params.RegionID, orderGroups, params, regionDepthByType, progress)
 
 	// Apply post-history filters
 	results = applyStationTradeFilters(results, params)
@@ -500,6 +652,14 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].CTS > results[j].CTS
 	})
+	if len(results) > maxStationReturnedResults {
+		results = results[:maxStationReturnedResults]
+		progress(fmt.Sprintf("Capped station results to top %d by CTS", maxStationReturnedResults))
+	}
+
+	if replaced := atomic.SwapInt64(&sanitizeFloatCount, 0); replaced > 0 {
+		log.Printf("[WARN] sanitizeFloat replaced %d NaN/Inf values during station scan", replaced)
+	}
 
 	progress(fmt.Sprintf("Found %d station trading opportunities", len(results)))
 	return results, nil
@@ -526,11 +686,9 @@ func applyStationTradeFilters(results []StationTrade, params StationTradeParams)
 	var dropExecution, dropHistory, dropMargin, dropItemProfit, dropVol, dropS2B, dropBfS, dropROI, dropBvS, dropPVI, dropSDS, dropPrice int
 
 	for _, r := range results {
-		// If we have market activity/history but no profitable executable qty, treat as non-tradable.
-		if r.HistoryAvailable && r.DailyVolume > 0 && r.FilledQty <= 0 {
-			dropExecution++
-			continue
-		}
+		// Station trading is a maker strategy (buy at bid, sell at ask). If
+		// taker-style depth simulation yields zero safe qty, keep baseline maker
+		// economics instead of dropping the opportunity outright.
 		// Defensive guard against inconsistent execution payloads.
 		if r.FilledQty > 0 && r.RealProfit <= 0 {
 			dropExecution++
@@ -619,7 +777,8 @@ func applyStationTradeFilters(results []StationTrade, params StationTradeParams)
 }
 
 // enrichStationWithHistory fetches market history and calculates advanced metrics.
-func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int32, orderGroups map[stationTypeKey]*orderGroup, params StationTradeParams, progress func(string)) {
+// regionDepthByType holds region-wide order depth per typeID for station share estimation.
+func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int32, orderGroups map[stationTypeKey]*orderGroup, params StationTradeParams, regionDepthByType map[int32]int64, progress func(string)) {
 	if s.History == nil || len(results) == 0 {
 		return
 	}
@@ -631,6 +790,7 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 	if avgPeriod <= 0 {
 		avgPeriod = 90
 	}
+	ctsWeights := CTSWeightsForProfile(params.CTSProfile)
 	buyCostMult, sellRevenueMult := tradeFeeMultipliers(tradeFeeInputs{
 		SplitTradeFees:       params.SplitTradeFees,
 		BrokerFeePercent:     params.BrokerFee,
@@ -641,72 +801,101 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 		SellSalesTaxPercent:  params.SellSalesTaxPercent,
 	})
 
-	type histResult struct {
-		idx              int
+	// Deduplicate history fetches by typeID (all results share the same regionID).
+	// This prevents N+1 / thundering-herd when multiple station+type rows map
+	// to the same (region, type) history key.
+	type historyData struct {
 		entries          []esi.HistoryEntry
-		stats            esi.MarketStats
 		historyAvailable bool
 	}
-	ch := make(chan histResult, len(results))
-	sem := make(chan struct{}, 20)
-
-	for i := range results {
-		sem <- struct{}{}
-		go func(idx int) {
-			defer func() { <-sem }()
-
-			entries, ok := s.History.GetMarketHistory(regionID, results[idx].TypeID)
-			if !ok {
-				var err error
-				entries, err = s.ESI.FetchMarketHistory(regionID, results[idx].TypeID)
-				if err != nil {
-					ch <- histResult{idx: idx}
-					return
+	histByType := make(map[int32]*historyData)
+	{
+		// Collect unique typeIDs
+		uniqueTypes := make(map[int32]bool, len(results))
+		for i := range results {
+			uniqueTypes[results[i].TypeID] = true
+		}
+		type fetchResult struct {
+			typeID int32
+			data   historyData
+		}
+		fetchCh := make(chan fetchResult, len(uniqueTypes))
+		sem := make(chan struct{}, 20)
+		for tid := range uniqueTypes {
+			sem <- struct{}{}
+			go func(typeID int32) {
+				defer func() { <-sem }()
+				entries, ok := s.History.GetMarketHistory(regionID, typeID)
+				if !ok {
+					var err error
+					entries, err = s.ESI.FetchMarketHistory(regionID, typeID)
+					if err != nil {
+						fetchCh <- fetchResult{typeID, historyData{}}
+						return
+					}
+					s.History.SetMarketHistory(regionID, typeID, entries)
 				}
-				s.History.SetMarketHistory(regionID, results[idx].TypeID, entries)
-			}
-
-			totalListed := results[idx].BuyVolume + results[idx].SellVolume
-			stats := esi.ComputeMarketStats(entries, totalListed)
-			ch <- histResult{
-				idx:              idx,
-				entries:          entries,
-				stats:            stats,
-				historyAvailable: len(entries) > 0,
-			}
-		}(i)
+				fetchCh <- fetchResult{typeID, historyData{entries: entries, historyAvailable: len(entries) > 0}}
+			}(tid)
+		}
+		for range uniqueTypes {
+			r := <-fetchCh
+			histByType[r.typeID] = &r.data
+		}
 	}
 
 	progress("Calculating advanced metrics...")
 
-	for range results {
-		r := <-ch
-		idx := r.idx
+	for idx := range results {
+		hd := histByType[results[idx].TypeID]
+		if hd == nil {
+			hd = &historyData{}
+		}
 
-		results[idx].HistoryAvailable = r.historyAvailable
-		if len(r.entries) == 0 {
+		results[idx].HistoryAvailable = hd.historyAvailable
+		resetExecutionDerivedFields(&results[idx])
+		if len(hd.entries) == 0 {
 			results[idx].DailyVolume = 0
+			results[idx].TheoreticalDailyProfit = 0
+			results[idx].RealizableDailyProfit = 0
 			results[idx].DailyProfit = 0
 			results[idx].TotalProfit = 0
+			results[idx].ConfidenceScore = 0
+			results[idx].ConfidenceLabel = stationConfidenceLabel(0)
 			continue
 		}
 
 		// Use one consistent flow window for all throughput-dependent metrics.
-		flowPerDay := stationFlowPerDay(r.entries)
+		regionFlowPerDay := stationFlowPerDay(hd.entries)
+
+		// Scale region-level flow to station-level using order depth share.
+		// ESI history is region-wide; without this adjustment, non-hub stations
+		// get inflated volume/profit estimates.
+		stationShare := 1.0
+		stationDepth := results[idx].BuyVolume + results[idx].SellVolume
+		if rd := regionDepthByType[results[idx].TypeID]; rd > 0 && stationDepth > 0 {
+			stationShare = float64(stationDepth) / float64(rd)
+			if stationShare > 1.0 {
+				stationShare = 1.0
+			}
+		}
+		flowPerDay := regionFlowPerDay * stationShare
 		results[idx].DailyVolume = int64(math.Round(flowPerDay))
 		// Estimate cycle-constrained daily share from both sides:
 		// buy-order fills from S2B flow and sell-order fills from BfS flow.
 		s2bForShare, bfsForShare := estimateSideFlowsPerDay(
 			flowPerDay,
-			int64(results[idx].BuyVolume),
-			int64(results[idx].SellVolume),
+			results[idx].BuyVolume,
+			results[idx].SellVolume,
 		)
 		buySideShare := harmonicDailyShare(int64(math.Round(s2bForShare)), results[idx].BuyOrderCount)
 		sellSideShare := harmonicDailyShare(int64(math.Round(bfsForShare)), results[idx].SellOrderCount)
 		dailyShare := minInt64(buySideShare, sellSideShare)
 		baselineDailyProfit := sanitizeFloat(results[idx].ProfitPerUnit * float64(dailyShare))
+		results[idx].TheoreticalDailyProfit = baselineDailyProfit
+		results[idx].RealizableDailyProfit = baselineDailyProfit
 		results[idx].DailyProfit = baselineDailyProfit
-		results[idx].TotalProfit = baselineDailyProfit
+		// TotalProfit will be set at the end of the loop as full book spread profit.
 
 		// Recompute execution-aware daily profit with an economically relevant qty.
 		// This fixes fixed-qty distortion from early pre-history enrichment.
@@ -728,9 +917,8 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 					results[idx].ExpectedSellPrice = planSell.ExpectedPrice
 					results[idx].SlippageBuyPct = planBuy.SlippagePercent
 					results[idx].SlippageSellPct = planSell.SlippagePercent
-					results[idx].RealProfit = sanitizeFloat(expectedProfit)
-					results[idx].DailyProfit = sanitizeFloat(expectedProfit)
-					results[idx].TotalProfit = results[idx].DailyProfit // compatibility
+					realizable := sanitizeFloat(expectedProfit)
+					results[idx].RealProfit = realizable
 					results[idx].ExpectedProfit = sanitizeFloat(expectedProfit / float64(safeQty))
 					effectiveBuyPerUnit := planBuy.ExpectedPrice * buyCostMult
 					if effectiveBuyPerUnit > 0 {
@@ -738,26 +926,28 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 							(results[idx].ExpectedProfit / effectiveBuyPerUnit) * 100,
 						)
 					}
-				}
-				if safeQty <= 0 {
-					// History says there is flow, but executable profitable qty is zero after depth/slippage.
-					results[idx].DailyProfit = 0
-					results[idx].TotalProfit = 0
+					if realizable > 0 {
+						results[idx].RealizableDailyProfit = realizable
+						results[idx].HasExecutionEvidence = true
+						if results[idx].RealMarginPercent != 0 {
+							results[idx].NowROI = results[idx].RealMarginPercent
+						}
+					}
 				}
 			}
 		}
 
 		// Calculate VWAP (30 days)
-		results[idx].VWAP = sanitizeFloat(CalcVWAP(r.entries, stationVWAPWindowDays))
+		results[idx].VWAP = sanitizeFloat(CalcVWAP(hd.entries, stationVWAPWindowDays))
 
 		// Calculate DRVI (30 days)
-		results[idx].PVI = sanitizeFloat(CalcDRVI(r.entries, stationVolatilityWindowDays))
+		results[idx].PVI = sanitizeFloat(CalcDRVI(hd.entries, stationVolatilityWindowDays))
 
 		// Calculate spread ROI (typical buy-sell spread over the period)
-		results[idx].PeriodROI = sanitizeFloat(CalcSpreadROI(r.entries, avgPeriod))
+		results[idx].PeriodROI = sanitizeFloat(CalcSpreadROI(hd.entries, avgPeriod))
 
 		// Calculate price stats
-		avg, high, low := CalcAvgPriceStats(r.entries, avgPeriod)
+		avg, high, low := CalcAvgPriceStats(hd.entries, avgPeriod)
 		results[idx].AvgPrice = sanitizeFloat(avg)
 		results[idx].PriceHigh = sanitizeFloat(high)
 		results[idx].PriceLow = sanitizeFloat(low)
@@ -779,8 +969,8 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 		// A4E-style aliases with mass-balance: S2B + BfS = traded flow.
 		s2b, bfs := estimateSideFlowsPerDay(
 			flowPerDay,
-			int64(results[idx].BuyVolume),
-			int64(results[idx].SellVolume),
+			results[idx].BuyVolume,
+			results[idx].SellVolume,
 		)
 		results[idx].S2BPerDay = sanitizeFloat(s2b)
 		results[idx].BfSPerDay = sanitizeFloat(bfs)
@@ -796,7 +986,7 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 		// Calculate SDS (Scam Detection Score)
 		key := stationTypeKey{results[idx].StationID, results[idx].TypeID}
 		if g, ok := orderGroups[key]; ok {
-			results[idx].SDS = CalcSDS(g.buyOrders, r.entries, results[idx].VWAP)
+			results[idx].SDS = CalcSDS(g.buyOrders, g.sellOrders, hd.entries, results[idx].VWAP)
 		}
 
 		// Set risk flags
@@ -805,14 +995,37 @@ func (s *Scanner) enrichStationWithHistory(results []StationTrade, regionID int3
 			results[idx].IsExtremePriceFlag = IsExtremePrice(results[idx].BuyPrice, results[idx].VWAP, 50)
 		}
 
+		confidenceScore := stationConfidenceScore(&results[idx], flowPerDay, results[idx].HasExecutionEvidence)
+		results[idx].ConfidenceScore = confidenceScore
+		results[idx].ConfidenceLabel = stationConfidenceLabel(confidenceScore)
+
+		if !results[idx].HasExecutionEvidence {
+			factor := stationMakerFallbackRealizationFactor(confidenceScore, results[idx].CI)
+			results[idx].RealizableDailyProfit = sanitizeFloat(results[idx].TheoreticalDailyProfit * factor)
+		}
+		// Keep realizable estimate conservative: never exceed pure spread-maker baseline.
+		if results[idx].TheoreticalDailyProfit > 0 &&
+			results[idx].RealizableDailyProfit > results[idx].TheoreticalDailyProfit {
+			results[idx].RealizableDailyProfit = results[idx].TheoreticalDailyProfit
+		}
+		if results[idx].RealizableDailyProfit < 0 {
+			results[idx].RealizableDailyProfit = 0
+		}
+		results[idx].DailyProfit = sanitizeFloat(results[idx].RealizableDailyProfit)
+		// TotalProfit: full book spread profit (not daily). Gives the user a
+		// sense of total addressable opportunity on this item/station.
+		tradableUnits := float64(minInt64(results[idx].BuyVolume, results[idx].SellVolume))
+		results[idx].TotalProfit = sanitizeFloat(results[idx].ProfitPerUnit * tradableUnits)
+
 		// Calculate CTS (Composite Trading Score)
-		results[idx].CTS = sanitizeFloat(CalcCTS(
+		results[idx].CTS = sanitizeFloat(CalcCTSWithWeights(
 			results[idx].PeriodROI,
 			results[idx].OBDS,
 			results[idx].PVI,
 			results[idx].CI,
 			results[idx].SDS,
 			flowPerDay,
+			ctsWeights,
 		))
 
 	}

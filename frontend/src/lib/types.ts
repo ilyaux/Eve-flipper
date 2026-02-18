@@ -179,6 +179,11 @@ export interface StationTrade {
   SellVolume: number;
   TotalProfit: number;
   DailyProfit?: number;
+  TheoreticalDailyProfit?: number;
+  RealizableDailyProfit?: number;
+  ConfidenceScore?: number;
+  ConfidenceLabel?: string;
+  HasExecutionEvidence?: boolean;
   ROI: number;
   StationName: string;
   StationID: number;

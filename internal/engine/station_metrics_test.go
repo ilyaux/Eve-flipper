@@ -106,27 +106,28 @@ func TestCalcOBDS_ZeroCapitalOrEmpty(t *testing.T) {
 // --- CalcSDS: scam score 0-100 (best buy < 50% VWAP +30, volume mismatch +25, single order dominance +25, no recent trades +20) ---
 
 func TestCalcSDS_NoOrders(t *testing.T) {
-	got := CalcSDS(nil, nil, 100)
+	got := CalcSDS(nil, nil, nil, 100)
 	if got != 100 {
 		t.Errorf("CalcSDS(no buy orders) = %v, want 100 (suspicious)", got)
 	}
 }
 
 func TestCalcSDS_BestBuyBelowHalfVWAP(t *testing.T) {
-	// VWAP=100, best buy 40 -> 40 < 50% VWAP -> +30 (plus possible +25 dominance, +20 no recent trades if history nil)
+	// VWAP=100, best buy 40 -> 40 < 50% VWAP -> +30 (plus possible +15 dominance, +20 no recent trades if history nil)
 	orders := []esi.MarketOrder{{Price: 40, VolumeRemain: 100}}
-	got := CalcSDS(orders, nil, 100)
+	got := CalcSDS(orders, nil, nil, 100)
 	if got < 30 {
 		t.Errorf("CalcSDS(best buy 40, VWAP 100) = %v, want >= 30", got)
 	}
 }
 
 func TestCalcSDS_BestBuyAboveHalfVWAP_NoOtherTriggers(t *testing.T) {
-	// Best buy 60 >= 50% VWAP; use recent history and two orders so no +25 dominance, no +20 no recent trades
+	// Best buy 60 >= 50% VWAP; use recent history and two orders so no +15 dominance, no +20 no recent trades
 	today := time.Now().Format("2006-01-02")
 	history := []esi.HistoryEntry{{Date: today, Average: 100, Volume: 1000}}
-	orders := []esi.MarketOrder{{Price: 60, VolumeRemain: 50}, {Price: 58, VolumeRemain: 50}}
-	got := CalcSDS(orders, history, 100)
+	buyOrders := []esi.MarketOrder{{Price: 60, VolumeRemain: 50}, {Price: 58, VolumeRemain: 50}}
+	sellOrders := []esi.MarketOrder{{Price: 70, VolumeRemain: 50}, {Price: 72, VolumeRemain: 50}}
+	got := CalcSDS(buyOrders, sellOrders, history, 100)
 	if got != 0 {
 		t.Errorf("CalcSDS(best buy 60, recent history, two orders) = %v, want 0", got)
 	}
@@ -141,9 +142,21 @@ func TestCalcSDS_ZeroVolumeHistoryStillCountsAsNoRecentTrades(t *testing.T) {
 		{Price: 60, VolumeRemain: 50},
 		{Price: 59, VolumeRemain: 50},
 	}
-	got := CalcSDS(orders, history, 100)
+	got := CalcSDS(orders, nil, history, 100)
 	if got < 20 {
 		t.Errorf("CalcSDS with zero-volume history = %v, want >= 20 (no recent trades trigger)", got)
+	}
+}
+
+func TestCalcSDS_SellSideManipulation(t *testing.T) {
+	// Sell orders at 300 ISK with VWAP 100 -> 300 > 200% VWAP -> +15
+	buyOrders := []esi.MarketOrder{{Price: 60, VolumeRemain: 50}, {Price: 58, VolumeRemain: 50}}
+	sellOrders := []esi.MarketOrder{{Price: 300, VolumeRemain: 100}}
+	today := time.Now().Format("2006-01-02")
+	history := []esi.HistoryEntry{{Date: today, Average: 100, Volume: 1000}}
+	got := CalcSDS(buyOrders, sellOrders, history, 100)
+	if got < 15 {
+		t.Errorf("CalcSDS(sell at 3x VWAP) = %v, want >= 15 (sell-side deviation)", got)
 	}
 }
 
@@ -261,6 +274,63 @@ func TestCalcCTSSensitivityHarness_MonotoneUnderWeightPerturbation(t *testing.T)
 	}
 }
 
+func TestNormalizeCTSProfile(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", CTSProfileBalanced},
+		{"balanced", CTSProfileBalanced},
+		{"BALANCED", CTSProfileBalanced},
+		{" aggressive ", CTSProfileAggressive},
+		{"defensive", CTSProfileDefensive},
+		{"unknown", CTSProfileBalanced},
+	}
+	for _, tc := range tests {
+		got := normalizeCTSProfile(tc.in)
+		if got != tc.want {
+			t.Fatalf("normalizeCTSProfile(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestCTSWeightsForProfile(t *testing.T) {
+	if got := CTSWeightsForProfile(""); got != DefaultCTSWeights {
+		t.Fatalf("empty profile should fallback to default: got %+v", got)
+	}
+	if got := CTSWeightsForProfile("balanced"); got != DefaultCTSWeights {
+		t.Fatalf("balanced profile should equal default: got %+v", got)
+	}
+
+	aggr := CTSWeightsForProfile("aggressive")
+	def := CTSWeightsForProfile("defensive")
+	if aggr == DefaultCTSWeights {
+		t.Fatalf("aggressive profile should differ from default")
+	}
+	if def == DefaultCTSWeights {
+		t.Fatalf("defensive profile should differ from default")
+	}
+}
+
+func TestCTSProfilesBias(t *testing.T) {
+	aggrW := CTSWeightsForProfile("aggressive")
+	defW := CTSWeightsForProfile("defensive")
+
+	// High spread but risky/volatile item should rank better under aggressive profile.
+	riskyAgg := CalcCTSWithWeights(120, 0.2, 35, 70, 70, 150, aggrW)
+	riskyDef := CalcCTSWithWeights(120, 0.2, 35, 70, 70, 150, defW)
+	if riskyAgg <= riskyDef {
+		t.Fatalf("aggressive profile should prefer high-spread risky items: aggr=%v def=%v", riskyAgg, riskyDef)
+	}
+
+	// Liquid, low-risk item should rank better under defensive profile.
+	stableAgg := CalcCTSWithWeights(40, 1.2, 8, 20, 10, 400, aggrW)
+	stableDef := CalcCTSWithWeights(40, 1.2, 8, 20, 10, 400, defW)
+	if stableDef <= stableAgg {
+		t.Fatalf("defensive profile should prefer stable/liquid items: aggr=%v def=%v", stableAgg, stableDef)
+	}
+}
+
 func TestAvgDailyVolume_UsesWindow(t *testing.T) {
 	old := time.Now().AddDate(0, 0, -20).Format("2006-01-02")
 	d1 := time.Now().AddDate(0, 0, -2).Format("2006-01-02")
@@ -271,8 +341,31 @@ func TestAvgDailyVolume_UsesWindow(t *testing.T) {
 		{Date: d2, Volume: 300},
 	}
 	got := avgDailyVolume(history, 7)
-	want := (100.0 + 300.0) / 2.0
+	// Divides by window (7), not by number of entries (2):
+	// total in-window = 100+300 = 400, avg = 400/7 ≈ 57.14
+	want := (100.0 + 300.0) / 7.0
 	if math.Abs(got-want) > 1e-9 {
 		t.Errorf("avgDailyVolume(7d) = %v, want %v", got, want)
+	}
+}
+
+func TestFilterLastNDays_IncludesBoundaryDay(t *testing.T) {
+	// An entry dated exactly N days ago must always be included,
+	// regardless of time-of-day when the test runs. This verifies
+	// the UTC truncation fix in filterLastNDays.
+	exactlyNDaysAgo := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -7).Format("2006-01-02")
+	history := []esi.HistoryEntry{
+		{Date: exactlyNDaysAgo, Volume: 42},
+	}
+	entries := filterLastNDays(history, 7)
+	if len(entries) != 1 {
+		t.Fatalf("entry dated exactly 7 days ago should be included, got %d entries", len(entries))
+	}
+}
+
+func TestAvgDailyVolume_ZeroDays(t *testing.T) {
+	history := []esi.HistoryEntry{{Date: time.Now().Format("2006-01-02"), Volume: 100}}
+	if got := avgDailyVolume(history, 0); got != 0 {
+		t.Errorf("avgDailyVolume(0 days) = %v, want 0", got)
 	}
 }

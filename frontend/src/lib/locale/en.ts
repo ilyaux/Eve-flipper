@@ -35,6 +35,10 @@ export const en = {
     minBfSPerDay: "Min BfS/Day",
     minS2BBfSRatio: "Min S2B/BfS",
     maxS2BBfSRatio: "Max S2B/BfS",
+    ctsProfile: "CTS Profile",
+    ctsProfileBalanced: "Balanced",
+    ctsProfileAggressive: "Aggressive",
+    ctsProfileDefensive: "Defensive",
 
     // Contract filters
     minContractPrice: "Min Contract Price",
@@ -931,7 +935,7 @@ export const en = {
     metricPeriodROIDesc: "Return on investment for the period. Profit percentage relative to invested capital.",
     
     metricNowROITitle: "Now ROI",
-    metricNowROIDesc: "Current return on investment. ROI based on current buy and sell prices.",
+    metricNowROIDesc: "Current ROI from live order book execution (slippage-aware when depth data is available).",
 
     // PLEX+ Tab
     tabPlex: "PLEX+",

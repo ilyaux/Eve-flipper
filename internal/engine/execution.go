@@ -65,14 +65,10 @@ func ComputeExecutionPlan(orders []esi.MarketOrder, quantity int32, isBuy bool) 
 		levelMap[o.Price] += o.VolumeRemain
 		filteredDepth += o.VolumeRemain
 	}
-	// Backward-compatible fallback: some callers/tests pass pre-filtered slices
-	// without reliable IsBuyOrder flags. If side-filter removed everything, use
-	// all provided orders as-is.
+	// If side-filter removed everything, return empty result rather than
+	// silently using wrong-side orders which would produce incorrect prices.
 	if filteredDepth == 0 {
-		levelMap = make(map[float64]int32)
-		for _, o := range orders {
-			levelMap[o.Price] += o.VolumeRemain
-		}
+		return out
 	}
 	var levels []level
 	for p, v := range levelMap {

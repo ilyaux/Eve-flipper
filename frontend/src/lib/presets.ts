@@ -22,6 +22,7 @@ export interface BuiltinPreset {
 // ── Station Trading Settings ──
 
 export interface StationTradingSettings {
+  minMargin: number;
   brokerFee: number;
   salesTaxPercent: number;
   splitTradeFees?: boolean;
@@ -29,6 +30,7 @@ export interface StationTradingSettings {
   sellBrokerFeePercent?: number;
   buySalesTaxPercent?: number;
   sellSalesTaxPercent?: number;
+  ctsProfile?: "balanced" | "aggressive" | "defensive";
   radius: number;
   minDailyVolume: number;
   minItemProfit: number;
@@ -183,9 +185,11 @@ export const STATION_BUILTIN_PRESETS: BuiltinPreset[] = [
     nameKey: "presetStConservative",
     tab: "station",
     params: {
+      minMargin: 10,
       brokerFee: 3,
       salesTaxPercent: 8,
       splitTradeFees: false,
+      ctsProfile: "defensive",
       minDailyVolume: 10,
       minItemProfit: 500_000,
       minDemandPerDay: 5,
@@ -201,9 +205,11 @@ export const STATION_BUILTIN_PRESETS: BuiltinPreset[] = [
     nameKey: "presetStNormal",
     tab: "station",
     params: {
+      minMargin: 5,
       brokerFee: 3,
       salesTaxPercent: 8,
       splitTradeFees: false,
+      ctsProfile: "balanced",
       minDailyVolume: 5,
       minItemProfit: 0,
       minDemandPerDay: 1,
@@ -219,9 +225,11 @@ export const STATION_BUILTIN_PRESETS: BuiltinPreset[] = [
     nameKey: "presetStAggressive",
     tab: "station",
     params: {
+      minMargin: 2,
       brokerFee: 3,
       salesTaxPercent: 8,
       splitTradeFees: false,
+      ctsProfile: "aggressive",
       minDailyVolume: 0,
       minItemProfit: 0,
       minDemandPerDay: 0,
