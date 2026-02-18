@@ -12,8 +12,8 @@
 # Local clone of GitHub wiki (for editing wiki from repo)
 wiki-repo/
 
-# Old Markdown wiki that accidentally got committed (GitHub has a separate wiki)
-docs/wiki/
+# Old docs/wiki markdown dump + local notes (do not track in repo)
+docs/
 
 # SDE data cache (large, auto-downloaded)
 /data/
