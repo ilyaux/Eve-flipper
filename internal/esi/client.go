@@ -84,7 +84,7 @@ const everefStructuresURL = "https://data.everef.net/structures/structures-lates
 // for when ESI returns 403 on /universe/structures/{id}/. Runs in the background.
 func (c *Client) LoadEVERefStructures() {
 	go func() {
-		start := time.Now()
+
 		req, err := http.NewRequest("GET", everefStructuresURL, nil)
 		if err != nil {
 			log.Printf("[ESI] EVERef structures: request error: %v", err)
@@ -123,7 +123,7 @@ func (c *Client) LoadEVERefStructures() {
 			c.everefNames.Store(id, s.Name)
 			count++
 		}
-		log.Printf("[ESI] EVERef structures loaded: %d names in %dms", count, time.Since(start).Milliseconds())
+
 	}()
 }
 
