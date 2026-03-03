@@ -1,4 +1,5 @@
-import { useEffect, useRef, useId } from "react";
+import { useEffect, useRef, useId, useState } from "react";
+import { createPortal } from "react-dom";
 
 interface ModalProps {
   open: boolean;
@@ -11,6 +12,11 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children, width = "max-w-4xl" }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -26,9 +32,9 @@ export function Modal({ open, onClose, title, children, width = "max-w-4xl" }: M
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
+  return createPortal(
     <div
       ref={overlayRef}
       role="dialog"
@@ -58,6 +64,7 @@ export function Modal({ open, onClose, title, children, width = "max-w-4xl" }: M
         {/* Content */}
         <div className="flex-1 min-h-0 overflow-auto">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

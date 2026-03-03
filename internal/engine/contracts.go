@@ -463,11 +463,17 @@ func (s *Scanner) ScanContractsWithContext(ctx context.Context, params ScanParam
 	minContractPrice, maxContractMargin, minPricedRatio := getContractFilters(params)
 
 	emitProgress("Finding systems within radius...")
+	ignored := ignoredSystemSetFromIDs(params.IgnoredSystemIDs)
 	var buySystems map[int32]int
 	if params.MinRouteSecurity > 0 {
 		buySystems = s.SDE.Universe.SystemsWithinRadiusMinSecurity(params.CurrentSystemID, params.BuyRadius, params.MinRouteSecurity)
 	} else {
 		buySystems = s.SDE.Universe.SystemsWithinRadius(params.CurrentSystemID, params.BuyRadius)
+	}
+	buySystems = filterSystemDistanceMap(buySystems, ignored)
+	if len(buySystems) == 0 {
+		emitProgress("No systems remain after applying ignored systems filter.")
+		return []ContractResult{}, nil
 	}
 	buyRegions := s.SDE.Universe.RegionsInSet(buySystems)
 	contractInstant := params.ContractInstantLiquidation
@@ -479,6 +485,11 @@ func (s *Scanner) ScanContractsWithContext(ctx context.Context, params ScanParam
 			sellSystems = s.SDE.Universe.SystemsWithinRadiusMinSecurity(params.CurrentSystemID, params.SellRadius, params.MinRouteSecurity)
 		} else {
 			sellSystems = s.SDE.Universe.SystemsWithinRadius(params.CurrentSystemID, params.SellRadius)
+		}
+		sellSystems = filterSystemDistanceMap(sellSystems, ignored)
+		if len(sellSystems) == 0 {
+			emitProgress("No sell systems remain after applying ignored systems filter.")
+			return []ContractResult{}, nil
 		}
 		sellRegions = s.SDE.Universe.RegionsInSet(sellSystems)
 	}

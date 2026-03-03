@@ -192,6 +192,10 @@ func (s *Scanner) nearestTradeSourceSystems(
 	fromSystemID int32,
 	params RouteParams,
 ) []sourceSystemCandidate {
+	ignoredSystems := ignoredSystemSetFromIDs(params.IgnoredSystemIDs)
+	if len(ignoredSystems) > 0 && ignoredSystems[fromSystemID] {
+		return nil
+	}
 	sources := []sourceSystemCandidate{{systemID: fromSystemID, emptyJumps: 0}}
 	if !params.AllowEmptyHops {
 		return sources
@@ -203,6 +207,7 @@ func (s *Scanner) nearestTradeSourceSystems(
 	} else {
 		reachable = s.SDE.Universe.SystemsWithinRadius(fromSystemID, maxEmptyHopJumps)
 	}
+	reachable = filterSystemDistanceMap(reachable, ignoredSystems)
 	if len(reachable) == 0 {
 		return sources
 	}
@@ -257,7 +262,11 @@ func (s *Scanner) findBestTradesFromSources(
 	}
 
 	var candidates []candidate
+	ignoredSystems := ignoredSystemSetFromIDs(params.IgnoredSystemIDs)
 	for _, source := range sources {
+		if len(ignoredSystems) > 0 && ignoredSystems[source.systemID] {
+			continue
+		}
 		sellsHere, ok := idx.cheapestSell[source.systemID]
 		if !ok {
 			continue
@@ -286,6 +295,9 @@ func (s *Scanner) findBestTradesFromSources(
 
 			// Find executable buy orders for this type across all destination systems.
 			for buySystemID, buysByType := range idx.highestBuy {
+				if len(ignoredSystems) > 0 && ignoredSystems[buySystemID] {
+					continue
+				}
 				if buySystemID == source.systemID {
 					continue
 				}
@@ -389,6 +401,10 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 	if !ok {
 		return nil, fmt.Errorf("system not found: %s", params.SystemName)
 	}
+	ignoredSystems := ignoredSystemSetFromIDs(params.IgnoredSystemIDs)
+	if len(ignoredSystems) > 0 && ignoredSystems[systemID] {
+		return nil, fmt.Errorf("start system is in ignored systems list: %s", startName)
+	}
 
 	searchRadius := params.MaxHops * MaxTradeJumps
 	if searchRadius < MaxTradeJumps {
@@ -400,6 +416,7 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 	} else {
 		reachableSystems = s.SDE.Universe.SystemsWithinRadius(systemID, searchRadius)
 	}
+	reachableSystems = filterSystemDistanceMap(reachableSystems, ignoredSystems)
 	if len(reachableSystems) == 0 {
 		return nil, fmt.Errorf("no reachable systems from system %d", systemID)
 	}
@@ -422,6 +439,9 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 		targetID, found := s.SDE.SystemByName[strings.ToLower(strings.TrimSpace(params.TargetSystemName))]
 		if !found {
 			return nil, fmt.Errorf("target system not found: %s", params.TargetSystemName)
+		}
+		if len(ignoredSystems) > 0 && ignoredSystems[targetID] {
+			return nil, fmt.Errorf("target system is in ignored systems list: %s", params.TargetSystemName)
 		}
 		targetSystemID = targetID
 		targetSystemName = s.systemName(targetID)

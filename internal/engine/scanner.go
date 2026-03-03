@@ -46,6 +46,36 @@ func NewScanner(data *sde.Data, client *esi.Client) *Scanner {
 	}
 }
 
+func ignoredSystemSetFromIDs(ids []int32) map[int32]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[int32]bool, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			out[id] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func filterSystemDistanceMap(systems map[int32]int, ignored map[int32]bool) map[int32]int {
+	if len(systems) == 0 || len(ignored) == 0 {
+		return systems
+	}
+	filtered := make(map[int32]int, len(systems))
+	for systemID, jumps := range systems {
+		if ignored[systemID] {
+			continue
+		}
+		filtered[systemID] = jumps
+	}
+	return filtered
+}
+
 // Scan finds profitable flip opportunities based on the given parameters.
 func (s *Scanner) Scan(params ScanParams, progress func(string)) ([]FlipResult, error) {
 	progress("Finding systems within radius...")
@@ -70,6 +100,13 @@ func (s *Scanner) Scan(params ScanParams, progress func(string)) ([]FlipResult, 
 		}
 	}()
 	wg.Wait()
+	ignored := ignoredSystemSetFromIDs(params.IgnoredSystemIDs)
+	buySystems = filterSystemDistanceMap(buySystems, ignored)
+	sellSystems = filterSystemDistanceMap(sellSystems, ignored)
+	if len(buySystems) == 0 || len(sellSystems) == 0 {
+		progress("No systems remain after applying ignored systems filter.")
+		return []FlipResult{}, nil
+	}
 
 	buyRegions := s.SDE.Universe.RegionsInSet(buySystems)
 	sellRegions := s.SDE.Universe.RegionsInSet(sellSystems)
@@ -78,13 +115,14 @@ func (s *Scanner) Scan(params ScanParams, progress func(string)) ([]FlipResult, 
 		len(buySystems), len(sellSystems), len(buyRegions), len(sellRegions))
 
 	progress(fmt.Sprintf("Fetching orders from %d+%d regions...", len(buyRegions), len(sellRegions)))
-	idx := s.fetchAndIndex(buyRegions, buySystems, sellRegions, sellSystems)
+	idx := s.fetchAndIndex(params, buyRegions, buySystems, sellRegions, sellSystems)
 	return s.calculateResults(params, idx, buySystems, progress)
 }
 
 // ScanMultiRegion finds profitable flip opportunities across whole regions.
 func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]FlipResult, error) {
 	minSec := params.MinRouteSecurity
+	ignored := ignoredSystemSetFromIDs(params.IgnoredSystemIDs)
 
 	var buyRegions map[int32]bool
 	var buySystems map[int32]int
@@ -102,6 +140,7 @@ func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]F
 		// With explicit source regions we don't have BFS precomputed from origin.
 		// calculateResults will fall back to shortest-path queries per source system.
 		buySystemsRadius = make(map[int32]int)
+		buySystems = filterSystemDistanceMap(buySystems, ignored)
 		progress(fmt.Sprintf("Using source region scope: %d region(s)...", len(buyRegions)))
 	} else {
 		progress("Finding buy regions by radius...")
@@ -110,8 +149,10 @@ func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]F
 		} else {
 			buySystemsRadius = s.SDE.Universe.SystemsWithinRadius(params.CurrentSystemID, params.BuyRadius)
 		}
+		buySystemsRadius = filterSystemDistanceMap(buySystemsRadius, ignored)
 		buyRegions = s.SDE.Universe.RegionsInSet(buySystemsRadius)
 		buySystems = s.SDE.Universe.SystemsInRegions(buyRegions)
+		buySystems = filterSystemDistanceMap(buySystems, ignored)
 	}
 
 	var sellRegions map[int32]bool
@@ -121,6 +162,7 @@ func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]F
 	if params.TargetRegionID > 0 {
 		sellRegions = map[int32]bool{params.TargetRegionID: true}
 		sellSystems = s.SDE.Universe.SystemsInRegions(sellRegions)
+		sellSystems = filterSystemDistanceMap(sellSystems, ignored)
 		progress(fmt.Sprintf("Using target region %d for sell side...", params.TargetRegionID))
 	} else {
 		progress("Finding sell regions by radius...")
@@ -130,12 +172,20 @@ func (s *Scanner) ScanMultiRegion(params ScanParams, progress func(string)) ([]F
 		} else {
 			sellSystemsRadius = s.SDE.Universe.SystemsWithinRadius(params.CurrentSystemID, params.SellRadius)
 		}
+		sellSystemsRadius = filterSystemDistanceMap(sellSystemsRadius, ignored)
 		sellRegions = s.SDE.Universe.RegionsInSet(sellSystemsRadius)
 		sellSystems = s.SDE.Universe.SystemsInRegions(sellRegions)
+		sellSystems = filterSystemDistanceMap(sellSystems, ignored)
 	}
+	if len(buySystems) == 0 || len(sellSystems) == 0 {
+		progress("No systems remain after applying ignored systems filter.")
+		return []FlipResult{}, nil
+	}
+	buyRegions = s.SDE.Universe.RegionsInSet(buySystems)
+	sellRegions = s.SDE.Universe.RegionsInSet(sellSystems)
 
 	progress(fmt.Sprintf("Fetching orders: buy from %d region(s), sell from %d region(s)...", len(buyRegions), len(sellRegions)))
-	idx := s.fetchAndIndex(buyRegions, buySystems, sellRegions, sellSystems)
+	idx := s.fetchAndIndex(params, buyRegions, buySystems, sellRegions, sellSystems)
 	return s.calculateResults(params, idx, buySystemsRadius, progress)
 }
 
@@ -264,6 +314,7 @@ func (s *Scanner) fetchOrdersStream(
 // fetchAndIndex launches parallel streaming fetches for sell and buy orders,
 // building the scanIndex incrementally as regions complete.
 func (s *Scanner) fetchAndIndex(
+	params ScanParams,
 	buyRegions map[int32]bool, buySystems map[int32]int,
 	sellRegions map[int32]bool, sellSystems map[int32]int,
 ) *scanIndex {
@@ -271,6 +322,12 @@ func (s *Scanner) fetchAndIndex(
 	buyCh := s.fetchOrdersStream(sellRegions, "buy", sellSystems)
 	// Additional sell-side sell-book stream for mathematically consistent S2B/BfS split.
 	sellSideSellCh := s.fetchOrdersStream(sellRegions, "sell", sellSystems)
+	var sourceBuyCh <-chan []esi.MarketOrder
+	enablePrivateStructureFetch := params.IncludeStructures && strings.TrimSpace(params.AccessToken) != ""
+	if enablePrivateStructureFetch {
+		// Source-side buy orders help discover structure IDs when source sell book is hidden in region endpoint.
+		sourceBuyCh = s.fetchOrdersStream(buyRegions, "buy", buySystems)
+	}
 
 	idx := &scanIndex{
 		sellByType:                       make(map[int32][]sellInfo),
@@ -285,8 +342,15 @@ func (s *Scanner) fetchAndIndex(
 		sellSideSellMinPriceByTypeSystem: make(map[sysTypeKey]float64),
 	}
 
+	sourceStructureSystemIDs := make(map[int64]int32)
+	var sourceStructureMu sync.Mutex
+
 	var wg sync.WaitGroup
-	wg.Add(3)
+	consumerCount := 3
+	if sourceBuyCh != nil {
+		consumerCount++
+	}
+	wg.Add(consumerCount)
 
 	// Consumer 1: collect all sell orders grouped by type
 	go func() {
@@ -299,6 +363,11 @@ func (s *Scanner) fetchAndIndex(
 					Price: o.Price, VolumeRemain: o.VolumeRemain,
 					LocationID: o.LocationID, SystemID: o.SystemID,
 				})
+				if enablePrivateStructureFetch && isPlayerStructureLocationID(o.LocationID) && o.SystemID > 0 {
+					sourceStructureMu.Lock()
+					sourceStructureSystemIDs[o.LocationID] = o.SystemID
+					sourceStructureMu.Unlock()
+				}
 			}
 		}
 		// Fill order counts per location
@@ -351,11 +420,151 @@ func (s *Scanner) fetchAndIndex(
 		}
 	}()
 
+	// Consumer 4 (optional): source-side buy orders used to discover private structure markets.
+	if sourceBuyCh != nil {
+		go func() {
+			defer wg.Done()
+			for batch := range sourceBuyCh {
+				for _, o := range batch {
+					if isPlayerStructureLocationID(o.LocationID) && o.SystemID > 0 {
+						sourceStructureMu.Lock()
+						sourceStructureSystemIDs[o.LocationID] = o.SystemID
+						sourceStructureMu.Unlock()
+					}
+				}
+			}
+		}()
+	}
+
 	wg.Wait()
+
+	if enablePrivateStructureFetch && len(sourceStructureSystemIDs) > 0 {
+		s.mergeSourceStructureSellOrders(idx, sourceStructureSystemIDs, buySystems, params.AccessToken)
+	}
 
 	log.Printf("[DEBUG] fetchAndIndex: %d sell orders, %d buy orders", len(idx.sellOrders), len(idx.buyOrders))
 	log.Printf("[DEBUG] sellByType: %d types, buyByType: %d types", len(idx.sellByType), len(idx.buyByType))
 	return idx
+}
+
+func (s *Scanner) mergeSourceStructureSellOrders(
+	idx *scanIndex,
+	sourceStructureSystemIDs map[int64]int32,
+	buySystems map[int32]int,
+	accessToken string,
+) {
+	if idx == nil || len(sourceStructureSystemIDs) == 0 || strings.TrimSpace(accessToken) == "" || s.ESI == nil {
+		return
+	}
+
+	const (
+		maxStructuresToFetch = 200
+		fetchParallelism     = 8
+	)
+
+	structureIDs := make([]int64, 0, len(sourceStructureSystemIDs))
+	for structureID := range sourceStructureSystemIDs {
+		structureIDs = append(structureIDs, structureID)
+	}
+	sort.Slice(structureIDs, func(i, j int) bool { return structureIDs[i] < structureIDs[j] })
+	if len(structureIDs) > maxStructuresToFetch {
+		log.Printf(
+			"[DEBUG] mergeSourceStructureSellOrders: truncating structure fetch %d -> %d",
+			len(structureIDs),
+			maxStructuresToFetch,
+		)
+		structureIDs = structureIDs[:maxStructuresToFetch]
+	}
+
+	seenOrderIDs := make(map[int64]bool, len(idx.sellOrders))
+	for _, o := range idx.sellOrders {
+		if o.OrderID > 0 {
+			seenOrderIDs[o.OrderID] = true
+		}
+	}
+
+	type fetchResult struct {
+		structureID int64
+		orders      []esi.MarketOrder
+		err         error
+	}
+
+	sem := make(chan struct{}, fetchParallelism)
+	out := make(chan fetchResult, len(structureIDs))
+	var wg sync.WaitGroup
+	for _, structureID := range structureIDs {
+		systemID := sourceStructureSystemIDs[structureID]
+		wg.Add(1)
+		go func(sid int64, sysID int32) {
+			defer wg.Done()
+			sem <- struct{}{}
+			orders, err := s.ESI.FetchStructureOrders(sid, accessToken)
+			<-sem
+			if err != nil {
+				out <- fetchResult{structureID: sid, err: err}
+				return
+			}
+
+			filtered := make([]esi.MarketOrder, 0, len(orders))
+			for _, o := range orders {
+				if o.IsBuyOrder {
+					continue
+				}
+				if o.LocationID == 0 {
+					o.LocationID = sid
+				}
+				if o.SystemID <= 0 {
+					o.SystemID = sysID
+				}
+				if _, ok := buySystems[o.SystemID]; !ok {
+					continue
+				}
+				filtered = append(filtered, o)
+			}
+			out <- fetchResult{structureID: sid, orders: filtered}
+		}(structureID, systemID)
+	}
+	wg.Wait()
+	close(out)
+
+	added := 0
+	for item := range out {
+		if item.err != nil {
+			log.Printf("[DEBUG] mergeSourceStructureSellOrders: structure %d fetch failed: %v", item.structureID, item.err)
+			continue
+		}
+		for _, o := range item.orders {
+			if o.OrderID > 0 {
+				if seenOrderIDs[o.OrderID] {
+					continue
+				}
+				seenOrderIDs[o.OrderID] = true
+			}
+			idx.sellOrders = append(idx.sellOrders, o)
+			idx.sellCounts[locKey{o.TypeID, o.LocationID}]++
+			idx.sellByType[o.TypeID] = append(idx.sellByType[o.TypeID], sellInfo{
+				Price: o.Price, VolumeRemain: o.VolumeRemain,
+				LocationID: o.LocationID, SystemID: o.SystemID,
+			})
+			added++
+		}
+	}
+
+	if added <= 0 {
+		return
+	}
+
+	for tid, sells := range idx.sellByType {
+		for i := range sells {
+			sells[i].OrderCount = idx.sellCounts[locKey{tid, sells[i].LocationID}]
+		}
+	}
+
+	log.Printf(
+		"[DEBUG] mergeSourceStructureSellOrders: added %d source-side sell orders from %d structure(s)",
+		added,
+		len(structureIDs),
+	)
 }
 
 // calculateResults is the shared profit calculation logic.
@@ -420,13 +629,16 @@ func (s *Scanner) calculateResults(
 			continue
 		}
 
-		maxUnitsF := math.Floor(params.CargoCapacity / itemType.Volume)
-		if maxUnitsF > math.MaxInt32 {
-			maxUnitsF = math.MaxInt32
-		}
-		maxUnits := int32(maxUnitsF)
-		if maxUnits <= 0 {
-			continue
+		maxUnits := int32(math.MaxInt32)
+		if params.CargoCapacity > 0 {
+			maxUnitsF := math.Floor(params.CargoCapacity / itemType.Volume)
+			if maxUnitsF > math.MaxInt32 {
+				maxUnitsF = math.MaxInt32
+			}
+			maxUnits = int32(maxUnitsF)
+			if maxUnits <= 0 {
+				continue
+			}
 		}
 
 		// Deduplicate sells: keep cheapest per location (with total volume)

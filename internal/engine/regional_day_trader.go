@@ -338,6 +338,20 @@ func (s *Scanner) BuildRegionalDayTrader(
 				purchaseUnits = demandCap
 			}
 		}
+		// Cargo cap must apply in all revenue modes, including sell-order mode.
+		if params.CargoCapacity > 0 && row.Volume > 0 {
+			maxByCargoF := math.Floor(params.CargoCapacity / row.Volume)
+			if maxByCargoF <= 0 {
+				continue
+			}
+			if maxByCargoF > float64(math.MaxInt32) {
+				maxByCargoF = float64(math.MaxInt32)
+			}
+			maxByCargo := int32(maxByCargoF)
+			if purchaseUnits > maxByCargo {
+				purchaseUnits = maxByCargo
+			}
+		}
 		if params.MaxInvestment > 0 {
 			effectiveUnitCost := sourceAvgPrice * buyCostMult
 			if effectiveUnitCost > 0 {
@@ -461,12 +475,8 @@ func (s *Scanner) BuildRegionalDayTrader(
 				targetDOS = maxDOS
 			}
 		}
-		effectiveMaxDOS := params.MaxDOS
-		if effectiveMaxDOS <= 0 {
-			// Default guardrail against capital lock-in for raw/default scans.
-			effectiveMaxDOS = 365
-		}
-		if targetDOS > effectiveMaxDOS {
+		// MaxDOS=0 means filter disabled.
+		if params.MaxDOS > 0 && targetDOS > params.MaxDOS {
 			continue
 		}
 

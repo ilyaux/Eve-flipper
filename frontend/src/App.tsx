@@ -280,6 +280,7 @@ function App() {
 
   const [params, setParams] = useState<ScanParams>({
     system_name: "Jita",
+    ignored_system_ids: [],
     cargo_capacity: 5000,
     buy_radius: 5,
     sell_radius: 10,
@@ -381,6 +382,7 @@ function App() {
     ts: number;
     results: FlipResult[];
   } | null>(null);
+  const [autoRefreshRadius, setAutoRefreshRadius] = useState(false);
   const [autoRefreshRegion, setAutoRefreshRegion] = useState(false);
 
   const [showWatchlist, setShowWatchlist] = useState(false);
@@ -404,6 +406,8 @@ function App() {
 
   const abortRef = useRef<AbortController | null>(null);
   const desktopAlertCooldownRef = useRef<Map<string, number>>(new Map());
+  const radiusAutoRefreshSignatureRef = useRef<string>("");
+  const radiusAutoRefreshLastRunRef = useRef<number>(0);
   const regionAutoRefreshSignatureRef = useRef<string>("");
   const regionAutoRefreshLastRunRef = useRef<number>(0);
   const { addToast } = useGlobalToast();
@@ -587,6 +591,8 @@ function App() {
         setParams((prev) => ({
           ...prev,
           system_name: cfg.system_name || prev.system_name,
+          ignored_system_ids:
+            cfg.ignored_system_ids ?? prev.ignored_system_ids ?? [],
           cargo_capacity: cfg.cargo_capacity ?? prev.cargo_capacity,
           buy_radius: cfg.buy_radius ?? prev.buy_radius,
           sell_radius: cfg.sell_radius ?? prev.sell_radius,
@@ -898,6 +904,34 @@ function App() {
     }
   }, [scanning, tab, params, t, addToast, alertChannels]);
 
+  // Auto-refresh: when enabled and radius cache expires, re-trigger scan automatically
+  useEffect(() => {
+    if (!autoRefreshRadius || tab !== "radius") return;
+    const CHECK_INTERVAL = 15_000; // check every 15s
+    const COOLDOWN_MS = 90_000; // avoid loops on stale metadata snapshots
+    const timer = window.setInterval(() => {
+      if (scanning) return;
+      if (!radiusCacheMeta?.next_expiry_at) return;
+      const expiresAt = Date.parse(radiusCacheMeta.next_expiry_at);
+      if (!Number.isFinite(expiresAt) || Date.now() < expiresAt) return;
+
+      const signature = `${radiusCacheMeta.current_revision ?? 0}:${radiusCacheMeta.next_expiry_at}`;
+      const now = Date.now();
+      const sameSnapshot = radiusAutoRefreshSignatureRef.current === signature;
+      if (
+        sameSnapshot &&
+        now - radiusAutoRefreshLastRunRef.current < COOLDOWN_MS
+      ) {
+        return;
+      }
+
+      radiusAutoRefreshSignatureRef.current = signature;
+      radiusAutoRefreshLastRunRef.current = now;
+      void handleScan();
+    }, CHECK_INTERVAL);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshRadius, tab, scanning, radiusCacheMeta, handleScan]);
+
   // Auto-refresh: when enabled and region cache expires, re-trigger scan automatically
   useEffect(() => {
     if (!autoRefreshRegion || tab !== "region") return;
@@ -932,9 +966,10 @@ function App() {
     if (tab !== "region" || regionDefaultsAppliedRef.current) return;
     setParams((prev) => {
       const next = { ...prev };
-      if ((next.min_period_roi ?? 0) <= 0) next.min_period_roi = 3;
-      if ((next.min_demand_per_day ?? 0) <= 0) next.min_demand_per_day = 1;
-      if ((next.max_dos ?? 0) <= 0) next.max_dos = 180;
+      // Keep EG-like behavior for now: force Min Period ROI to 0 on region tab init.
+      next.min_period_roi = 0;
+      if (next.min_demand_per_day == null) next.min_demand_per_day = 1;
+      if (next.max_dos == null) next.max_dos = 180;
       if ((next.purchase_demand_days ?? 0) <= 0) next.purchase_demand_days = 0.5;
       return next;
     });
@@ -1354,81 +1389,88 @@ function App() {
 
       {/* Tabs */}
       <div className="flex-1 flex flex-col min-h-0 bg-eve-panel border border-eve-border rounded-sm">
-        <div
-          className="flex items-center border-b border-eve-border overflow-x-auto scrollbar-thin snap-x snap-mandatory sm:snap-none"
-          role="tablist"
-          aria-label="Scan modes"
-        >
-          <TabButton
-            active={tab === "radius"}
-            onClick={() => setTab("radius")}
-            label={t("tabRadius")}
-          />
-          <TabButton
-            active={tab === "region"}
-            onClick={() => setTab("region")}
-            label={t("tabRegion")}
-          />
-          <TabButton
-            active={tab === "contracts"}
-            onClick={() => setTab("contracts")}
-            label={t("tabContracts")}
-          />
-          <TabButton
-            active={tab === "route"}
-            onClick={() => setTab("route")}
-            label={t("tabRoute")}
-          />
-          {/* Visual separator: scan group vs station/industry */}
-          <div
-            className="h-6 w-px bg-eve-border mx-1 flex-shrink-0"
-            aria-hidden="true"
-          />
-          <TabButton
-            active={tab === "station"}
-            onClick={() => setTab("station")}
-            label={t("tabStation")}
-          />
-          <TabButton
-            active={tab === "industry"}
-            onClick={() => setTab("industry")}
-            label={t("tabIndustry")}
-          />
-          <TabButton
-            active={tab === "demand"}
-            onClick={() => setTab("demand")}
-            label={t("tabDemand") || "War Tracker"}
-          />
-          <TabButton
-            active={tab === "plex"}
-            onClick={() => setTab("plex")}
-            label={t("tabPlex") || "PLEX+"}
-          />
-          <div className="flex-1 min-w-[12px] sm:min-w-[20px]" />
+        <div className="flex items-stretch border-b border-eve-border">
+          <div className="flex-1 min-w-0 overflow-x-auto scrollbar-thin snap-x snap-mandatory sm:snap-none">
+            <div
+              className="flex items-center min-w-max"
+              role="tablist"
+              aria-label="Scan modes"
+            >
+              <TabButton
+                active={tab === "radius"}
+                onClick={() => setTab("radius")}
+                label={t("tabRadius")}
+              />
+              <TabButton
+                active={tab === "region"}
+                onClick={() => setTab("region")}
+                label={t("tabRegion")}
+              />
+              <TabButton
+                active={tab === "contracts"}
+                onClick={() => setTab("contracts")}
+                label={t("tabContracts")}
+              />
+              <TabButton
+                active={tab === "route"}
+                onClick={() => setTab("route")}
+                label={t("tabRoute")}
+              />
+              {/* Visual separator: scan group vs station/industry */}
+              <div
+                className="h-6 w-px bg-eve-border mx-1 flex-shrink-0"
+                aria-hidden="true"
+              />
+              <TabButton
+                active={tab === "station"}
+                onClick={() => setTab("station")}
+                label={t("tabStation")}
+              />
+              <TabButton
+                active={tab === "industry"}
+                onClick={() => setTab("industry")}
+                label={t("tabIndustry")}
+              />
+              <TabButton
+                active={tab === "demand"}
+                onClick={() => setTab("demand")}
+                label={t("tabDemand") || "War Tracker"}
+              />
+              <TabButton
+                active={tab === "plex"}
+                onClick={() => setTab("plex")}
+                label={t("tabPlex") || "PLEX+"}
+              />
+              <div className="w-2 sm:w-4 shrink-0" />
+            </div>
+          </div>
+
           {tab !== "route" &&
             tab !== "station" &&
             tab !== "industry" &&
             tab !== "demand" &&
             tab !== "plex" && (
-              <button
-                data-scan-button
-                onClick={handleScan}
-                disabled={
-                  tab === "region"
-                    ? !params.target_market_system?.trim()
-                    : !params.system_name
-                }
-                title="Ctrl+S"
-                className={`mr-1.5 sm:mr-3 px-3 sm:px-5 py-1.5 rounded-sm text-[10px] sm:text-xs font-semibold uppercase tracking-wider transition-all shrink-0
-              ${
-                scanning
-                  ? "bg-eve-error/80 text-white hover:bg-eve-error"
-                  : "bg-eve-accent text-eve-dark hover:bg-eve-accent-hover shadow-eve-glow"
-              }
-              disabled:bg-eve-input disabled:text-eve-dim disabled:cursor-not-allowed disabled:shadow-none`}
-              >
-                {scanning ? t("stop") : t("scan")}
-              </button>
+              <div className="shrink-0 border-l border-eve-border px-1.5 sm:px-2 py-1 flex items-center">
+                <button
+                  data-scan-button
+                  onClick={handleScan}
+                  disabled={
+                    tab === "region"
+                      ? !params.target_market_system?.trim()
+                      : !params.system_name
+                  }
+                  title="Ctrl+S"
+                  className={`px-3 sm:px-4 py-1.5 rounded-sm text-[10px] sm:text-xs font-semibold uppercase tracking-wider transition-all
+                  ${
+                    scanning
+                      ? "bg-eve-error/80 text-white hover:bg-eve-error"
+                      : "bg-eve-accent text-eve-dark hover:bg-eve-accent-hover shadow-eve-glow"
+                  }
+                  disabled:bg-eve-input disabled:text-eve-dim disabled:cursor-not-allowed disabled:shadow-none`}
+                >
+                  {scanning ? t("stop") : t("scan")}
+                </button>
+              </div>
             )}
         </div>
 
@@ -1437,6 +1479,25 @@ function App() {
           <div
             className={`flex-1 min-h-0 flex flex-col ${tab === "radius" ? "" : "hidden"}`}
           >
+            {tab === "radius" && (
+              <div className="shrink-0 flex items-center gap-2 px-2 py-1 text-xs border-b border-eve-border/20">
+                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-eve-dim hover:text-eve-text transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={autoRefreshRadius}
+                    onChange={(e) => setAutoRefreshRadius(e.target.checked)}
+                    className="accent-eve-accent"
+                  />
+                  Auto-refresh
+                </label>
+                {autoRefreshRadius && (
+                  <span className="flex items-center gap-1 text-eve-accent">
+                    <span className="w-1.5 h-1.5 rounded-full bg-eve-accent animate-pulse" />
+                    active
+                  </span>
+                )}
+              </div>
+            )}
             <ScanResultsTable
               results={radiusResults}
               scanning={scanning && tab === "radius"}
@@ -1451,6 +1512,7 @@ function App() {
               buySalesTaxPercent={params.buy_sales_tax_percent}
               sellSalesTaxPercent={params.sell_sales_tax_percent}
               isLoggedIn={authStatus.logged_in}
+              cargoLimit={params.cargo_capacity}
             />
           </div>
           <div
@@ -1524,6 +1586,7 @@ function App() {
               isLoggedIn={authStatus.logged_in}
               showRegions
               columnProfile="region_eveguru"
+              cargoLimit={params.cargo_capacity}
             />
           </div>
           <div
@@ -1651,6 +1714,7 @@ function App() {
             ) {
               const safeKeys = [
                 "system_name",
+                "ignored_system_ids",
                 "cargo_capacity",
                 "buy_radius",
                 "sell_radius",

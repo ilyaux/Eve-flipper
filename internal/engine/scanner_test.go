@@ -342,6 +342,174 @@ func TestCalculateResults_TracksBestLevelPriceAndQty(t *testing.T) {
 	}
 }
 
+func TestCalculateResults_CargoCapacityZeroMeansUnlimited(t *testing.T) {
+	u := graph.NewUniverse()
+	u.SetRegion(1, 10000002)
+	u.SetRegion(2, 10000002)
+	u.SetSecurity(1, 0.9)
+	u.SetSecurity(2, 0.9)
+	u.AddGate(1, 2)
+	u.AddGate(2, 1)
+
+	const (
+		typeID       = int32(55555)
+		buyLocID     = int64(200000000001)
+		sellLocID    = int64(200000000002)
+		currentSys   = int32(1)
+		buySystemID  = int32(1)
+		sellSystemID = int32(2)
+	)
+
+	scanner := &Scanner{
+		SDE: &sde.Data{
+			Universe: u,
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Alpha", RegionID: 10000002},
+				2: {ID: 2, Name: "Beta", RegionID: 10000002},
+			},
+			Types: map[int32]*sde.ItemType{
+				typeID: {ID: typeID, Name: "Bulky Item", Volume: 2_000_000},
+			},
+		},
+		ESI: esi.NewClient(nil),
+	}
+
+	asks := []esi.MarketOrder{
+		{TypeID: typeID, LocationID: buyLocID, SystemID: buySystemID, Price: 100, VolumeRemain: 1},
+	}
+	bids := []esi.MarketOrder{
+		{TypeID: typeID, LocationID: sellLocID, SystemID: sellSystemID, Price: 150, VolumeRemain: 1, IsBuyOrder: true},
+	}
+
+	idx := &scanIndex{
+		sellByType: map[int32][]sellInfo{
+			typeID: {
+				{Price: 100, VolumeRemain: 1, LocationID: buyLocID, SystemID: buySystemID},
+			},
+		},
+		buyByType: map[int32][]buyInfo{
+			typeID: {
+				{Price: 150, VolumeRemain: 1, LocationID: sellLocID, SystemID: sellSystemID},
+			},
+		},
+		sellOrders: asks,
+		buyOrders:  bids,
+		sellSideBuyDepthByType: map[int32]int64{
+			typeID: 1,
+		},
+		sellSideSellDepthByType: map[int32]int64{
+			typeID: 1,
+		},
+	}
+
+	bfs := map[int32]int{currentSys: 0}
+
+	limitedParams := ScanParams{
+		CurrentSystemID: currentSys,
+		CargoCapacity:   1_000_000,
+		MinMargin:       0.1,
+	}
+	limitedResults, err := scanner.calculateResults(limitedParams, idx, bfs, func(string) {})
+	if err != nil {
+		t.Fatalf("calculateResults(limited) error: %v", err)
+	}
+	if len(limitedResults) != 0 {
+		t.Fatalf("limited cargo should filter bulky item, got %d rows", len(limitedResults))
+	}
+
+	unlimitedParams := limitedParams
+	unlimitedParams.CargoCapacity = 0
+	unlimitedResults, err := scanner.calculateResults(unlimitedParams, idx, bfs, func(string) {})
+	if err != nil {
+		t.Fatalf("calculateResults(unlimited) error: %v", err)
+	}
+	if len(unlimitedResults) != 1 {
+		t.Fatalf("cargo=0 should disable cargo cap, got %d rows", len(unlimitedResults))
+	}
+	if unlimitedResults[0].UnitsToBuy != 1 {
+		t.Fatalf("unlimited units_to_buy = %d, want 1", unlimitedResults[0].UnitsToBuy)
+	}
+}
+
+func TestCalculateResults_CargoCapacityClampsQuantityWithoutDroppingRow(t *testing.T) {
+	u := graph.NewUniverse()
+	u.SetRegion(1, 10000002)
+	u.SetRegion(2, 10000002)
+	u.SetSecurity(1, 0.9)
+	u.SetSecurity(2, 0.9)
+	u.AddGate(1, 2)
+	u.AddGate(2, 1)
+
+	const (
+		typeID       = int32(77777)
+		buyLocID     = int64(300000000001)
+		sellLocID    = int64(300000000002)
+		currentSys   = int32(1)
+		buySystemID  = int32(1)
+		sellSystemID = int32(2)
+	)
+
+	scanner := &Scanner{
+		SDE: &sde.Data{
+			Universe: u,
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Alpha", RegionID: 10000002},
+				2: {ID: 2, Name: "Beta", RegionID: 10000002},
+			},
+			Types: map[int32]*sde.ItemType{
+				typeID: {ID: typeID, Name: "Cargo-Limited Item", Volume: 100},
+			},
+		},
+		ESI: esi.NewClient(nil),
+	}
+
+	asks := []esi.MarketOrder{
+		{TypeID: typeID, LocationID: buyLocID, SystemID: buySystemID, Price: 100, VolumeRemain: 10},
+	}
+	bids := []esi.MarketOrder{
+		{TypeID: typeID, LocationID: sellLocID, SystemID: sellSystemID, Price: 150, VolumeRemain: 10, IsBuyOrder: true},
+	}
+
+	idx := &scanIndex{
+		sellByType: map[int32][]sellInfo{
+			typeID: {
+				{Price: 100, VolumeRemain: 10, LocationID: buyLocID, SystemID: buySystemID},
+			},
+		},
+		buyByType: map[int32][]buyInfo{
+			typeID: {
+				{Price: 150, VolumeRemain: 10, LocationID: sellLocID, SystemID: sellSystemID},
+			},
+		},
+		sellOrders: asks,
+		buyOrders:  bids,
+		sellSideBuyDepthByType: map[int32]int64{
+			typeID: 10,
+		},
+		sellSideSellDepthByType: map[int32]int64{
+			typeID: 10,
+		},
+	}
+
+	params := ScanParams{
+		CurrentSystemID: currentSys,
+		CargoCapacity:   250, // 2 units max for volume=100
+		MinMargin:       0.1,
+	}
+	bfs := map[int32]int{currentSys: 0}
+
+	results, err := scanner.calculateResults(params, idx, bfs, func(string) {})
+	if err != nil {
+		t.Fatalf("calculateResults error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected row to survive cargo clamp, got %d rows", len(results))
+	}
+	if results[0].UnitsToBuy != 2 {
+		t.Fatalf("units_to_buy = %d, want 2", results[0].UnitsToBuy)
+	}
+}
+
 func TestHarmonicDailyShare_MonotoneAndBounded(t *testing.T) {
 	const daily = int64(10_000)
 	if got := harmonicDailyShare(0, 5); got != 0 {

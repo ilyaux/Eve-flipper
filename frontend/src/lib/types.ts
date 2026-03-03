@@ -350,6 +350,13 @@ export interface StationsResponse {
   system_id: number;
 }
 
+export interface SolarSystemInfo {
+  id: number;
+  name: string;
+  security: number;
+  region_id: number;
+}
+
 // Execution plan (slippage / fill curve)
 export interface DepthLevel {
   price: number;
@@ -394,6 +401,7 @@ export interface ExecutionPlanResult {
 
 export interface ScanParams {
   system_name: string;
+  ignored_system_ids?: number[];
   cargo_capacity: number;
   buy_radius: number;
   sell_radius: number;
@@ -452,6 +460,7 @@ export interface ScanParams {
 
 export interface AppConfig {
   system_name: string;
+  ignored_system_ids?: number[];
   cargo_capacity: number;
   buy_radius: number;
   sell_radius: number;

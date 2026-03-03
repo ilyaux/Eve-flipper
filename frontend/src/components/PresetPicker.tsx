@@ -10,6 +10,7 @@ import {
   importPresets,
   mapTabToPresetTab,
   getPresetApplyBase,
+  sanitizePresetParams,
   type SavedPreset,
   type BuiltinPreset,
 } from "@/lib/presets";
@@ -126,14 +127,22 @@ export function PresetPicker({ params, onApply, tab, builtinPresets, align = "le
     const presetParams = builtin?.params ?? custom?.params;
     if (!presetParams) return;
 
-    onApply({ ...params, ...getPresetApplyBase(tab), ...presetParams });
+    onApply({
+      ...params,
+      ...getPresetApplyBase(tab),
+      ...sanitizePresetParams(presetParams),
+    });
     autoAppliedRef.current = applyKey;
   }, [activeKey, activePresetId, builtinPresets, onApply, params, tab]);
 
   const handleApply = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (id: string, presetParams: Record<string, any>) => {
-      onApply({ ...params, ...getPresetApplyBase(tab), ...presetParams });
+      onApply({
+        ...params,
+        ...getPresetApplyBase(tab),
+        ...sanitizePresetParams(presetParams),
+      });
       setActivePresetId(id);
       autoAppliedRef.current = `${tab}:${id}`;
       setOpen(false);
@@ -155,7 +164,7 @@ export function PresetPicker({ params, onApply, tab, builtinPresets, align = "le
       id: nextPresetId(),
       name: saveName.trim(),
       tab: mapTabToPresetTab(tab),
-      params: { ...params },
+      params: sanitizePresetParams({ ...params }),
       createdAt: Date.now(),
     };
     saveCustomPreset(preset);
@@ -171,7 +180,10 @@ export function PresetPicker({ params, onApply, tab, builtinPresets, align = "le
     if (!activePresetId) return;
     const existing = customPresets.find((p) => p.id === activePresetId);
     if (!existing) return;
-    saveCustomPreset({ ...existing, params: { ...params } });
+    saveCustomPreset({
+      ...existing,
+      params: sanitizePresetParams({ ...params }),
+    });
     setCustomPresets(loadCustomPresets(tab));
     addToast(
       t("presetUpdated" as TranslationKey) || "Preset updated",
@@ -187,7 +199,7 @@ export function PresetPicker({ params, onApply, tab, builtinPresets, align = "le
     saveCustomPreset({
       ...existing,
       tab: mapTabToPresetTab(tab),
-      params: { ...params },
+      params: sanitizePresetParams({ ...params }),
     });
     setCustomPresets(loadCustomPresets(tab));
     setActivePresetId(id);

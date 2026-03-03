@@ -358,6 +358,7 @@ func resetExecutionDerivedFields(r *StationTrade) {
 type StationTradeParams struct {
 	StationIDs      map[int64]bool // nil or empty = all stations in region
 	AllowedSystems  map[int32]bool // optional: extra system scope for implicit structure inclusion
+	IgnoredSystems  map[int32]bool // optional: excluded systems (rows/orders from these systems are ignored)
 	RegionID        int32
 	MinMargin       float64
 	SalesTaxPercent float64
@@ -450,6 +451,9 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 			}
 		}
 		if isMarketDisabledType(o.TypeID) {
+			continue
+		}
+		if len(params.IgnoredSystems) > 0 && params.IgnoredSystems[o.SystemID] {
 			continue
 		}
 		fullRegionDepthByType[o.TypeID] += int64(o.VolumeRemain)

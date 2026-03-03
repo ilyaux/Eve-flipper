@@ -38,6 +38,7 @@ import type {
   RouteResult,
   ScanParams,
   ScanRecord,
+  SolarSystemInfo,
   StationAIChatRequest,
   StationAIChatResponse,
   StationAIStreamMessage,
@@ -185,6 +186,20 @@ export async function autocompleteRegion(query: string): Promise<string[]> {
   return data.regions ?? [];
 }
 
+export async function getSystemsList(
+  query?: string,
+  limit?: number,
+  signal?: AbortSignal,
+): Promise<SolarSystemInfo[]> {
+  const qp = new URLSearchParams();
+  if (query && query.trim() !== "") qp.set("q", query.trim());
+  if (limit != null && limit > 0) qp.set("limit", String(limit));
+  const qs = qp.toString();
+  const res = await fetch(`${BASE}/api/systems${qs ? `?${qs}` : ""}`, { signal });
+  const data = await handleResponse<{ systems?: SolarSystemInfo[] }>(res);
+  return data.systems ?? [];
+}
+
 export async function scan(
   params: ScanParams,
   onProgress: (msg: string) => void,
@@ -273,6 +288,7 @@ export async function findRoutes(
     `${BASE}/api/route/find`,
     {
       system_name: params.system_name,
+      ignored_system_ids: params.ignored_system_ids ?? [],
       target_system_name: params.route_target_system_name,
       cargo_capacity: params.cargo_capacity,
       min_margin: params.min_margin,
@@ -424,6 +440,7 @@ export async function scanStation(
     // Player structures
     include_structures?: boolean;
     structure_ids?: number[];
+    ignored_system_ids?: number[];
   },
   onProgress: (msg: string) => void,
   signal?: AbortSignal,

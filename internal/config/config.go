@@ -15,6 +15,7 @@ type WatchlistItem struct {
 // Persistence is handled by internal/db package.
 type Config struct {
 	SystemName           string  `json:"system_name"`
+	IgnoredSystemIDs     []int32 `json:"ignored_system_ids"`
 	CargoCapacity        float64 `json:"cargo_capacity"`
 	BuyRadius            int     `json:"buy_radius"`
 	SellRadius           int     `json:"sell_radius"`

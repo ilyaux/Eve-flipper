@@ -149,6 +149,7 @@ type RouteResult struct {
 // RouteParams holds the input parameters for multi-hop route search.
 type RouteParams struct {
 	SystemName       string
+	IgnoredSystemIDs []int32
 	TargetSystemName string
 	CargoCapacity    float64
 	MinMargin        float64
@@ -172,7 +173,8 @@ type RouteParams struct {
 // ScanParams holds the input parameters for radius and region scans.
 type ScanParams struct {
 	CurrentSystemID  int32
-	CargoCapacity    float64
+	IgnoredSystemIDs []int32
+	CargoCapacity    float64 // <=0 = unlimited (disable cargo cap)
 	BuyRadius        int
 	SellRadius       int
 	MinMargin        float64
@@ -220,6 +222,11 @@ type ScanParams struct {
 	// instead of TargetBuyOrderPrice (highest bid). Reflects listing a sell order
 	// rather than instantly hitting a buy order. Higher profit, higher risk.
 	SellOrderMode bool
+	// IncludeStructures keeps Upwell structure orders in scope.
+	IncludeStructures bool
+	// AccessToken is used for authenticated structure-market reads.
+	// Runtime-only: must never be persisted.
+	AccessToken string
 
 	// --- Contract-specific filters ---
 	MinContractPrice           float64 // Minimum contract price in ISK (0 = use default 10M)

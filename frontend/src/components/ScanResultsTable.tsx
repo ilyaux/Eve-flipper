@@ -27,6 +27,7 @@ import { useGlobalToast } from "./Toast";
 import { EmptyState, type EmptyReason } from "./EmptyState";
 import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
 import { handleEveUIError } from "@/lib/handleEveUIError";
+import { BatchBuilderPopup } from "./BatchBuilderPopup";
 
 const PAGE_SIZE = 100;
 const GROUP_PAGE_SIZE = 50; // rows shown per group before "Show all" button
@@ -77,6 +78,7 @@ interface Props {
   showRegions?: boolean;
   columnProfile?: "default" | "region_eveguru";
   isLoggedIn?: boolean;
+  cargoLimit?: number;
 }
 
 type ColumnDef = {
@@ -779,6 +781,7 @@ export function ScanResultsTable({
   showRegions = false,
   columnProfile = "default",
   isLoggedIn = false,
+  cargoLimit = 0,
 }: Props) {
   const { t } = useI18n();
   const emptyReason: EmptyReason = scanCompletedWithZero
@@ -906,6 +909,7 @@ export function ScanResultsTable({
   } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const [execPlanRow, setExecPlanRow] = useState<FlipResult | null>(null);
+  const [batchPlanRow, setBatchPlanRow] = useState<FlipResult | null>(null);
   const [dayDetailRow, setDayDetailRow] = useState<FlipResult | null>(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [filterSearch, setFilterSearch] = useState("");
@@ -2547,6 +2551,13 @@ export function ScanResultsTable({
               }
             />
             <ContextItem
+              label={t("buildBatch")}
+              onClick={() => {
+                setBatchPlanRow(contextMenu.row);
+                setContextMenu(null);
+              }}
+            />
+            <ContextItem
               label={t("copySystemAutopilot")}
               onClick={() => copyText(contextMenu.row.BuySystemName)}
             />
@@ -2920,6 +2931,14 @@ export function ScanResultsTable({
         sellBrokerFeePercent={sellBrokerFeePercent}
         buySalesTaxPercent={buySalesTaxPercent}
         sellSalesTaxPercent={sellSalesTaxPercent}
+      />
+
+      <BatchBuilderPopup
+        open={batchPlanRow !== null}
+        onClose={() => setBatchPlanRow(null)}
+        anchorRow={batchPlanRow}
+        rows={results}
+        defaultCargoM3={cargoLimit}
       />
     </div>
   );

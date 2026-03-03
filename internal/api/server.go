@@ -661,6 +661,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSetConfig)
 	mux.HandleFunc("POST /api/alerts/test", s.handleAlertsTest)
+	mux.HandleFunc("GET /api/systems", s.handleGetSystems)
 	mux.HandleFunc("GET /api/systems/autocomplete", s.handleAutocomplete)
 	mux.HandleFunc("GET /api/regions/autocomplete", s.handleRegionAutocomplete)
 	mux.HandleFunc("POST /api/scan", s.handleScan)
@@ -1164,6 +1165,72 @@ func (s *Server) stationCacheMetaForRegions(regionIDs map[int32]bool) stationCac
 	return meta
 }
 
+func mergeRegionSets(sets ...map[int32]bool) map[int32]bool {
+	out := make(map[int32]bool)
+	for _, set := range sets {
+		for regionID := range set {
+			if regionID > 0 {
+				out[regionID] = true
+			}
+		}
+	}
+	return out
+}
+
+func stationCacheMetaFromWindows(regionCount int, windows ...esi.OrderCacheWindow) stationCacheMeta {
+	meta := stationCacheMeta{Regions: regionCount}
+	now := time.Now()
+
+	var (
+		found       bool
+		minExpiry   time.Time
+		maxExpiry   time.Time
+		lastRefresh time.Time
+		entries     int
+	)
+
+	for _, window := range windows {
+		entries += window.Entries
+		if window.NextExpiryAt.IsZero() {
+			continue
+		}
+		if !found || window.NextExpiryAt.Before(minExpiry) {
+			minExpiry = window.NextExpiryAt
+		}
+		if !found || window.NextExpiryAt.After(maxExpiry) {
+			maxExpiry = window.NextExpiryAt
+		}
+		if window.LastRefreshAt.After(lastRefresh) {
+			lastRefresh = window.LastRefreshAt
+		}
+		found = true
+	}
+
+	meta.Entries = entries
+	if !found {
+		return meta
+	}
+
+	minTTL := int64(time.Until(minExpiry).Seconds())
+	maxTTL := int64(time.Until(maxExpiry).Seconds())
+	if minTTL < 0 {
+		minTTL = 0
+	}
+	if maxTTL < 0 {
+		maxTTL = 0
+	}
+
+	meta.CurrentRevision = minExpiry.Unix()
+	meta.MinTTLSec = minTTL
+	meta.MaxTTLSec = maxTTL
+	meta.Stale = now.After(minExpiry)
+	if !lastRefresh.IsZero() {
+		meta.LastRefreshAt = lastRefresh.UTC().Format(time.RFC3339)
+	}
+	meta.NextExpiryAt = minExpiry.UTC().Format(time.RFC3339)
+	return meta
+}
+
 // filterContractResultsMarketDisabled is a defense-in-depth guard:
 // even if upstream scan/history contained unsafe contracts, drop ones that include
 // market-disabled types (e.g. MPTC) before returning to UI.
@@ -1391,6 +1458,9 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := patch["system_name"]; ok {
 		json.Unmarshal(v, &cfg.SystemName)
 	}
+	if v, ok := patch["ignored_system_ids"]; ok {
+		json.Unmarshal(v, &cfg.IgnoredSystemIDs)
+	}
 	if v, ok := patch["cargo_capacity"]; ok {
 		json.Unmarshal(v, &cfg.CargoCapacity)
 	}
@@ -1504,6 +1574,17 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok := patch["opacity"]; ok {
 		json.Unmarshal(v, &cfg.Opacity)
+	}
+	if len(cfg.IgnoredSystemIDs) > 0 {
+		s.mu.RLock()
+		var systems map[int32]*sde.SolarSystem
+		if s.sdeData != nil {
+			systems = s.sdeData.Systems
+		}
+		s.mu.RUnlock()
+		if len(systems) > 0 {
+			cfg.IgnoredSystemIDs = normalizeIgnoredSystemIDs(systems, cfg.IgnoredSystemIDs)
+		}
 	}
 
 	// Validate bounds
@@ -1770,6 +1851,63 @@ func sendDiscordAlert(webhookURL, message string) error {
 	return nil
 }
 
+func (s *Server) handleGetSystems(w http.ResponseWriter, r *http.Request) {
+	type systemInfo struct {
+		ID       int32   `json:"id"`
+		Name     string  `json:"name"`
+		Security float64 `json:"security"`
+		RegionID int32   `json:"region_id"`
+	}
+	type systemsResponse struct {
+		Systems []systemInfo `json:"systems"`
+	}
+
+	if !s.isReady() {
+		writeJSON(w, systemsResponse{Systems: []systemInfo{}})
+		return
+	}
+
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	limit := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+
+	s.mu.RLock()
+	systems := s.sdeData.Systems
+	s.mu.RUnlock()
+
+	rows := make([]systemInfo, 0, len(systems))
+	for _, sys := range systems {
+		if sys == nil {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(sys.Name), query) {
+			continue
+		}
+		rows = append(rows, systemInfo{
+			ID:       sys.ID,
+			Name:     sys.Name,
+			Security: sys.Security,
+			RegionID: sys.RegionID,
+		})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Name == rows[j].Name {
+			return rows[i].ID < rows[j].ID
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+
+	writeJSON(w, systemsResponse{Systems: rows})
+}
+
 func (s *Server) handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	if q == "" || !s.isReady() {
@@ -1843,8 +1981,47 @@ func (s *Server) handleRegionAutocomplete(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string][]string{"regions": result})
 }
 
+func normalizeIgnoredSystemIDs(systems map[int32]*sde.SolarSystem, ids []int32) []int32 {
+	if len(ids) == 0 || len(systems) == 0 {
+		return nil
+	}
+	seen := make(map[int32]bool, len(ids))
+	out := make([]int32, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := systems[id]; !ok {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func ignoredSystemSet(systems map[int32]*sde.SolarSystem, ids []int32) map[int32]bool {
+	normalized := normalizeIgnoredSystemIDs(systems, ids)
+	if len(normalized) == 0 {
+		return nil
+	}
+	out := make(map[int32]bool, len(normalized))
+	for _, id := range normalized {
+		out[id] = true
+	}
+	return out
+}
+
 type scanRequest struct {
 	SystemName           string  `json:"system_name"`
+	IgnoredSystemIDs     []int32 `json:"ignored_system_ids"`
 	CargoCapacity        float64 `json:"cargo_capacity"`
 	BuyRadius            int     `json:"buy_radius"`
 	SellRadius           int     `json:"sell_radius"`
@@ -1899,6 +2076,7 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 
 	s.mu.RLock()
 	systemID, ok := s.sdeData.SystemByName[strings.ToLower(req.SystemName)]
+	ignoredSystemIDs := normalizeIgnoredSystemIDs(s.sdeData.Systems, req.IgnoredSystemIDs)
 
 	// Parse target region if specified.
 	var targetRegionID int32
@@ -1951,6 +2129,7 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 
 	return engine.ScanParams{
 		CurrentSystemID:            systemID,
+		IgnoredSystemIDs:           ignoredSystemIDs,
 		CargoCapacity:              req.CargoCapacity,
 		BuyRadius:                  req.BuyRadius,
 		SellRadius:                 req.SellRadius,
@@ -1990,6 +2169,7 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 		ExcludeRigsWithShip:        req.ExcludeRigsWithShip,
 		CategoryIDs:                req.CategoryIDs,
 		SellOrderMode:              req.SellOrderMode,
+		IncludeStructures:          req.IncludeStructures,
 	}, nil
 }
 
@@ -2054,6 +2234,61 @@ func (s *Server) regionScopeForFlipScan(params engine.ScanParams, multiRegion bo
 	return out
 }
 
+func (s *Server) flipScanRegionScopes(params engine.ScanParams, multiRegion bool) (map[int32]bool, map[int32]bool) {
+	buyRegions := make(map[int32]bool)
+	sellRegions := make(map[int32]bool)
+
+	// Source regions are used only in multi-region/regional-day flows.
+	if multiRegion && len(params.SourceRegionIDs) > 0 {
+		mergeRegionIDs(buyRegions, params.SourceRegionIDs)
+	} else {
+		mergeRegionSet(
+			buyRegions,
+			s.regionsWithinRadius(params.CurrentSystemID, params.BuyRadius, params.MinRouteSecurity),
+		)
+	}
+
+	if multiRegion && params.TargetRegionID > 0 {
+		sellRegions[params.TargetRegionID] = true
+	} else {
+		mergeRegionSet(
+			sellRegions,
+			s.regionsWithinRadius(params.CurrentSystemID, params.SellRadius, params.MinRouteSecurity),
+		)
+	}
+
+	return buyRegions, sellRegions
+}
+
+func (s *Server) stationCacheMetaForFlipScan(
+	params engine.ScanParams,
+	multiRegion bool,
+	includeSourceBuy bool,
+) stationCacheMeta {
+	buyRegions, sellRegions := s.flipScanRegionScopes(params, multiRegion)
+	regionUnion := mergeRegionSets(buyRegions, sellRegions)
+
+	if s == nil || s.esi == nil {
+		return stationCacheMeta{Regions: len(regionUnion)}
+	}
+
+	// Scanner dependencies:
+	// - sell orders are used from BOTH source (buy) and destination (sell) region sets
+	//   (destination sell-book is used for S2B/BfS and sell-order mode metrics).
+	// - buy orders are used from destination (sell) region set.
+	// - optionally, source-side buy orders are used when private-structure discovery is enabled.
+	sellTypeRegions := mergeRegionSets(buyRegions, sellRegions)
+	buyTypeRegions := mergeRegionSets(sellRegions)
+	if includeSourceBuy {
+		buyTypeRegions = mergeRegionSets(buyTypeRegions, buyRegions)
+	}
+
+	sellWindow := s.esi.OrderCacheWindow(mapRegionIDSet(sellTypeRegions), "sell")
+	buyWindow := s.esi.OrderCacheWindow(mapRegionIDSet(buyTypeRegions), "buy")
+
+	return stationCacheMetaFromWindows(len(regionUnion), sellWindow, buyWindow)
+}
+
 func (s *Server) regionScopeForContractScan(params engine.ScanParams) map[int32]bool {
 	// Contracts are sourced from buy-side radius but liquidation can depend on sell-side market context.
 	out := make(map[int32]bool)
@@ -2076,6 +2311,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
+	}
+	if req.IncludeStructures && s.sessions != nil {
+		if token, tokenErr := s.sessions.EnsureValidTokenForUser(s.sso, userID); tokenErr == nil {
+			params.AccessToken = token
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -2118,16 +2358,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		results = filterFlipResultsExcludeStructures(results)
 	}
 	results = filterFlipResultsMarketDisabled(results)
-	regionIDs := s.regionScopeForFlipScan(params, false)
-	for _, row := range results {
-		if row.BuyRegionID > 0 {
-			regionIDs[row.BuyRegionID] = true
-		}
-		if row.SellRegionID > 0 {
-			regionIDs[row.SellRegionID] = true
-		}
-	}
-	cacheMeta := s.stationCacheMetaForRegions(regionIDs)
+	cacheMeta := s.stationCacheMetaForFlipScan(
+		params,
+		false,
+		req.IncludeStructures && strings.TrimSpace(params.AccessToken) != "",
+	)
 
 	topProfit := 0.0
 	totalProfit := 0.0
@@ -2179,6 +2414,11 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
+	if req.IncludeStructures && s.sessions != nil {
+		if token, tokenErr := s.sessions.EnsureValidTokenForUser(s.sso, userID); tokenErr == nil {
+			params.AccessToken = token
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2220,16 +2460,11 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 		results = filterFlipResultsExcludeStructures(results)
 	}
 	results = filterFlipResultsMarketDisabled(results)
-	regionIDs := s.regionScopeForFlipScan(params, true)
-	for _, row := range results {
-		if row.BuyRegionID > 0 {
-			regionIDs[row.BuyRegionID] = true
-		}
-		if row.SellRegionID > 0 {
-			regionIDs[row.SellRegionID] = true
-		}
-	}
-	cacheMeta := s.stationCacheMetaForRegions(regionIDs)
+	cacheMeta := s.stationCacheMetaForFlipScan(
+		params,
+		true,
+		req.IncludeStructures && strings.TrimSpace(params.AccessToken) != "",
+	)
 
 	topProfit := 0.0
 	totalProfit := 0.0
@@ -2280,6 +2515,11 @@ func (s *Server) handleScanRegionalDay(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
+	}
+	if req.IncludeStructures && s.sessions != nil {
+		if token, tokenErr := s.sessions.EnsureValidTokenForUser(s.sso, userID); tokenErr == nil {
+			params.AccessToken = token
+		}
 	}
 	if params.TargetMarketSystemID <= 0 {
 		writeError(w, 400, "target_market_system is required for regional day trader scan")
@@ -2340,16 +2580,11 @@ func (s *Server) handleScanRegionalDay(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[API] ScanRegionalDay complete: hubs=%d items=%d rows=%d raw=%d in %dms",
 		len(hubs), totalItems, len(dayRows), len(results), durationMs)
 
-	regionIDs := s.regionScopeForFlipScan(params, true)
-	for _, row := range results {
-		if row.BuyRegionID > 0 {
-			regionIDs[row.BuyRegionID] = true
-		}
-		if row.SellRegionID > 0 {
-			regionIDs[row.SellRegionID] = true
-		}
-	}
-	cacheMeta := s.stationCacheMetaForRegions(regionIDs)
+	cacheMeta := s.stationCacheMetaForFlipScan(
+		params,
+		true,
+		req.IncludeStructures && strings.TrimSpace(params.AccessToken) != "",
+	)
 
 	topProfit := 0.0
 	totalProfit := 0.0
@@ -2706,6 +2941,7 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		SystemName           string  `json:"system_name"`
+		IgnoredSystemIDs     []int32 `json:"ignored_system_ids"`
 		TargetSystemName     string  `json:"target_system_name"`
 		CargoCapacity        float64 `json:"cargo_capacity"`
 		MinMargin            float64 `json:"min_margin"`
@@ -2756,10 +2992,16 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RLock()
 	scanner := s.scanner
+	var systems map[int32]*sde.SolarSystem
+	if s.sdeData != nil {
+		systems = s.sdeData.Systems
+	}
+	ignoredSystemIDs := normalizeIgnoredSystemIDs(systems, req.IgnoredSystemIDs)
 	s.mu.RUnlock()
 
 	params := engine.RouteParams{
 		SystemName:           req.SystemName,
+		IgnoredSystemIDs:     ignoredSystemIDs,
 		TargetSystemName:     req.TargetSystemName,
 		CargoCapacity:        req.CargoCapacity,
 		MinMargin:            req.MinMargin,
@@ -3063,7 +3305,8 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		StationID            int64   `json:"station_id"`  // 0 = all stations
 		RegionID             int32   `json:"region_id"`   // required
 		SystemName           string  `json:"system_name"` // for radius-based scan
-		Radius               int     `json:"radius"`      // 0 = single system
+		IgnoredSystemIDs     []int32 `json:"ignored_system_ids"`
+		Radius               int     `json:"radius"` // 0 = single system
 		MinMargin            float64 `json:"min_margin"`
 		SalesTaxPercent      float64 `json:"sales_tax_percent"`
 		BrokerFee            float64 `json:"broker_fee"`
@@ -3138,6 +3381,7 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 	stationIDs := make(map[int64]bool)
 	regionIDs := make(map[int32]bool)
 	allowedSystemsByRegion := make(map[int32]map[int32]bool)
+	ignoredSystems := ignoredSystemSet(sdeData.Systems, req.IgnoredSystemIDs)
 	historyLabel := ""
 	radiusMode := req.Radius > 0 && req.SystemName != ""
 	singleStationMode := !radiusMode && req.StationID > 0
@@ -3151,6 +3395,9 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		systems := sdeData.Universe.SystemsWithinRadius(systemID, req.Radius)
+		for ignoredID := range ignoredSystems {
+			delete(systems, ignoredID)
+		}
 		for _, st := range sdeData.Stations {
 			if _, inRange := systems[st.SystemID]; inRange {
 				stationIDs[st.ID] = true
@@ -3170,7 +3417,9 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		historyLabel = fmt.Sprintf("%s +%d jumps", req.SystemName, req.Radius)
 	} else if singleStationMode {
 		// Single station (NPC or structure)
-		stationIDs[req.StationID] = true
+		if st, ok := sdeData.Stations[req.StationID]; !(ok && ignoredSystems[st.SystemID]) {
+			stationIDs[req.StationID] = true
+		}
 		regionIDs[req.RegionID] = true
 		historyLabel = fmt.Sprintf("Station %d", req.StationID)
 	} else {
@@ -3208,6 +3457,7 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		params := engine.StationTradeParams{
 			StationIDs:           stationIDs,
 			AllowedSystems:       allowedSystemsByRegion[regionID],
+			IgnoredSystems:       ignoredSystems,
 			RegionID:             regionID,
 			MinMargin:            req.MinMargin,
 			SalesTaxPercent:      req.SalesTaxPercent,
@@ -3565,6 +3815,7 @@ func (s *Server) regionalDayParamsFromHistory(record *db.ScanRecord) (engine.Sca
 	}
 
 	params := engine.ScanParams{
+		IgnoredSystemIDs:       req.IgnoredSystemIDs,
 		CargoCapacity:          req.CargoCapacity,
 		BuyRadius:              req.BuyRadius,
 		SellRadius:             req.SellRadius,
@@ -3600,6 +3851,7 @@ func (s *Server) regionalDayParamsFromHistory(record *db.ScanRecord) (engine.Sca
 	if s.sdeData == nil {
 		return params, true
 	}
+	params.IgnoredSystemIDs = normalizeIgnoredSystemIDs(s.sdeData.Systems, req.IgnoredSystemIDs)
 
 	if rid, ok := s.sdeData.RegionByName[strings.ToLower(strings.TrimSpace(req.TargetRegion))]; ok && rid > 0 {
 		params.TargetRegionID = rid
@@ -5843,6 +6095,7 @@ func (s *Server) handleAuthStationCommand(w http.ResponseWriter, r *http.Request
 		StationID            int64   `json:"station_id"` // 0 = all stations
 		RegionID             int32   `json:"region_id"`
 		SystemName           string  `json:"system_name"`
+		IgnoredSystemIDs     []int32 `json:"ignored_system_ids"`
 		Radius               int     `json:"radius"`
 		MinMargin            float64 `json:"min_margin"`
 		SalesTaxPercent      float64 `json:"sales_tax_percent"`
@@ -5904,6 +6157,7 @@ func (s *Server) handleAuthStationCommand(w http.ResponseWriter, r *http.Request
 	stationIDs := make(map[int64]bool)
 	regionIDs := make(map[int32]bool)
 	allowedSystemsByRegion := make(map[int32]map[int32]bool)
+	ignoredSystems := ignoredSystemSet(sdeData.Systems, req.IgnoredSystemIDs)
 	historyLabel := ""
 	radiusMode := req.Radius > 0 && req.SystemName != ""
 	singleStationMode := !radiusMode && req.StationID > 0
@@ -5916,6 +6170,9 @@ func (s *Server) handleAuthStationCommand(w http.ResponseWriter, r *http.Request
 			return
 		}
 		systems := sdeData.Universe.SystemsWithinRadius(systemID, req.Radius)
+		for ignoredID := range ignoredSystems {
+			delete(systems, ignoredID)
+		}
 		for _, st := range sdeData.Stations {
 			if _, inRange := systems[st.SystemID]; inRange {
 				stationIDs[st.ID] = true
@@ -5934,7 +6191,9 @@ func (s *Server) handleAuthStationCommand(w http.ResponseWriter, r *http.Request
 		}
 		historyLabel = fmt.Sprintf("%s +%d jumps", req.SystemName, req.Radius)
 	} else if singleStationMode {
-		stationIDs[req.StationID] = true
+		if st, ok := sdeData.Stations[req.StationID]; !(ok && ignoredSystems[st.SystemID]) {
+			stationIDs[req.StationID] = true
+		}
 		regionIDs[req.RegionID] = true
 		historyLabel = fmt.Sprintf("Station %d", req.StationID)
 	} else {
@@ -5974,6 +6233,7 @@ func (s *Server) handleAuthStationCommand(w http.ResponseWriter, r *http.Request
 		params := engine.StationTradeParams{
 			StationIDs:           stationIDs,
 			AllowedSystems:       allowedSystemsByRegion[regionID],
+			IgnoredSystems:       ignoredSystems,
 			RegionID:             regionID,
 			MinMargin:            req.MinMargin,
 			SalesTaxPercent:      req.SalesTaxPercent,

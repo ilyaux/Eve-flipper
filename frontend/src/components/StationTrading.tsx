@@ -43,6 +43,7 @@ import {
 import { SystemAutocomplete } from "./SystemAutocomplete";
 import { PresetPicker } from "./PresetPicker";
 import { StationAIAssistant } from "./StationAIAssistant";
+import { SystemBlacklistButton } from "./SystemBlacklistButton";
 import {
   STATION_BUILTIN_PRESETS,
   type StationTradingSettings,
@@ -356,9 +357,12 @@ export function StationTrading({
   const [results, setResults] = useState<StationTrade[]>([]);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState("");
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [loadingStations, setLoadingStations] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scanInFlightRef = useRef(false);
+  const autoRefreshSignatureRef = useRef<string>("");
+  const autoRefreshLastRunRef = useRef<number>(0);
 
   // System-level metadata (always available even with no NPC stations)
   const [systemRegionId, setSystemRegionId] = useState<number>(0);
@@ -985,6 +989,7 @@ export function StationTrading({
     try {
       const scanParams: Parameters<typeof scanStation>[0] = {
         min_margin: minMargin,
+        ignored_system_ids: params.ignored_system_ids ?? [],
         sales_tax_percent: splitTradeFees ? sellSalesTaxPercent : salesTaxPercent,
         broker_fee: splitTradeFees ? sellBrokerFeePercent : brokerFee,
         cts_profile: ctsProfile,
@@ -1157,6 +1162,30 @@ export function StationTrading({
     refreshHiddenStates,
     t,
   ]);
+
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+    const CHECK_INTERVAL = 15_000;
+    const COOLDOWN_MS = 90_000;
+    const timer = window.setInterval(() => {
+      if (scanning || scanInFlightRef.current) return;
+      if (!canScan) return;
+      if (!cacheMeta?.nextExpiryAt) return;
+      if (Date.now() < cacheMeta.nextExpiryAt) return;
+
+      const signature = `${cacheMeta.currentRevision}:${cacheMeta.nextExpiryAt}`;
+      const now = Date.now();
+      const sameSnapshot = autoRefreshSignatureRef.current === signature;
+      if (sameSnapshot && now - autoRefreshLastRunRef.current < COOLDOWN_MS) {
+        return;
+      }
+
+      autoRefreshSignatureRef.current = signature;
+      autoRefreshLastRunRef.current = now;
+      void handleScan();
+    }, CHECK_INTERVAL);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshEnabled, cacheMeta, canScan, handleScan, scanning]);
 
   const sorted = useMemo(() => {
     const copy = [...results];
@@ -1824,6 +1853,16 @@ export function StationTrading({
                       onChange={(v) => onChange?.({ ...params, system_name: v })}
                       showLocationButton={true}
                       isLoggedIn={isLoggedIn}
+                      extraActionSlots={1}
+                      extraAction={
+                        <SystemBlacklistButton
+                          compact
+                          value={params.ignored_system_ids ?? []}
+                          onChange={(ids) =>
+                            onChange?.({ ...params, ignored_system_ids: ids })
+                          }
+                        />
+                      }
                     />
                   </SettingsField>
 
@@ -2161,7 +2200,22 @@ export function StationTrading({
           </div>
 
           {/* Scan button inside settings */}
-          <div className="mt-3 pt-3 border-t border-eve-border/30 flex justify-end">
+          <div className="mt-3 pt-3 border-t border-eve-border/30 flex items-center justify-between gap-3">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-eve-dim hover:text-eve-text transition-colors text-xs">
+              <input
+                type="checkbox"
+                checked={autoRefreshEnabled}
+                onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+                className="accent-eve-accent"
+              />
+              Auto-refresh
+              {autoRefreshEnabled && (
+                <span className="inline-flex items-center gap-1 text-eve-accent">
+                  <span className="w-1.5 h-1.5 rounded-full bg-eve-accent animate-pulse" />
+                  active
+                </span>
+              )}
+            </label>
             <button
               onClick={handleScan}
               disabled={!canScan}

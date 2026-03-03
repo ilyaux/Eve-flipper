@@ -68,8 +68,20 @@ const PRESET_TAB_SET = new Set<PresetTab>([
   "plex",
 ]);
 
+const USER_BOUND_PRESET_KEYS = new Set<string>([
+  "ignored_system_ids",
+]);
+
 function isPresetTab(value: unknown): value is PresetTab {
   return typeof value === "string" && PRESET_TAB_SET.has(value as PresetTab);
+}
+
+export function sanitizePresetParams(params: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = { ...params };
+  for (const key of USER_BOUND_PRESET_KEYS) {
+    if (key in out) delete out[key];
+  }
+  return out;
 }
 
 const defaultScanPresetParams = {
@@ -220,13 +232,13 @@ export const BUILTIN_PRESETS: BuiltinPreset[] = [
     tab: "region",
     params: {
       ...defaultScanPresetParams,
-      cargo_capacity: 999_999,
+      cargo_capacity: 0,
       min_margin: 15,
       min_item_profit: 15_000_000,
       min_period_roi: 0,
       min_demand_per_day: 3,
       purchase_demand_days: 0.5,
-      max_dos: 180,
+      max_dos: 0,
       avg_price_period: 30,
       shipping_cost_per_m3_jump: 0,
       min_route_security: 0.45,
@@ -527,7 +539,7 @@ function loadAllCustomPresets(): SavedPreset[] {
       const name = typeof item.name === "string" ? item.name.trim() : "";
       const params =
         item.params && typeof item.params === "object" && !Array.isArray(item.params)
-          ? { ...item.params }
+          ? sanitizePresetParams(item.params as Record<string, any>)
           : null;
       if (!id || !name || !params) {
         changed = true;
@@ -609,7 +621,7 @@ export function importPresets(
       const name = typeof item.name === "string" ? item.name.trim() : "";
       const params =
         item.params && typeof item.params === "object" && !Array.isArray(item.params)
-          ? { ...item.params }
+          ? sanitizePresetParams(item.params as Record<string, any>)
           : null;
       if (!id || !name || !params) continue;
 

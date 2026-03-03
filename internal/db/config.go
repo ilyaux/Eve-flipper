@@ -42,6 +42,12 @@ func (d *DB) LoadConfigForUser(userID string) *config.Config {
 	if v, ok := m["system_name"]; ok {
 		cfg.SystemName = v
 	}
+	if v, ok := m["ignored_system_ids"]; ok {
+		var ids []int32
+		if err := json.Unmarshal([]byte(v), &ids); err == nil {
+			cfg.IgnoredSystemIDs = ids
+		}
+	}
 	if v, ok := m["cargo_capacity"]; ok {
 		cfg.CargoCapacity, _ = strconv.ParseFloat(v, 64)
 	}
@@ -191,6 +197,10 @@ func (d *DB) SaveConfigForUser(userID string, cfg *config.Config) error {
 	if b, err := json.Marshal(cfg.SourceRegions); err == nil {
 		sourceRegionsJSON = string(b)
 	}
+	ignoredSystemsJSON := "[]"
+	if b, err := json.Marshal(cfg.IgnoredSystemIDs); err == nil {
+		ignoredSystemsJSON = string(b)
+	}
 	categoryIDsJSON := "[]"
 	if b, err := json.Marshal(cfg.CategoryIDs); err == nil {
 		categoryIDsJSON = string(b)
@@ -198,6 +208,7 @@ func (d *DB) SaveConfigForUser(userID string, cfg *config.Config) error {
 
 	pairs := map[string]string{
 		"system_name":               cfg.SystemName,
+		"ignored_system_ids":        ignoredSystemsJSON,
 		"cargo_capacity":            fmt.Sprintf("%g", cfg.CargoCapacity),
 		"buy_radius":                strconv.Itoa(cfg.BuyRadius),
 		"sell_radius":               strconv.Itoa(cfg.SellRadius),

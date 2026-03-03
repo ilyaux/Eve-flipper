@@ -205,6 +205,26 @@ func TestBuildRegionalDayTrader_PurchaseUnitsBehaviorByRevenueMode(t *testing.T)
 			t.Fatalf("purchase_units = %d, want 38 in sell-order mode", got)
 		}
 	})
+
+	t.Run("sell_order_mode_respects_cargo_capacity", func(t *testing.T) {
+		hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(
+			ScanParams{
+				AvgPricePeriod:     14,
+				PurchaseDemandDays: 0.5,
+				SellOrderMode:      true,
+				CargoCapacity:      50_000, // volume=5000 => max 10 units
+			},
+			flips,
+			nil,
+			nil,
+		)
+		if len(hubs) != 1 || totalItems != 1 {
+			t.Fatalf("unexpected shape: hubs=%d items=%d", len(hubs), totalItems)
+		}
+		if got := hubs[0].Items[0].PurchaseUnits; got != 10 {
+			t.Fatalf("purchase_units = %d, want 10 with cargo cap in sell-order mode", got)
+		}
+	})
 }
 
 func TestBuildRegionalDayTrader_MinItemProfitFiltersRows(t *testing.T) {
@@ -921,7 +941,7 @@ func TestBuildRegionalDayTrader_RejectsExtremeMicroSourceEvenWithHistory(t *test
 	}
 }
 
-func TestBuildRegionalDayTrader_DefaultDOSGuardrailApplies(t *testing.T) {
+func TestBuildRegionalDayTrader_MaxDOSBehavior(t *testing.T) {
 	scanner := &Scanner{
 		SDE: &sde.Data{
 			Systems: map[int32]*sde.SolarSystem{
@@ -957,10 +977,24 @@ func TestBuildRegionalDayTrader_DefaultDOSGuardrailApplies(t *testing.T) {
 		},
 	}
 
-	hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(ScanParams{}, flips, nil, nil)
-	if len(hubs) != 0 || totalItems != 0 {
-		t.Fatalf("expected default DOS guardrail to filter row, got hubs=%d items=%d", len(hubs), totalItems)
-	}
+	t.Run("max_dos_zero_disables_filter", func(t *testing.T) {
+		hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(ScanParams{}, flips, nil, nil)
+		if len(hubs) != 1 || totalItems != 1 {
+			t.Fatalf("expected row to pass when max_dos=0, got hubs=%d items=%d", len(hubs), totalItems)
+		}
+	})
+
+	t.Run("positive_max_dos_filters_high_dos", func(t *testing.T) {
+		hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(
+			ScanParams{MaxDOS: 365},
+			flips,
+			nil,
+			nil,
+		)
+		if len(hubs) != 0 || totalItems != 0 {
+			t.Fatalf("expected row to be filtered by max_dos=365, got hubs=%d items=%d", len(hubs), totalItems)
+		}
+	})
 }
 
 // ── extractLastNAvgPrices ────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { autocomplete, getCharacterLocation, getStations } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
@@ -13,9 +13,22 @@ interface Props {
   includeStructures?: boolean;
   /** Callback when structure toggle changes */
   onIncludeStructuresChange?: (v: boolean) => void;
+  /** Optional extra action button rendered with right-side icons */
+  extraAction?: ReactNode;
+  /** Number of icon slots occupied by extraAction (for input right padding) */
+  extraActionSlots?: number;
 }
 
-export function SystemAutocomplete({ value, onChange, showLocationButton = true, isLoggedIn = false, includeStructures, onIncludeStructuresChange }: Props) {
+export function SystemAutocomplete({
+  value,
+  onChange,
+  showLocationButton = true,
+  isLoggedIn = false,
+  includeStructures,
+  onIncludeStructuresChange,
+  extraAction,
+  extraActionSlots = 0,
+}: Props) {
   const { t } = useI18n();
   const [query, setQuery] = useState(value);
   const [locationLoading, setLocationLoading] = useState(false);
@@ -134,7 +147,8 @@ export function SystemAutocomplete({ value, onChange, showLocationButton = true,
 
   const showLocationBtn = showLocationButton && isLoggedIn;
   const showStructureBtn = isLoggedIn && onIncludeStructuresChange != null;
-  const btnCount = (showLocationBtn ? 1 : 0) + (showStructureBtn ? 1 : 0);
+  const btnCount =
+    (showLocationBtn ? 1 : 0) + (showStructureBtn ? 1 : 0) + extraActionSlots;
 
   return (
     <div ref={containerRef} className="relative">
@@ -152,6 +166,7 @@ export function SystemAutocomplete({ value, onChange, showLocationButton = true,
         style={{ paddingRight: btnCount > 0 ? `${btnCount * 24 + 4}px` : undefined }}
       />
       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+        {extraAction}
         {showStructureBtn && (
           <button
             type="button"

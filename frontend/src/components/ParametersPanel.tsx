@@ -4,6 +4,7 @@ import { RegionAutocomplete } from "./RegionAutocomplete";
 import { useI18n } from "@/lib/i18n";
 import { TabHelp } from "./TabHelp";
 import { PresetPicker } from "./PresetPicker";
+import { SystemBlacklistButton } from "./SystemBlacklistButton";
 import { getPresetsForTab } from "@/lib/presets";
 import { getStations, getStructures, getCharacterInfo } from "@/lib/api";
 import type { ScanParams, StationInfo } from "@/lib/types";
@@ -72,6 +73,8 @@ const MAJOR_HUB_SOURCE_REGIONS = [
   "Metropolis",
   "Heimatar",
 ] as const;
+
+const CARGO_INPUT_MAX = 1_000_000_000;
 
 type SourceRegionMode = "major_hubs" | "radius" | "single_region";
 
@@ -462,7 +465,19 @@ export function ParametersPanel({
                       value={params.target_market_system ?? ""}
                       onChange={(v) => onChange({ ...params, target_market_system: v, target_market_location_id: 0 })}
                       showLocationButton={false}
-                      isLoggedIn={false}
+                      isLoggedIn={isLoggedIn}
+                      includeStructures={params.include_structures}
+                      onIncludeStructuresChange={(v) =>
+                        onChange({ ...params, include_structures: v, target_market_location_id: 0 })
+                      }
+                      extraActionSlots={1}
+                      extraAction={
+                        <SystemBlacklistButton
+                          compact
+                          value={params.ignored_system_ids ?? []}
+                          onChange={(ids) => set("ignored_system_ids", ids)}
+                        />
+                      }
                     />
                   </Field>
                   <Field label={t("targetMarketplaceLocation")} hint={t("targetMarketplaceLocationHint")}>
@@ -500,7 +515,7 @@ export function ParametersPanel({
                     </select>
                   </Field>
                   <Field label={t("paramsCargo")}>
-                    <NumberInput value={params.cargo_capacity} onChange={(v) => set("cargo_capacity", v)} min={1} max={1000000} />
+                    <NumberInput value={params.cargo_capacity} onChange={(v) => set("cargo_capacity", v)} min={0} max={CARGO_INPUT_MAX} />
                   </Field>
                 </div>
               </div>
@@ -760,6 +775,14 @@ export function ParametersPanel({
                     isLoggedIn={isLoggedIn}
                     includeStructures={params.include_structures}
                     onIncludeStructuresChange={(v) => set("include_structures", v)}
+                    extraActionSlots={1}
+                    extraAction={
+                      <SystemBlacklistButton
+                        compact
+                        value={params.ignored_system_ids ?? []}
+                        onChange={(ids) => set("ignored_system_ids", ids)}
+                      />
+                    }
                   />
                 </Field>
 
@@ -768,8 +791,8 @@ export function ParametersPanel({
                     <NumberInput
                       value={params.cargo_capacity}
                       onChange={(v) => set("cargo_capacity", v)}
-                      min={1}
-                      max={1000000}
+                      min={0}
+                      max={CARGO_INPUT_MAX}
                     />
                   </Field>
                 )}
