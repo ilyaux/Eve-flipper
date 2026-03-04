@@ -10,6 +10,7 @@ It combines live ESI order books, historical market behavior, and execution-awar
 [![Release](https://img.shields.io/github/v/release/ilyaux/Eve-flipper)](https://github.com/ilyaux/Eve-flipper/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/ilyaux/Eve-flipper/total)](https://github.com/ilyaux/Eve-flipper/releases)
 [![Last Commit](https://img.shields.io/github/last-commit/ilyaux/Eve-flipper)](https://github.com/ilyaux/Eve-flipper/commits/master)
+[![GitHub clones (last 14 days)](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=Clones%20(14d)&query=$.count&suffix=%20total&url=https%3A%2F%2Fgithub.com%2Filyaux%2FEve-flipper%2Fgraphs%2Ftraffic-clones)](https://github.com/ilyaux/Eve-flipper/graphs/traffic)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white)](https://discord.gg/rnR2bw6XXX)
 
 ## What It Includes
