@@ -76,6 +76,19 @@ func filterSystemDistanceMap(systems map[int32]int, ignored map[int32]bool) map[
 	return filtered
 }
 
+func (s *Scanner) resolveStructureSystemID(locationID int64, fallbackSystemID int32) int32 {
+	if fallbackSystemID > 0 {
+		return fallbackSystemID
+	}
+	if !isPlayerStructureLocationID(locationID) || s == nil || s.ESI == nil {
+		return fallbackSystemID
+	}
+	if sid, ok := s.ESI.StructureSystemID(locationID); ok {
+		return sid
+	}
+	return fallbackSystemID
+}
+
 // Scan finds profitable flip opportunities based on the given parameters.
 func (s *Scanner) Scan(params ScanParams, progress func(string)) ([]FlipResult, error) {
 	progress("Finding systems within radius...")
@@ -293,7 +306,11 @@ func (s *Scanner) fetchOrdersStream(
 			// Filter to valid systems
 			filtered := make([]esi.MarketOrder, 0, len(orders)/2)
 			for _, o := range orders {
-				if _, ok := validSystems[o.SystemID]; ok {
+				resolvedSystemID := s.resolveStructureSystemID(o.LocationID, o.SystemID)
+				if resolvedSystemID > 0 && resolvedSystemID != o.SystemID {
+					o.SystemID = resolvedSystemID
+				}
+				if _, ok := validSystems[resolvedSystemID]; ok {
 					filtered = append(filtered, o)
 				}
 			}
@@ -327,6 +344,10 @@ func (s *Scanner) fetchAndIndex(
 	if enablePrivateStructureFetch {
 		// Source-side buy orders help discover structure IDs when source sell book is hidden in region endpoint.
 		sourceBuyCh = s.fetchOrdersStream(buyRegions, "buy", buySystems)
+	} else if params.IncludeStructures {
+		log.Printf(
+			"[DEBUG] fetchAndIndex: include_structures=true but access token is missing; private structure sell fetch disabled",
+		)
 	}
 
 	idx := &scanIndex{
@@ -363,9 +384,13 @@ func (s *Scanner) fetchAndIndex(
 					Price: o.Price, VolumeRemain: o.VolumeRemain,
 					LocationID: o.LocationID, SystemID: o.SystemID,
 				})
-				if enablePrivateStructureFetch && isPlayerStructureLocationID(o.LocationID) && o.SystemID > 0 {
+				if enablePrivateStructureFetch && isPlayerStructureLocationID(o.LocationID) {
+					systemID := s.resolveStructureSystemID(o.LocationID, o.SystemID)
 					sourceStructureMu.Lock()
-					sourceStructureSystemIDs[o.LocationID] = o.SystemID
+					prev := sourceStructureSystemIDs[o.LocationID]
+					if prev <= 0 || systemID > 0 {
+						sourceStructureSystemIDs[o.LocationID] = systemID
+					}
 					sourceStructureMu.Unlock()
 				}
 			}
@@ -426,9 +451,13 @@ func (s *Scanner) fetchAndIndex(
 			defer wg.Done()
 			for batch := range sourceBuyCh {
 				for _, o := range batch {
-					if isPlayerStructureLocationID(o.LocationID) && o.SystemID > 0 {
+					if isPlayerStructureLocationID(o.LocationID) {
+						systemID := s.resolveStructureSystemID(o.LocationID, o.SystemID)
 						sourceStructureMu.Lock()
-						sourceStructureSystemIDs[o.LocationID] = o.SystemID
+						prev := sourceStructureSystemIDs[o.LocationID]
+						if prev <= 0 || systemID > 0 {
+							sourceStructureSystemIDs[o.LocationID] = systemID
+						}
 						sourceStructureMu.Unlock()
 					}
 				}
@@ -438,6 +467,12 @@ func (s *Scanner) fetchAndIndex(
 
 	wg.Wait()
 
+	if enablePrivateStructureFetch {
+		log.Printf(
+			"[DEBUG] fetchAndIndex: discovered %d source structure candidate(s) for private sell fetch",
+			len(sourceStructureSystemIDs),
+		)
+	}
 	if enablePrivateStructureFetch && len(sourceStructureSystemIDs) > 0 {
 		s.mergeSourceStructureSellOrders(idx, sourceStructureSystemIDs, buySystems, params.AccessToken)
 	}
@@ -493,7 +528,7 @@ func (s *Scanner) mergeSourceStructureSellOrders(
 	out := make(chan fetchResult, len(structureIDs))
 	var wg sync.WaitGroup
 	for _, structureID := range structureIDs {
-		systemID := sourceStructureSystemIDs[structureID]
+		systemID := s.resolveStructureSystemID(structureID, sourceStructureSystemIDs[structureID])
 		wg.Add(1)
 		go func(sid int64, sysID int32) {
 			defer wg.Done()
@@ -516,6 +551,12 @@ func (s *Scanner) mergeSourceStructureSellOrders(
 				if o.SystemID <= 0 {
 					o.SystemID = sysID
 				}
+				if o.SystemID <= 0 {
+					o.SystemID = s.resolveStructureSystemID(sid, o.SystemID)
+				}
+				if o.SystemID <= 0 {
+					continue
+				}
 				if _, ok := buySystems[o.SystemID]; !ok {
 					continue
 				}
@@ -528,11 +569,15 @@ func (s *Scanner) mergeSourceStructureSellOrders(
 	close(out)
 
 	added := 0
+	fetched := 0
+	failed := 0
 	for item := range out {
 		if item.err != nil {
 			log.Printf("[DEBUG] mergeSourceStructureSellOrders: structure %d fetch failed: %v", item.structureID, item.err)
+			failed++
 			continue
 		}
+		fetched++
 		for _, o := range item.orders {
 			if o.OrderID > 0 {
 				if seenOrderIDs[o.OrderID] {
@@ -549,20 +594,18 @@ func (s *Scanner) mergeSourceStructureSellOrders(
 			added++
 		}
 	}
-
-	if added <= 0 {
-		return
-	}
-
-	for tid, sells := range idx.sellByType {
-		for i := range sells {
-			sells[i].OrderCount = idx.sellCounts[locKey{tid, sells[i].LocationID}]
+	if added > 0 {
+		for tid, sells := range idx.sellByType {
+			for i := range sells {
+				sells[i].OrderCount = idx.sellCounts[locKey{tid, sells[i].LocationID}]
+			}
 		}
 	}
-
 	log.Printf(
-		"[DEBUG] mergeSourceStructureSellOrders: added %d source-side sell orders from %d structure(s)",
+		"[DEBUG] mergeSourceStructureSellOrders: added=%d fetched=%d failed=%d candidates=%d",
 		added,
+		fetched,
+		failed,
 		len(structureIDs),
 	)
 }

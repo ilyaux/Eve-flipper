@@ -2432,8 +2432,14 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 	scanner := s.scanner
 	s.mu.RUnlock()
 
-	log.Printf("[API] ScanMultiRegion starting: system=%d, cargo=%.0f, buyR=%d, sellR=%d",
-		params.CurrentSystemID, params.CargoCapacity, params.BuyRadius, params.SellRadius)
+	log.Printf("[API] ScanMultiRegion starting: system=%d, cargo=%.0f, buyR=%d, sellR=%d, include_structures=%t, has_token=%t",
+		params.CurrentSystemID,
+		params.CargoCapacity,
+		params.BuyRadius,
+		params.SellRadius,
+		req.IncludeStructures,
+		strings.TrimSpace(params.AccessToken) != "",
+	)
 
 	startTime := time.Now()
 
@@ -2544,8 +2550,15 @@ func (s *Server) handleScanRegionalDay(w http.ResponseWriter, r *http.Request) {
 	scanner := s.scanner
 	s.mu.RUnlock()
 
-	log.Printf("[API] ScanRegionalDay starting: system=%d, cargo=%.0f, buyR=%d, targetRegion=%d, period=%d",
-		params.CurrentSystemID, params.CargoCapacity, params.BuyRadius, params.TargetRegionID, params.AvgPricePeriod)
+	log.Printf("[API] ScanRegionalDay starting: system=%d, cargo=%.0f, buyR=%d, targetRegion=%d, period=%d, include_structures=%t, has_token=%t",
+		params.CurrentSystemID,
+		params.CargoCapacity,
+		params.BuyRadius,
+		params.TargetRegionID,
+		params.AvgPricePeriod,
+		req.IncludeStructures,
+		strings.TrimSpace(params.AccessToken) != "",
+	)
 
 	startTime := time.Now()
 
