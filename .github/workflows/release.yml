@@ -98,7 +98,7 @@ jobs:
             ext: ""
             cgo: "1"
             windows_gui: "0"
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             goos: linux
             goarch: arm64
             ext: ""
