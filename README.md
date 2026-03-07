@@ -52,7 +52,7 @@ Download the latest build:
 
 Release asset naming:
 - Classic binary: `eve-flipper-windows-amd64.exe` (and `linux/darwin` variants)
-- Wails desktop binaries: `eve-flipper-wails-windows-amd64.exe`, `eve-flipper-wails-linux-amd64`, `eve-flipper-wails-darwin-arm64`
+- Wails desktop binaries: `eve-flipper-wails-windows-amd64.exe`, `eve-flipper-wails-linux-amd64`, `eve-flipper-wails-linux-arm64`, `eve-flipper-wails-darwin-amd64`, `eve-flipper-wails-darwin-arm64`
 
 Run the binary and open:
 - `http://127.0.0.1:13370`
