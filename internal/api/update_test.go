@@ -45,21 +45,41 @@ func TestSelectReleaseAsset(t *testing.T) {
 		{Name: "eve-flipper-linux-amd64"},
 		{Name: "eve-flipper-linux-arm64"},
 		{Name: "eve-flipper-windows-amd64.exe"},
+		{Name: "eve-flipper-wails-windows-amd64.exe"},
 	}
 
-	got := selectReleaseAsset(assets, "windows", "amd64")
+	got := selectReleaseAsset(assets, "windows", "amd64", "classic")
 	if got == nil || got.Name != "eve-flipper-windows-amd64.exe" {
 		t.Fatalf("windows asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "linux", "arm64")
+	got = selectReleaseAsset(assets, "linux", "arm64", "classic")
 	if got == nil || got.Name != "eve-flipper-linux-arm64" {
 		t.Fatalf("linux arm64 asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "darwin", "amd64")
+	got = selectReleaseAsset(assets, "darwin", "amd64", "classic")
 	if got != nil {
 		t.Fatalf("expected nil for darwin/amd64, got %#v", got)
+	}
+}
+
+func TestSelectReleaseAssetWailsFlavor(t *testing.T) {
+	t.Parallel()
+
+	assets := []githubReleaseAsset{
+		{Name: "eve-flipper-windows-amd64.exe"},
+		{Name: "eve-flipper-wails-windows-amd64.exe"},
+	}
+
+	got := selectReleaseAsset(assets, "windows", "amd64", "wails")
+	if got == nil || got.Name != "eve-flipper-wails-windows-amd64.exe" {
+		t.Fatalf("wails windows asset mismatch: %#v", got)
+	}
+
+	got = selectReleaseAsset(assets[:1], "windows", "amd64", "wails")
+	if got != nil {
+		t.Fatalf("expected nil when wails asset missing, got %#v", got)
 	}
 }
 

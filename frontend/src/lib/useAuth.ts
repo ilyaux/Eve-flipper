@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteAuthCharacter, getAuthStatus, getLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
+import { deleteAuthCharacter, getAuthStatus, getDesktopLoginUrl, getLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
 import type { AuthStatus } from "./types";
 
 interface UseAuthReturn {
@@ -94,17 +94,31 @@ export function useAuth(): UseAuthReturn {
     const baselineFingerprint = authFingerprint(baseline);
     const wasLoggedIn = baseline.logged_in;
     const baseUrl = getLoginUrl();
-    // Detect Tauri runtime
-    const isTauri = !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-    if (isTauri) {
-      // Pass ?desktop=1 so the backend knows to show a "close tab" page
-      // instead of redirecting back to /
-      const url = baseUrl + "?desktop=1";
+    const runtime = window as unknown as {
+      __TAURI_INTERNALS__?: unknown;
+      runtime?: { BrowserOpenURL?: (url: string) => void };
+    };
+    // Detect desktop runtimes
+    const isTauri = !!runtime.__TAURI_INTERNALS__;
+    const isWails = typeof runtime.runtime?.BrowserOpenURL === "function";
+    if (isTauri || isWails) {
+      // Request auth URL from the in-app webview first so state is bound to
+      // the same user scope as polling /api/auth/status.
+      let url = "";
       try {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(url);
+        url = await getDesktopLoginUrl();
+        if (isTauri) {
+          const { openUrl } = await import("@tauri-apps/plugin-opener");
+          await openUrl(url);
+        } else {
+          runtime.runtime?.BrowserOpenURL?.(url);
+        }
       } catch {
-        // Fallback if plugin fails
+        if (!url) {
+          // Legacy fallback path (may not sync user scope in desktop mode).
+          url = `${baseUrl}?desktop=1`;
+        }
+        // Fallback if opener bridge fails
         window.open(url, "_blank");
       }
     } else {
@@ -113,7 +127,7 @@ export function useAuth(): UseAuthReturn {
       window.location.href = baseUrl;
       return;
     }
-    // Start polling for auth completion (Tauri only)
+    // Start polling for auth completion (desktop only)
     // Clear any previous polling first
     clearInterval(loginPollRef.current);
     clearTimeout(loginTimeoutRef.current);

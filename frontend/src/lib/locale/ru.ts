@@ -713,7 +713,7 @@ export const ru = {
     cacheRebooted: "Кэш сброшен: {count} записей",
     cacheRebootFailed: "Сбой сброса кэша",
     cacheRebootRescanHint: "Запусти скан снова, чтобы получить свежие ордера.",
-    cacheStaleHint: "Рыночный кэш устарел. Сбрось кэш и пересканируй.",
+    cacheStaleHint: "Рыночный кэш устарел — сбрось кэш и запусти новый скан для получения свежих цен.",
     hiddenStateSaveFailed: "Не удалось сохранить скрытое состояние",
     hiddenStateUnhideFailed: "Не удалось вернуть строки в скан",
     hiddenStateClearDoneFailed: "Не удалось очистить done-строки",
@@ -1696,4 +1696,48 @@ export const ru = {
     aiErrorGeneric: "Ошибка запроса к AI",
     aiErrorPrefix: "Ошибка AI:",
     close: "Закрыть",
+
+    // Undo toast
+    undo: "Отмена",
+    hiddenContextMarkedDoneToast: "Отмечено как выполнено",
+    hiddenContextIgnoredToast: "Отмечено как игнорируемое",
+
+    // Command palette
+    cmdPalettePlaceholder: "Введите команду или поиск...",
+    cmdPaletteNoResults: "Ничего не найдено",
+    cmdSwitchToRadius: "Перейти на вкладку Радиус",
+    cmdSwitchToRegion: "Перейти на вкладку Регион",
+    cmdSwitchToContracts: "Перейти на вкладку Контракты",
+    cmdSwitchToStation: "Перейти на вкладку Станция",
+    cmdSwitchToRoute: "Перейти на вкладку Маршрут",
+    cmdSwitchToIndustry: "Перейти на вкладку Индустрия",
+    cmdSwitchToDemand: "Перейти на вкладку Спрос",
+    cmdSwitchToPlex: "Перейти на вкладку PLEX+",
+    cmdOpenWatchlist: "Открыть список наблюдения",
+    cmdOpenHistory: "Открыть историю сканов",
+    cmdOpenCharacter: "Открыть обзор персонажа",
+    cmdStartScan: "Начать скан",
+
+    // Keyboard navigation hint
+    keyNavHint: "↑↓ навигация · Enter открыть · D выполнено · I игнор",
+
+    // Keyboard shortcuts help popup
+    shortcutsTitle: "Горячие клавиши",
+    shortcutsGroupNav: "Навигация",
+    shortcutsGroupActions: "Действия",
+    shortcutsGroupTable: "Таблица (результаты скана)",
+    shortcutTabRadius: "Перейти на вкладку Радиус",
+    shortcutTabRegion: "Перейти на вкладку Регион",
+    shortcutTabContracts: "Перейти на вкладку Контракты",
+    shortcutTabStation: "Перейти на вкладку Станция",
+    shortcutTabRoute: "Перейти на вкладку Маршрут",
+    shortcutOpenWatchlist: "Открыть список наблюдения",
+    shortcutOpenHistory: "Открыть историю сканов",
+    shortcutStartScan: "Запустить / остановить скан",
+    shortcutCommandPalette: "Открыть командную палитру",
+    shortcutOpenShortcuts: "Показать эту справку",
+    shortcutTableNav: "Навигация по строкам",
+    shortcutTableEnter: "Открыть планировщик исполнения",
+    shortcutTableDone: "Отметить как выполненное",
+    shortcutTableIgnore: "Игнорировать предмет",
 } as const;

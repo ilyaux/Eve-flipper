@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:wails": "vite --mode wails",
     "build": "tsc -b && vite build",
+    "build:wails": "tsc -b && vite build --mode wails",
     "preview": "vite preview",
     "tauri": "tauri"
   },

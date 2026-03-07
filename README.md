@@ -50,6 +50,10 @@ It combines live ESI order books, historical market behavior, and execution-awar
 Download the latest build:
 - https://github.com/ilyaux/Eve-flipper/releases
 
+Release asset naming:
+- Classic binary: `eve-flipper-windows-amd64.exe` (and `linux/darwin` variants)
+- Wails desktop binary: `eve-flipper-wails-windows-amd64.exe`
+
 Run the binary and open:
 - `http://127.0.0.1:13370`
 
@@ -81,6 +85,39 @@ Unix Make targets:
 ```bash
 make build
 make run
+```
+
+### Option 3: Wails desktop variant (separate mode)
+
+This mode keeps the existing runtime modes untouched (`Go embedded web app` and `Tauri`),
+and adds an additional desktop build powered by Wails.
+
+PowerShell:
+
+```powershell
+.\make.ps1 wails
+```
+
+Output:
+- `build/eve-flipper-wails.exe`
+
+Manual build equivalent:
+
+```bash
+go build -tags wails,production -ldflags "-s -w -H=windowsgui -X main.version=dev" -o build/eve-flipper-wails.exe .
+```
+
+Run directly:
+
+```powershell
+.\make.ps1 wails-run
+```
+
+Unix Make:
+
+```bash
+make wails
+make wails-run
 ```
 
 ## Runtime Flags

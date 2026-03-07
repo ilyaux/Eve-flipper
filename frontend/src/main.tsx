@@ -7,7 +7,6 @@ import { ToastProvider } from "./components/Toast";
 import { installDomSafetyGuards } from "./lib/domSafety";
 import App from "./App";
 import { CorpDashboardApp } from "./components/CorpDashboardApp";
-import "./index.css";
 
 const isCorpRoute = window.location.pathname.startsWith("/corp");
 

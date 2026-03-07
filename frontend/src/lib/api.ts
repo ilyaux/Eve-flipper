@@ -55,6 +55,61 @@ import type {
 
 const BASE = import.meta.env.VITE_API_URL || "";
 
+const USER_ID_STORAGE_KEY = "eveflipper_uid_v1";
+const USER_ID_HEADER_NAME = "X-EveFlipper-UID";
+const DESKTOP_USER_ID = "eveflipper_desktop";
+
+function isDesktopRuntime(): boolean {
+  const runtime = window as unknown as {
+    __TAURI_INTERNALS__?: unknown;
+    runtime?: { BrowserOpenURL?: unknown };
+  };
+  return !!runtime.__TAURI_INTERNALS__ || typeof runtime.runtime?.BrowserOpenURL === "function";
+}
+
+function isValidUserID(value: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function generateUserID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getClientUserID(): string {
+  if (isDesktopRuntime()) {
+    return DESKTOP_USER_ID;
+  }
+
+  try {
+    const existing = (window.localStorage.getItem(USER_ID_STORAGE_KEY) || "").trim();
+    if (isValidUserID(existing)) {
+      return existing;
+    }
+  } catch {
+    // ignore storage access errors
+  }
+
+  const created = generateUserID();
+  if (isValidUserID(created)) {
+    try {
+      window.localStorage.setItem(USER_ID_STORAGE_KEY, created);
+    } catch {
+      // ignore storage access errors
+    }
+    return created;
+  }
+  return "desktop_user";
+}
+
+function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers ?? undefined);
+  headers.set(USER_ID_HEADER_NAME, getClientUserID());
+  return window.fetch(input, { credentials: "include", ...init, headers });
+}
+
 // Helper to handle HTTP errors consistently
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -85,7 +140,7 @@ async function streamNdjson<T>(
   errorMessage = "Request failed",
   onResult?: (msg: Extract<NdjsonGenericMessage<T>, { type: "result" }>) => void
 ): Promise<T[]> {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -147,7 +202,7 @@ async function streamNdjson<T>(
 }
 
 export async function getStatus(): Promise<AppStatus> {
-  const res = await fetch(`${BASE}/api/status`);
+  const res = await apiFetch(`${BASE}/api/status`);
   return handleResponse<AppStatus>(res);
 }
 
@@ -173,19 +228,19 @@ export interface UpdateApplyResponse {
 }
 
 export async function getUpdateCheckStatus(): Promise<UpdateCheckStatus> {
-  const res = await fetch(`${BASE}/api/update/check`);
+  const res = await apiFetch(`${BASE}/api/update/check`);
   return handleResponse<UpdateCheckStatus>(res);
 }
 
 export async function applyAppUpdate(): Promise<UpdateApplyResponse> {
-  const res = await fetch(`${BASE}/api/update/apply`, {
+  const res = await apiFetch(`${BASE}/api/update/apply`, {
     method: "POST",
   });
   return handleResponse<UpdateApplyResponse>(res);
 }
 
 export async function skipAppUpdateForSession(version: string): Promise<{ ok: boolean; version: string }> {
-  const res = await fetch(`${BASE}/api/update/skip`, {
+  const res = await apiFetch(`${BASE}/api/update/skip`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ version }),
@@ -194,12 +249,12 @@ export async function skipAppUpdateForSession(version: string): Promise<{ ok: bo
 }
 
 export async function getConfig(): Promise<AppConfig> {
-  const res = await fetch(`${BASE}/api/config`);
+  const res = await apiFetch(`${BASE}/api/config`);
   return handleResponse<AppConfig>(res);
 }
 
 export async function updateConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
-  const res = await fetch(`${BASE}/api/config`, {
+  const res = await apiFetch(`${BASE}/api/config`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -208,7 +263,7 @@ export async function updateConfig(patch: Partial<AppConfig>): Promise<AppConfig
 }
 
 export async function testAlertChannels(message?: string): Promise<{ sent: string[]; failed?: Record<string, string> }> {
-  const res = await fetch(`${BASE}/api/alerts/test`, {
+  const res = await apiFetch(`${BASE}/api/alerts/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: message ?? "" }),
@@ -217,13 +272,13 @@ export async function testAlertChannels(message?: string): Promise<{ sent: strin
 }
 
 export async function autocomplete(query: string): Promise<string[]> {
-  const res = await fetch(`${BASE}/api/systems/autocomplete?q=${encodeURIComponent(query)}`);
+  const res = await apiFetch(`${BASE}/api/systems/autocomplete?q=${encodeURIComponent(query)}`);
   const data = await handleResponse<{ systems?: string[] }>(res);
   return data.systems ?? [];
 }
 
 export async function autocompleteRegion(query: string): Promise<string[]> {
-  const res = await fetch(`${BASE}/api/regions/autocomplete?q=${encodeURIComponent(query)}`);
+  const res = await apiFetch(`${BASE}/api/regions/autocomplete?q=${encodeURIComponent(query)}`);
   const data = await handleResponse<{ regions?: string[] }>(res);
   return data.regions ?? [];
 }
@@ -237,7 +292,7 @@ export async function getSystemsList(
   if (query && query.trim() !== "") qp.set("q", query.trim());
   if (limit != null && limit > 0) qp.set("limit", String(limit));
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/systems${qs ? `?${qs}` : ""}`, { signal });
+  const res = await apiFetch(`${BASE}/api/systems${qs ? `?${qs}` : ""}`, { signal });
   const data = await handleResponse<{ systems?: SolarSystemInfo[] }>(res);
   return data.systems ?? [];
 }
@@ -357,7 +412,7 @@ export async function findRoutes(
 // --- Watchlist ---
 
 export async function getWatchlist(): Promise<WatchlistItem[]> {
-  const res = await fetch(`${BASE}/api/watchlist`);
+  const res = await apiFetch(`${BASE}/api/watchlist`);
   return handleResponse<WatchlistItem[]>(res);
 }
 
@@ -367,7 +422,7 @@ export interface AddWatchlistResult {
 }
 
 export async function addToWatchlist(typeId: number, typeName: string, alertMinMargin: number = 0): Promise<AddWatchlistResult> {
-  const res = await fetch(`${BASE}/api/watchlist`, {
+  const res = await apiFetch(`${BASE}/api/watchlist`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -383,7 +438,7 @@ export async function addToWatchlist(typeId: number, typeName: string, alertMinM
 }
 
 export async function removeFromWatchlist(typeId: number): Promise<WatchlistItem[]> {
-  const res = await fetch(`${BASE}/api/watchlist/${typeId}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/api/watchlist/${typeId}`, { method: "DELETE" });
   return handleResponse<WatchlistItem[]>(res);
 }
 
@@ -393,7 +448,7 @@ export async function updateWatchlistItem(typeId: number, patch: {
   alert_metric?: "margin_percent" | "total_profit" | "profit_per_unit" | "daily_volume";
   alert_threshold?: number;
 }): Promise<WatchlistItem[]> {
-  const res = await fetch(`${BASE}/api/watchlist/${typeId}`, {
+  const res = await apiFetch(`${BASE}/api/watchlist/${typeId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -407,19 +462,19 @@ export async function getAlertHistory(typeId?: number, limit?: number, offset?: 
   if (limit) params.set("limit", String(limit));
   if (offset && offset > 0) params.set("offset", String(offset));
   const query = params.toString();
-  const res = await fetch(`${BASE}/api/alerts/history${query ? `?${query}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/alerts/history${query ? `?${query}` : ""}`);
   return handleResponse<AlertHistoryEntry[]>(res);
 }
 
 // --- Station Trading ---
 
 export async function getStations(systemName: string, signal?: AbortSignal): Promise<StationsResponse> {
-  const res = await fetch(`${BASE}/api/stations?system=${encodeURIComponent(systemName)}`, { signal });
+  const res = await apiFetch(`${BASE}/api/stations?system=${encodeURIComponent(systemName)}`, { signal });
   return handleResponse<StationsResponse>(res);
 }
 
 export async function getStructures(systemId: number, regionId: number, signal?: AbortSignal): Promise<StationInfo[]> {
-  const res = await fetch(`${BASE}/api/auth/structures?system_id=${systemId}&region_id=${regionId}`, { signal });
+  const res = await apiFetch(`${BASE}/api/auth/structures?system_id=${systemId}&region_id=${regionId}`, { signal });
   return handleResponse<StationInfo[]>(res);
 }
 
@@ -433,7 +488,7 @@ export async function getExecutionPlan(params: {
   impact_days?: number;
   signal?: AbortSignal;
 }): Promise<ExecutionPlanResult> {
-  const res = await fetch(`${BASE}/api/execution/plan`, {
+  const res = await apiFetch(`${BASE}/api/execution/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: params.signal,
@@ -514,7 +569,7 @@ export async function getStationTradeStates(params?: {
     qp.set("current_revision", String(params.currentRevision));
   }
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/auth/station/trade-states${qs ? `?${qs}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/station/trade-states${qs ? `?${qs}` : ""}`);
   const data = await handleResponse<StationTradeStatesResponse>(res);
   return {
     ...data,
@@ -530,7 +585,7 @@ export async function setStationTradeState(params: {
   mode: StationTradeStateMode;
   until_revision?: number;
 }): Promise<{ ok: boolean }> {
-  const res = await fetch(`${BASE}/api/auth/station/trade-states/set`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/trade-states/set`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -546,7 +601,7 @@ export async function deleteStationTradeStates(params: {
     region_id?: number;
   }>;
 }): Promise<{ ok: boolean; deleted: number }> {
-  const res = await fetch(`${BASE}/api/auth/station/trade-states/delete`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/trade-states/delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -558,7 +613,7 @@ export async function clearStationTradeStates(params?: {
   tab?: string;
   mode?: StationTradeStateMode;
 }): Promise<{ ok: boolean; deleted: number }> {
-  const res = await fetch(`${BASE}/api/auth/station/trade-states/clear`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/trade-states/clear`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params ?? {}),
@@ -571,7 +626,7 @@ export async function rebootStationCache(): Promise<{
   cleared: number;
   rebooted_at?: string;
 }> {
-  const res = await fetch(`${BASE}/api/auth/station/cache/reboot`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/cache/reboot`, {
     method: "POST",
   });
   return handleResponse<{ ok: boolean; cleared: number; rebooted_at?: string }>(res);
@@ -592,7 +647,7 @@ export async function getAuthIndustryProjects(params?: {
   if (params?.status) qp.set("status", params.status);
   if (params?.limit != null && params.limit > 0) qp.set("limit", String(params.limit));
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/auth/industry/projects${qs ? `?${qs}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects${qs ? `?${qs}` : ""}`);
   const data = await handleResponse<IndustryProjectsResponse>(res);
   return {
     projects: Array.isArray(data.projects) ? data.projects : [],
@@ -616,7 +671,7 @@ export interface IndustryProjectCreateResponse {
 export async function createAuthIndustryProject(
   payload: IndustryProjectCreatePayload
 ): Promise<IndustryProjectCreateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/projects`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -627,7 +682,7 @@ export async function createAuthIndustryProject(
 export async function getAuthIndustryProjectSnapshot(
   projectID: number
 ): Promise<IndustryProjectSnapshot> {
-  const res = await fetch(`${BASE}/api/auth/industry/projects/${projectID}/snapshot`);
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects/${projectID}/snapshot`);
   const data = await handleResponse<IndustryProjectSnapshot>(res);
   return {
     ...data,
@@ -648,7 +703,7 @@ export async function planAuthIndustryProject(
   projectID: number,
   patch: IndustryPlanPatch
 ): Promise<IndustryProjectPlanResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/projects/${projectID}/plan`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects/${projectID}/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -660,7 +715,7 @@ export async function previewAuthIndustryProjectPlan(
   projectID: number,
   patch: IndustryPlanPatch
 ): Promise<IndustryPlanPreview> {
-  const res = await fetch(`${BASE}/api/auth/industry/projects/${projectID}/plan/preview`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects/${projectID}/plan/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -708,7 +763,7 @@ export async function rebalanceAuthIndustryProjectMaterials(
   projectID: number,
   payload: IndustryProjectMaterialRebalancePayload
 ): Promise<IndustryProjectMaterialRebalanceResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/projects/${projectID}/materials/rebalance`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects/${projectID}/materials/rebalance`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload ?? {}),
@@ -750,7 +805,7 @@ export async function syncAuthIndustryProjectBlueprintPool(
   projectID: number,
   payload: IndustryProjectBlueprintSyncPayload
 ): Promise<IndustryProjectBlueprintSyncResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/projects/${projectID}/blueprints/sync`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/projects/${projectID}/blueprints/sync`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload ?? {}),
@@ -774,7 +829,7 @@ export interface IndustryJobStatusUpdateResponse {
 export async function updateAuthIndustryJobStatus(
   payload: IndustryJobStatusUpdatePayload
 ): Promise<IndustryJobStatusUpdateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/jobs/status`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/jobs/status`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -796,7 +851,7 @@ export interface IndustryTaskStatusUpdateResponse {
 export async function updateAuthIndustryTaskStatus(
   payload: IndustryTaskStatusUpdatePayload
 ): Promise<IndustryTaskStatusUpdateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/tasks/status`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/tasks/status`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -819,7 +874,7 @@ export interface IndustryTaskBulkStatusUpdateResponse {
 export async function updateAuthIndustryTaskStatusBulk(
   payload: IndustryTaskBulkStatusUpdatePayload
 ): Promise<IndustryTaskBulkStatusUpdateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/tasks/status/bulk`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/tasks/status/bulk`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -845,7 +900,7 @@ export interface IndustryTaskPriorityUpdateResponse {
 export async function updateAuthIndustryTaskPriority(
   payload: IndustryTaskPriorityUpdatePayload
 ): Promise<IndustryTaskPriorityUpdateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/tasks/priority`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/tasks/priority`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -867,7 +922,7 @@ export interface IndustryTaskBulkPriorityUpdateResponse {
 export async function updateAuthIndustryTaskPriorityBulk(
   payload: IndustryTaskBulkPriorityUpdatePayload
 ): Promise<IndustryTaskBulkPriorityUpdateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/tasks/priority/bulk`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/tasks/priority/bulk`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -897,7 +952,7 @@ export interface IndustryJobBulkStatusUpdateResponse {
 export async function updateAuthIndustryJobStatusBulk(
   payload: IndustryJobBulkStatusUpdatePayload
 ): Promise<IndustryJobBulkStatusUpdateResponse> {
-  const res = await fetch(`${BASE}/api/auth/industry/jobs/status/bulk`, {
+  const res = await apiFetch(`${BASE}/api/auth/industry/jobs/status/bulk`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -920,7 +975,7 @@ export async function getAuthIndustryLedger(params?: {
   if (params?.status) qp.set("status", params.status);
   if (params?.limit != null && params.limit > 0) qp.set("limit", String(params.limit));
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/auth/industry/ledger${qs ? `?${qs}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/industry/ledger${qs ? `?${qs}` : ""}`);
   const data = await handleResponse<IndustryLedger>(res);
   return {
     ...data,
@@ -931,7 +986,7 @@ export async function getAuthIndustryLedger(params?: {
 export async function stationAIChat(
   payload: StationAIChatRequest,
 ): Promise<StationAIChatResponse> {
-  const res = await fetch(`${BASE}/api/auth/station/ai/chat`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/ai/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -949,7 +1004,7 @@ export async function stationAIChatStream(
   },
   signal?: AbortSignal,
 ): Promise<StationAIChatResponse> {
-  const res = await fetch(`${BASE}/api/auth/station/ai/chat/stream`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/ai/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1035,29 +1090,29 @@ export async function stationAIChatStream(
 // --- Scan History ---
 
 export async function getScanHistory(limit: number = 50): Promise<ScanRecord[]> {
-  const res = await fetch(`${BASE}/api/scan/history?limit=${limit}`);
+  const res = await apiFetch(`${BASE}/api/scan/history?limit=${limit}`);
   return handleResponse<ScanRecord[]>(res);
 }
 
 export async function getScanHistoryById(id: number): Promise<ScanRecord> {
-  const res = await fetch(`${BASE}/api/scan/history/${id}`);
+  const res = await apiFetch(`${BASE}/api/scan/history/${id}`);
   return handleResponse<ScanRecord>(res);
 }
 
 export async function getScanHistoryResults(id: number): Promise<{ scan: ScanRecord; results: unknown[] }> {
-  const res = await fetch(`${BASE}/api/scan/history/${id}/results`);
+  const res = await apiFetch(`${BASE}/api/scan/history/${id}/results`);
   return handleResponse<{ scan: ScanRecord; results: unknown[] }>(res);
 }
 
 export async function deleteScanHistory(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/api/scan/history/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/api/scan/history/${id}`, { method: "DELETE" });
   if (!res.ok) {
     throw new Error("Delete failed");
   }
 }
 
 export async function clearScanHistory(olderThanDays: number = 7): Promise<{ deleted: number }> {
-  const res = await fetch(`${BASE}/api/scan/history/clear`, {
+  const res = await apiFetch(`${BASE}/api/scan/history/clear`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ older_than_days: olderThanDays }),
@@ -1069,6 +1124,16 @@ export async function clearScanHistory(olderThanDays: number = 7): Promise<{ del
 
 export function getLoginUrl(): string {
   return `${BASE}/api/auth/login`;
+}
+
+export async function getDesktopLoginUrl(): Promise<string> {
+  const res = await apiFetch(`${BASE}/api/auth/login?desktop=1&mode=json`);
+  const data = await handleResponse<{ url?: string }>(res);
+  const url = typeof data.url === "string" ? data.url.trim() : "";
+  if (!url) {
+    throw new Error("Desktop login URL is empty");
+  }
+  return url;
 }
 
 export type CharacterScope = number | "all";
@@ -1083,19 +1148,19 @@ function appendCharacterScope(params: URLSearchParams, characterId?: CharacterSc
 }
 
 export async function getAuthStatus(): Promise<AuthStatus> {
-  const res = await fetch(`${BASE}/api/auth/status`);
+  const res = await apiFetch(`${BASE}/api/auth/status`);
   return handleResponse<AuthStatus>(res);
 }
 
 export async function logout(): Promise<void> {
-  const res = await fetch(`${BASE}/api/auth/logout`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/auth/logout`, { method: "POST" });
   if (!res.ok) {
     throw new Error("Logout failed");
   }
 }
 
 export async function selectAuthCharacter(characterId: number): Promise<AuthStatus> {
-  const res = await fetch(`${BASE}/api/auth/character/select`, {
+  const res = await apiFetch(`${BASE}/api/auth/character/select`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ character_id: characterId }),
@@ -1104,7 +1169,7 @@ export async function selectAuthCharacter(characterId: number): Promise<AuthStat
 }
 
 export async function deleteAuthCharacter(characterId: number): Promise<AuthStatus> {
-  const res = await fetch(`${BASE}/api/auth/characters/${characterId}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/api/auth/characters/${characterId}`, { method: "DELETE" });
   return handleResponse<AuthStatus>(res);
 }
 
@@ -1112,7 +1177,7 @@ export async function getCharacterInfo(characterId?: CharacterScope): Promise<Ch
   const params = new URLSearchParams();
   appendCharacterScope(params, characterId);
   const query = params.toString();
-  const res = await fetch(`${BASE}/api/auth/character${query ? `?${query}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/character${query ? `?${query}` : ""}`);
   return handleResponse<CharacterInfo>(res);
 }
 
@@ -1127,7 +1192,7 @@ export async function getCharacterLocation(characterId?: number): Promise<Charac
   const params = new URLSearchParams();
   appendCharacterScope(params, characterId);
   const query = params.toString();
-  const res = await fetch(`${BASE}/api/auth/location${query ? `?${query}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/location${query ? `?${query}` : ""}`);
   return handleResponse<CharacterLocation>(res);
 }
 
@@ -1135,7 +1200,7 @@ export async function getUndercuts(characterId?: CharacterScope): Promise<Underc
   const params = new URLSearchParams();
   appendCharacterScope(params, characterId);
   const query = params.toString();
-  const res = await fetch(`${BASE}/api/auth/undercuts${query ? `?${query}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/undercuts${query ? `?${query}` : ""}`);
   return handleResponse<UndercutStatus[]>(res);
 }
 
@@ -1153,7 +1218,7 @@ export async function getOrderDesk(params?: OrderDeskParams): Promise<OrderDeskR
   if (params?.targetEtaDays != null) qp.set("target_eta_days", String(params.targetEtaDays));
   appendCharacterScope(qp, params?.characterId);
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/auth/orders/desk${qs ? `?${qs}` : ""}`);
+  const res = await apiFetch(`${BASE}/api/auth/orders/desk${qs ? `?${qs}` : ""}`);
   return handleResponse<OrderDeskResponse>(res);
 }
 
@@ -1197,7 +1262,7 @@ export async function getStationCommand(params: StationCommandParams): Promise<S
   const qp = new URLSearchParams();
   appendCharacterScope(qp, characterId);
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/auth/station/command${qs ? `?${qs}` : ""}`, {
+  const res = await apiFetch(`${BASE}/api/auth/station/command${qs ? `?${qs}` : ""}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -1219,7 +1284,7 @@ export async function getPortfolioPnL(days: number = 30, params?: PortfolioPnLPa
   if (params?.brokerFee != null) qp.set("broker_fee", String(params.brokerFee));
   if (params?.ledgerLimit != null) qp.set("ledger_limit", String(params.ledgerLimit));
   appendCharacterScope(qp, params?.characterId);
-  const res = await fetch(`${BASE}/api/auth/portfolio?${qp.toString()}`);
+  const res = await apiFetch(`${BASE}/api/auth/portfolio?${qp.toString()}`);
   return handleResponse<PortfolioPnL>(res);
 }
 
@@ -1231,7 +1296,7 @@ export async function getPortfolioOptimization(days: number = 90, characterId?: 
   const qp = new URLSearchParams();
   qp.set("days", String(days));
   appendCharacterScope(qp, characterId);
-  const res = await fetch(`${BASE}/api/auth/portfolio/optimize?${qp.toString()}`);
+  const res = await apiFetch(`${BASE}/api/auth/portfolio/optimize?${qp.toString()}`);
   if (res.ok) {
     const data: PortfolioOptimization = await res.json();
     return { ok: true, data };
@@ -1254,7 +1319,7 @@ export async function analyzeIndustry(
   onProgress: (msg: string) => void,
   signal?: AbortSignal
 ): Promise<IndustryAnalysis> {
-  const res = await fetch(`${BASE}/api/industry/analyze`, {
+  const res = await apiFetch(`${BASE}/api/industry/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -1316,44 +1381,44 @@ export async function analyzeIndustry(
 }
 
 export async function searchBuildableItems(query: string, limit = 20, signal?: AbortSignal): Promise<BuildableItem[]> {
-  const res = await fetch(`${BASE}/api/industry/search?q=${encodeURIComponent(query)}&limit=${limit}`, { signal });
+  const res = await apiFetch(`${BASE}/api/industry/search?q=${encodeURIComponent(query)}&limit=${limit}`, { signal });
   return handleResponse<BuildableItem[]>(res);
 }
 
 export async function getIndustrySystems(): Promise<IndustrySystem[]> {
-  const res = await fetch(`${BASE}/api/industry/systems`);
+  const res = await apiFetch(`${BASE}/api/industry/systems`);
   return handleResponse<IndustrySystem[]>(res);
 }
 
 // --- Demand / War Tracker API ---
 
 export async function getDemandRegions(): Promise<DemandRegionsResponse> {
-  const res = await fetch(`${BASE}/api/demand/regions`);
+  const res = await apiFetch(`${BASE}/api/demand/regions`);
   return handleResponse<DemandRegionsResponse>(res);
 }
 
 export async function getHotZones(limit = 20): Promise<HotZonesResponse> {
-  const res = await fetch(`${BASE}/api/demand/hotzones?limit=${limit}`);
+  const res = await apiFetch(`${BASE}/api/demand/hotzones?limit=${limit}`);
   return handleResponse<HotZonesResponse>(res);
 }
 
 export async function getDemandRegion(regionId: number): Promise<DemandRegionResponse> {
-  const res = await fetch(`${BASE}/api/demand/region/${regionId}`);
+  const res = await apiFetch(`${BASE}/api/demand/region/${regionId}`);
   return handleResponse<DemandRegionResponse>(res);
 }
 
 export async function getRegionOpportunities(regionId: number): Promise<RegionOpportunities> {
-  const res = await fetch(`${BASE}/api/demand/opportunities/${regionId}`);
+  const res = await apiFetch(`${BASE}/api/demand/opportunities/${regionId}`);
   return handleResponse<RegionOpportunities>(res);
 }
 
 export async function getRegionFittings(regionId: number): Promise<{ region_id: number; items: unknown[]; count: number; from_cache: boolean }> {
-  const res = await fetch(`${BASE}/api/demand/fittings/${regionId}`);
+  const res = await apiFetch(`${BASE}/api/demand/fittings/${regionId}`);
   return handleResponse<{ region_id: number; items: unknown[]; count: number; from_cache: boolean }>(res);
 }
 
 export async function refreshDemandData(onProgress?: (msg: string) => void): Promise<void> {
-  const res = await fetch(`${BASE}/api/demand/refresh`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/demand/refresh`, { method: "POST" });
   if (!res.ok) {
     let errMsg = "Refresh failed";
     try {
@@ -1413,7 +1478,7 @@ export async function getPLEXDashboard(p?: PLEXDashboardParams, signal?: AbortSi
   if (p?.nesOmega != null && p.nesOmega > 0) params.set("nes_omega", p.nesOmega.toString());
   if (p?.omegaUSD != null && p.omegaUSD > 0) params.set("omega_usd", p.omegaUSD.toString());
   const qs = params.toString();
-  const res = await fetch(`${BASE}/api/plex/dashboard${qs ? "?" + qs : ""}`, { signal });
+  const res = await apiFetch(`${BASE}/api/plex/dashboard${qs ? "?" + qs : ""}`, { signal });
   return handleResponse<PLEXDashboard>(res);
 }
 
@@ -1423,44 +1488,44 @@ export async function getCharacterRoles(signal?: AbortSignal, characterId?: numb
   const qp = new URLSearchParams();
   appendCharacterScope(qp, characterId);
   const qs = qp.toString();
-  const res = await fetch(`${BASE}/api/auth/roles${qs ? `?${qs}` : ""}`, { signal });
+  const res = await apiFetch(`${BASE}/api/auth/roles${qs ? `?${qs}` : ""}`, { signal });
   return handleResponse<CharacterRoles>(res);
 }
 
 export async function getCorpDashboard(mode: "demo" | "live" = "demo", signal?: AbortSignal): Promise<CorpDashboard> {
-  const res = await fetch(`${BASE}/api/corp/dashboard?mode=${mode}`, { signal });
+  const res = await apiFetch(`${BASE}/api/corp/dashboard?mode=${mode}`, { signal });
   return handleResponse<CorpDashboard>(res);
 }
 
 export async function getCorpJournal(mode: "demo" | "live" = "demo", division = 1, days = 90, signal?: AbortSignal): Promise<CorpJournalEntry[]> {
-  const res = await fetch(`${BASE}/api/corp/journal?mode=${mode}&division=${division}&days=${days}`, { signal });
+  const res = await apiFetch(`${BASE}/api/corp/journal?mode=${mode}&division=${division}&days=${days}`, { signal });
   return handleResponse<CorpJournalEntry[]>(res);
 }
 
 export async function getCorpMembers(mode: "demo" | "live" = "demo", signal?: AbortSignal): Promise<CorpMember[]> {
-  const res = await fetch(`${BASE}/api/corp/members?mode=${mode}`, { signal });
+  const res = await apiFetch(`${BASE}/api/corp/members?mode=${mode}`, { signal });
   return handleResponse<CorpMember[]>(res);
 }
 
 export async function getCorpOrders(mode: "demo" | "live" = "demo", signal?: AbortSignal): Promise<CorpMarketOrderDetail[]> {
-  const res = await fetch(`${BASE}/api/corp/orders?mode=${mode}`, { signal });
+  const res = await apiFetch(`${BASE}/api/corp/orders?mode=${mode}`, { signal });
   return handleResponse<CorpMarketOrderDetail[]>(res);
 }
 
 export async function getCorpIndustryJobs(mode: "demo" | "live" = "demo", signal?: AbortSignal): Promise<CorpIndustryJob[]> {
-  const res = await fetch(`${BASE}/api/corp/industry?mode=${mode}`, { signal });
+  const res = await apiFetch(`${BASE}/api/corp/industry?mode=${mode}`, { signal });
   return handleResponse<CorpIndustryJob[]>(res);
 }
 
 export async function getCorpMiningLedger(mode: "demo" | "live" = "demo", signal?: AbortSignal): Promise<CorpMiningEntry[]> {
-  const res = await fetch(`${BASE}/api/corp/mining?mode=${mode}`, { signal });
+  const res = await apiFetch(`${BASE}/api/corp/mining?mode=${mode}`, { signal });
   return handleResponse<CorpMiningEntry[]>(res);
 }
 
 // --- UI Operations (in-game actions) ---
 
 export async function openMarketInGame(typeID: number): Promise<void> {
-  const res = await fetch(`${BASE}/api/ui/open-market`, {
+  const res = await apiFetch(`${BASE}/api/ui/open-market`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type_id: typeID }),
@@ -1472,7 +1537,7 @@ export async function openMarketInGame(typeID: number): Promise<void> {
 }
 
 export async function setWaypointInGame(solarSystemID: number, clearOther = true, addToBeginning = false): Promise<void> {
-  const res = await fetch(`${BASE}/api/ui/set-waypoint`, {
+  const res = await apiFetch(`${BASE}/api/ui/set-waypoint`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1488,7 +1553,7 @@ export async function setWaypointInGame(solarSystemID: number, clearOther = true
 }
 
 export async function openContractInGame(contractID: number): Promise<void> {
-  const res = await fetch(`${BASE}/api/ui/open-contract`, {
+  const res = await apiFetch(`${BASE}/api/ui/open-contract`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ contract_id: contractID }),
@@ -1500,7 +1565,7 @@ export async function openContractInGame(contractID: number): Promise<void> {
 }
 
 export async function getContractDetails(contractID: number): Promise<ContractDetails> {
-  const res = await fetch(`${BASE}/api/contracts/${contractID}/items`);
+  const res = await apiFetch(`${BASE}/api/contracts/${contractID}/items`);
   if (!res.ok) {
     throw new Error("Failed to fetch contract details");
   }

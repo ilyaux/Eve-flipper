@@ -3,7 +3,7 @@ VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo de
 BUILD_DIR := build
 LDFLAGS   := -s -w -X main.version=$(VERSION)
 
-.PHONY: all build run test clean frontend cross
+.PHONY: all build run test clean frontend frontend-wails wails wails-run cross
 
 ## build: build frontend + backend into a single binary
 build: frontend
@@ -28,6 +28,19 @@ test:
 ## frontend: install deps and build frontend
 frontend:
 	cd frontend && npm install && npm run build
+
+## frontend-wails: install deps and build frontend for Wails (API -> 127.0.0.1:13370)
+frontend-wails:
+	cd frontend && npm install && npm run build:wails
+
+## wails: build Wails desktop variant (single-process UI + backend API)
+wails: frontend-wails
+	@mkdir -p $(BUILD_DIR)
+	go build -tags wails,production -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME)-wails .
+
+## wails-run: build and run Wails desktop variant
+wails-run: wails
+	$(BUILD_DIR)/$(APP_NAME)-wails
 
 ## cross: build release binaries for Windows, Linux, macOS (amd64 + arm64)
 cross: frontend

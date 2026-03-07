@@ -37,7 +37,11 @@ export function useKeyboardShortcuts(shortcuts: ShortcutHandler[]) {
         const shiftMatch = needsShift === event.shiftKey;
         const metaMatch = needsMeta === event.metaKey;
 
-        const keyMatch = event.key.toLowerCase() === shortcut.key.toLowerCase();
+        // Use event.code for layout-independent matching (e.g. Russian keyboard "з" = KeyP)
+        const codeKey = event.code.replace(/^(Key|Digit)/, "").toLowerCase();
+        const keyMatch =
+          codeKey === shortcut.key.toLowerCase() ||
+          event.key.toLowerCase() === shortcut.key.toLowerCase();
 
         if (keyMatch && ctrlMatch && altMatch && shiftMatch && metaMatch) {
           if (shortcut.preventDefault !== false) {

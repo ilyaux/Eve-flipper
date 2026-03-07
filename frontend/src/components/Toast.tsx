@@ -2,10 +2,16 @@ import { useCallback, useEffect, useRef, useState, createContext, useContext, ty
 
 export type ToastType = "info" | "success" | "error" | "warning";
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface ToastMessage {
   id: number;
   text: string;
   type: ToastType;
+  action?: ToastAction;
 }
 
 let toastId = 0;
@@ -25,16 +31,6 @@ export function useToast() {
     };
   }, []);
 
-  const addToast = useCallback((text: string, type: ToastType = "info", duration = 4000) => {
-    const id = ++toastId;
-    setToasts((prev) => [...prev, { id, text, type }]);
-    const timer = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-      timersRef.current.delete(id);
-    }, duration);
-    timersRef.current.set(id, timer);
-  }, []);
-
   const removeToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
     const timer = timersRef.current.get(id);
@@ -44,23 +40,35 @@ export function useToast() {
     }
   }, []);
 
+  const addToast = useCallback((text: string, type: ToastType = "info", duration = 4000, action?: ToastAction) => {
+    const id = ++toastId;
+    setToasts((prev) => [...prev, { id, text, type, action }]);
+    const timer = setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+      timersRef.current.delete(id);
+    }, duration);
+    timersRef.current.set(id, timer);
+    return id;
+  }, []);
+
   return { toasts, addToast, removeToast };
 }
 
 // Context for global toast access
 interface ToastContextType {
-  addToast: (text: string, type?: ToastType, duration?: number) => void;
+  addToast: (text: string, type?: ToastType, duration?: number, action?: ToastAction) => number;
+  removeToast: (id: number) => void;
 }
 
 const ToastContext = createContext<ToastContextType | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const { toasts, addToast } = useToast();
+  const { toasts, addToast, removeToast } = useToast();
 
   return (
-    <ToastContext.Provider value={{ addToast }}>
+    <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      <ToastContainer toasts={toasts} />
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </ToastContext.Provider>
   );
 }
@@ -73,19 +81,20 @@ export function useGlobalToast() {
   return context;
 }
 
-export function ToastContainer({ toasts }: { toasts: ToastMessage[] }) {
+export function ToastContainer({ toasts, removeToast }: { toasts: ToastMessage[]; removeToast: (id: number) => void }) {
   if (toasts.length === 0) return null;
 
   return (
     <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
       {toasts.map((toast) => (
-        <ToastItem key={toast.id} text={toast.text} type={toast.type} />
+        <ToastItem key={toast.id} toast={toast} onRemove={removeToast} />
       ))}
     </div>
   );
 }
 
-function ToastItem({ text, type }: { text: string; type: ToastType }) {
+function ToastItem({ toast, onRemove }: { toast: ToastMessage; onRemove: (id: number) => void }) {
+  const { text, type, action, id } = toast;
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -115,6 +124,14 @@ function ToastItem({ text, type }: { text: string; type: ToastType }) {
         {iconMap[type]}
       </span>
       <span>{text}</span>
+      {action && (
+        <button
+          className="ml-2 px-2 py-0.5 rounded text-eve-accent border border-eve-accent/40 hover:bg-eve-accent/10 transition-colors font-semibold"
+          onClick={() => { action.onClick(); onRemove(id); }}
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

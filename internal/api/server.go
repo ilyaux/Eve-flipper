@@ -82,6 +82,7 @@ type Server struct {
 	authRevision   map[string]int64
 
 	appVersion string
+	appFlavor  string
 	updateHTTP *http.Client
 
 	updateSkipMu     sync.RWMutex
@@ -99,6 +100,7 @@ const walletTxnCacheTTL = 2 * time.Minute
 const plexCacheTTL = 5 * time.Minute
 const plexStaleCacheTTL = 30 * time.Minute
 const userIDCookieName = "eveflipper_uid"
+const userIDHeaderName = "X-EveFlipper-UID"
 const userIDCookieMaxAge = 365 * 24 * 60 * 60
 const userIDCookieSignatureBytes = 16
 const userIDCookieSecretMetaKey = "user_cookie_secret_v1"
@@ -538,6 +540,17 @@ func (s *Server) setUserIDCookie(w http.ResponseWriter, r *http.Request, userID 
 }
 
 func (s *Server) ensureRequestUserID(w http.ResponseWriter, r *http.Request) string {
+	headerUserID := strings.TrimSpace(r.Header.Get(userIDHeaderName))
+	if isValidUserID(headerUserID) {
+		// Keep cookie in sync for browser flows; header remains source of truth.
+		if c, err := r.Cookie(userIDCookieName); err != nil {
+			s.setUserIDCookie(w, r, headerUserID)
+		} else if cookieUserID, ok := s.parseSignedUserIDCookieValue(c.Value); !ok || cookieUserID != headerUserID {
+			s.setUserIDCookie(w, r, headerUserID)
+		}
+		return headerUserID
+	}
+
 	if c, err := r.Cookie(userIDCookieName); err == nil {
 		if userID, ok := s.parseSignedUserIDCookieValue(c.Value); ok {
 			return userID
@@ -628,6 +641,7 @@ func NewServer(cfg *config.Config, esiClient *esi.Client, database *db.DB, ssoCo
 		userIDCookieSecret: loadOrCreateUserCookieSecret(database),
 		authRevision:       make(map[string]int64),
 		appVersion:         "dev",
+		appFlavor:          "classic",
 		updateHTTP:         &http.Client{Timeout: 45 * time.Second},
 		updateSkipByUser:   make(map[string]string),
 	}
@@ -643,6 +657,14 @@ func (s *Server) SetAppVersion(v string) {
 		v = "dev"
 	}
 	s.appVersion = v
+}
+
+func (s *Server) SetAppFlavor(v string) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		v = "classic"
+	}
+	s.appFlavor = v
 }
 
 // SetSDE is called when SDE data finishes loading.
@@ -777,10 +799,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 		if origin != "" && isAllowedCORSOrigin(origin, r.Host) {
 			allowedOrigin = origin
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-EveFlipper-UID")
 		if r.Method == "OPTIONS" {
 			if origin != "" && allowedOrigin == "" {
 				w.WriteHeader(http.StatusForbidden)
@@ -821,10 +844,11 @@ func normalizeHost(hostPort string) string {
 }
 
 func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
 		return true
 	}
-	ip := net.ParseIP(host)
+	ip := net.ParseIP(h)
 	return ip != nil && ip.IsLoopback()
 }
 
@@ -1613,13 +1637,9 @@ func (s *Server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.BuyRadius < 0 {
 		cfg.BuyRadius = 0
-	} else if cfg.BuyRadius > 50 {
-		cfg.BuyRadius = 50
 	}
 	if cfg.SellRadius < 0 {
 		cfg.SellRadius = 0
-	} else if cfg.SellRadius > 50 {
-		cfg.SellRadius = 50
 	}
 	if cfg.MinMargin < 0 {
 		cfg.MinMargin = 0
@@ -4142,8 +4162,13 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		UserID:    userID,
 	}
 	s.ssoStatesMu.Unlock()
+	authURL := s.sso.BuildAuthURL(state)
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("mode")), "json") {
+		writeJSON(w, map[string]string{"url": authURL})
+		return
+	}
 
-	http.Redirect(w, r, s.sso.BuildAuthURL(state), http.StatusTemporaryRedirect)
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {

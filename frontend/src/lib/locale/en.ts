@@ -713,7 +713,7 @@ export const en = {
     cacheRebooted: "Cache rebooted: {count} entries",
     cacheRebootFailed: "Cache reboot failed",
     cacheRebootRescanHint: "Run Scan again to fetch fresh market orders.",
-    cacheStaleHint: "Market cache is stale. Reboot cache and rescan.",
+    cacheStaleHint: "Market cache is stale — reboot cache and run a new scan to get fresh prices.",
     hiddenStateSaveFailed: "Failed to save hidden state",
     hiddenStateUnhideFailed: "Failed to unhide rows",
     hiddenStateClearDoneFailed: "Failed to clear done rows",
@@ -1696,4 +1696,48 @@ export const en = {
     aiErrorGeneric: "AI request failed",
     aiErrorPrefix: "AI error:",
     close: "Close",
+
+    // Undo toast
+    undo: "Undo",
+    hiddenContextMarkedDoneToast: "Marked as done",
+    hiddenContextIgnoredToast: "Marked as ignored",
+
+    // Command palette
+    cmdPalettePlaceholder: "Type a command or search...",
+    cmdPaletteNoResults: "No results found",
+    cmdSwitchToRadius: "Switch to Radius tab",
+    cmdSwitchToRegion: "Switch to Regional tab",
+    cmdSwitchToContracts: "Switch to Contracts tab",
+    cmdSwitchToStation: "Switch to Station tab",
+    cmdSwitchToRoute: "Switch to Route tab",
+    cmdSwitchToIndustry: "Switch to Industry tab",
+    cmdSwitchToDemand: "Switch to Demand tab",
+    cmdSwitchToPlex: "Switch to PLEX+ tab",
+    cmdOpenWatchlist: "Open Watchlist",
+    cmdOpenHistory: "Open Scan History",
+    cmdOpenCharacter: "Open Character Overview",
+    cmdStartScan: "Start Scan",
+
+    // Keyboard navigation hint
+    keyNavHint: "↑↓ navigate · Enter open · D done · I ignore",
+
+    // Keyboard shortcuts help popup
+    shortcutsTitle: "Keyboard Shortcuts",
+    shortcutsGroupNav: "Navigation",
+    shortcutsGroupActions: "Actions",
+    shortcutsGroupTable: "Table (scan results)",
+    shortcutTabRadius: "Switch to Radius tab",
+    shortcutTabRegion: "Switch to Region tab",
+    shortcutTabContracts: "Switch to Contracts tab",
+    shortcutTabStation: "Switch to Station tab",
+    shortcutTabRoute: "Switch to Route tab",
+    shortcutOpenWatchlist: "Open Watchlist",
+    shortcutOpenHistory: "Open Scan History",
+    shortcutStartScan: "Start / Stop scan",
+    shortcutCommandPalette: "Open Command Palette",
+    shortcutOpenShortcuts: "Show this help",
+    shortcutTableNav: "Navigate rows",
+    shortcutTableEnter: "Open Execution Planner",
+    shortcutTableDone: "Mark as done",
+    shortcutTableIgnore: "Ignore item",
 } as const;

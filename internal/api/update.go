@@ -42,6 +42,14 @@ type updateResolved struct {
 	Asset               *githubReleaseAsset
 }
 
+func normalizeAppFlavor(flavor string) string {
+	flavor = strings.ToLower(strings.TrimSpace(flavor))
+	if flavor == "wails" {
+		return "wails"
+	}
+	return "classic"
+}
+
 type updateCheckResponse struct {
 	CurrentVersion      string `json:"current_version"`
 	LatestVersion       string `json:"latest_version,omitempty"`
@@ -244,7 +252,7 @@ func (s *Server) resolveUpdate(ctx context.Context) (updateResolved, error) {
 	}
 
 	resp.HasUpdate = isVersionNewer(latestNorm, currentNorm)
-	resp.Asset = selectReleaseAsset(rel.Assets, runtime.GOOS, runtime.GOARCH)
+	resp.Asset = selectReleaseAsset(rel.Assets, runtime.GOOS, runtime.GOARCH, s.appFlavor)
 	resp.AutoUpdateSupported = resp.HasUpdate && resp.Asset != nil
 	return resp, nil
 }
@@ -280,28 +288,43 @@ func (s *Server) fetchLatestRelease(ctx context.Context) (*githubLatestReleaseRe
 	return &out, nil
 }
 
-func expectedReleaseAssetName(goos, goarch string) string {
-	name := fmt.Sprintf("eve-flipper-%s-%s", goos, goarch)
+func expectedReleaseAssetName(goos, goarch, flavor string) string {
+	name := "eve-flipper"
+	if normalizeAppFlavor(flavor) == "wails" {
+		name += "-wails"
+	}
+	name += fmt.Sprintf("-%s-%s", goos, goarch)
 	if goos == "windows" {
 		return name + ".exe"
 	}
 	return name
 }
 
-func selectReleaseAsset(assets []githubReleaseAsset, goos, goarch string) *githubReleaseAsset {
+func isAssetNameForFlavor(name, flavor string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch normalizeAppFlavor(flavor) {
+	case "wails":
+		return strings.HasPrefix(name, "eve-flipper-wails-")
+	default:
+		return strings.HasPrefix(name, "eve-flipper-") && !strings.HasPrefix(name, "eve-flipper-wails-")
+	}
+}
+
+func selectReleaseAsset(assets []githubReleaseAsset, goos, goarch, flavor string) *githubReleaseAsset {
 	if len(assets) == 0 {
 		return nil
 	}
-	expected := strings.ToLower(expectedReleaseAssetName(goos, goarch))
+	expected := strings.ToLower(expectedReleaseAssetName(goos, goarch, flavor))
 	for i := range assets {
-		if strings.ToLower(strings.TrimSpace(assets[i].Name)) == expected {
+		name := strings.ToLower(strings.TrimSpace(assets[i].Name))
+		if name == expected && isAssetNameForFlavor(name, flavor) {
 			return &assets[i]
 		}
 	}
 	pattern := strings.ToLower(fmt.Sprintf("%s-%s", goos, goarch))
 	for i := range assets {
 		name := strings.ToLower(strings.TrimSpace(assets[i].Name))
-		if strings.HasPrefix(name, "eve-flipper-") && strings.Contains(name, pattern) {
+		if isAssetNameForFlavor(name, flavor) && strings.Contains(name, pattern) {
 			return &assets[i]
 		}
 	}

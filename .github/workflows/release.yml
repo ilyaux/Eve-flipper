@@ -69,6 +69,34 @@ jobs:
               go build -ldflags "${LDFLAGS}" -o "eve-flipper-$1-$2$3" .
           done
 
+      - name: Build Wails release asset
+        working-directory: frontend
+        env:
+          VITE_APP_VERSION: ${{ github.ref_name }}
+        run: npm run build:wails
+
+      - name: Build Wails Windows binary
+        env:
+          ESI_CLIENT_ID: ${{ secrets.ESI_CLIENT_ID }}
+          ESI_CLIENT_SECRET: ${{ secrets.ESI_CLIENT_SECRET }}
+          ESI_CALLBACK_URL: ${{ secrets.ESI_CALLBACK_URL }}
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          LDFLAGS="-s -w -H=windowsgui -X main.version=${VERSION}"
+
+          if [ -n "${ESI_CLIENT_ID}" ]; then
+            LDFLAGS="$LDFLAGS -X main.defaultESIClientID=${ESI_CLIENT_ID}"
+          fi
+          if [ -n "${ESI_CLIENT_SECRET}" ]; then
+            LDFLAGS="$LDFLAGS -X main.defaultESIClientSecret=${ESI_CLIENT_SECRET}"
+          fi
+          if [ -n "${ESI_CALLBACK_URL}" ]; then
+            LDFLAGS="$LDFLAGS -X main.defaultESICallbackURL=${ESI_CALLBACK_URL}"
+          fi
+
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -tags "wails,production" -ldflags "${LDFLAGS}" -o "eve-flipper-wails-windows-amd64.exe" .
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:

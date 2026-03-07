@@ -31,6 +31,9 @@ import { BatchBuilderPopup } from "./BatchBuilderPopup";
 
 const PAGE_SIZE = 100;
 const GROUP_PAGE_SIZE = 50; // rows shown per group before "Show all" button
+
+// Module-level cache: type IDs whose icon failed to load (avoid repeated 404s)
+const failedIconIds = new Set<number>();
 const CACHE_TTL_FALLBACK_MS = 20 * 60 * 1000;
 const COLUMN_PREFS_STORAGE_PREFIX = "eve-scan-columns:v1:";
 const ITEM_GROUPING_STORAGE_KEY = "eve-radius-group-by-item:v1";
@@ -787,7 +790,7 @@ export function ScanResultsTable({
   const emptyReason: EmptyReason = scanCompletedWithZero
     ? "no_results"
     : "no_scan_yet";
-  const { addToast } = useGlobalToast();
+  const { addToast, removeToast } = useGlobalToast();
 
   const allColumnDefs = useMemo(
     () => buildColumnDefs(showRegions, columnProfile),
@@ -824,6 +827,11 @@ export function ScanResultsTable({
   });
   const [showHiddenRows, setShowHiddenRows] = useState(false);
   const [hiddenMap, setHiddenMap] = useState<Record<string, HiddenFlipEntry>>({});
+  const [focusedRowId, setFocusedRowId] = useState<number | null>(null);
+  // Column DnD state
+  const [colDraggedKey, setColDraggedKey] = useState<SortKey | null>(null);
+  const [colDragOverKey, setColDragOverKey] = useState<SortKey | null>(null);
+  const [colDragOverSide, setColDragOverSide] = useState<"before" | "after">("after");
   const [ignoredModalOpen, setIgnoredModalOpen] = useState(false);
   const [ignoredSearch, setIgnoredSearch] = useState("");
   const [ignoredTab, setIgnoredTab] = useState<HiddenFilterTab>("all");
@@ -908,6 +916,7 @@ export function ScanResultsTable({
     row: FlipResult;
   } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const keyNavRootRef = useRef<HTMLDivElement>(null);
   const [execPlanRow, setExecPlanRow] = useState<FlipResult | null>(null);
   const [batchPlanRow, setBatchPlanRow] = useState<FlipResult | null>(null);
   const [dayDetailRow, setDayDetailRow] = useState<FlipResult | null>(null);
@@ -915,6 +924,14 @@ export function ScanResultsTable({
   const [filterSearch, setFilterSearch] = useState("");
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
+  const keyNavRef = useRef({
+    pageRows: [] as IndexedRow[],
+    focusedRowId: null as number | null,
+    setFocusedRowId: (_id: number | null) => {},
+    setExecPlanRow: (_row: FlipResult | null) => {},
+    setRowHiddenState: (_row: FlipResult, _mode: HiddenMode) => {},
+    hiddenMap: {} as Record<string, HiddenFlipEntry>,
+  });
   // Per-group row limit for region mode (key → max rows shown)
   const [groupRowLimit, setGroupRowLimit] = useState<Map<string, number>>(new Map());
 
@@ -1060,6 +1077,19 @@ export function ScanResultsTable({
   const resetColumns = useCallback(() => {
     setColumnOrder(allColumnDefs.map((col) => col.key));
   }, [allColumnDefs]);
+
+  const insertColumn = useCallback((fromKey: SortKey, toKey: SortKey, side: "before" | "after") => {
+    if (fromKey === toKey) return;
+    setColumnOrder((prev) => {
+      const without = prev.filter((k) => k !== fromKey);
+      const toIdx = without.indexOf(toKey);
+      if (toIdx < 0) return prev;
+      const insertAt = side === "before" ? toIdx : toIdx + 1;
+      const next = [...without];
+      next.splice(insertAt, 0, fromKey);
+      return next;
+    });
+  }, []);
 
   // ── Data pipeline: index → filter → sort ──
   const { indexed, filtered, sorted, variantByRowId } = useMemo(() => {
@@ -1610,6 +1640,24 @@ export function ScanResultsTable({
       };
       setHiddenMap((prev) => ({ ...prev, [key]: entry }));
       setContextMenu(null);
+
+      // Undo toast
+      const toastText = mode === "done" ? t("hiddenContextMarkedDoneToast") : t("hiddenContextIgnoredToast");
+      const toastId = addToast(toastText, "info", 5000, {
+        label: t("undo"),
+        onClick: () => {
+          setHiddenMap((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+          void deleteStationTradeStates({
+            tab: tradeStateTab,
+            keys: [{ type_id: ids.typeID, station_id: ids.stationID, region_id: ids.regionID }],
+          });
+        },
+      });
+
       try {
         await setStationTradeState({
           tab: tradeStateTab,
@@ -1620,11 +1668,12 @@ export function ScanResultsTable({
           until_revision: mode === "done" ? cacheView.currentRevision : 0,
         });
       } catch {
+        removeToast(toastId);
         addToast(t("hiddenStateSaveFailed"), "error", 2600);
         void refreshHiddenStates(cacheView.currentRevision);
       }
     },
-    [addToast, cacheView.currentRevision, refreshHiddenStates, t, tradeStateTab],
+    [addToast, removeToast, cacheView.currentRevision, refreshHiddenStates, t, tradeStateTab],
   );
 
   const unhideRowsByKeys = useCallback(
@@ -1793,6 +1842,71 @@ export function ScanResultsTable({
     setDayDetailRow(row);
   }, []);
 
+  // ── Keyboard navigation (E feature) ──
+  // Update ref on every render so the one-time effect can always read fresh state
+  keyNavRef.current = {
+    pageRows,
+    focusedRowId,
+    setFocusedRowId,
+    setExecPlanRow,
+    setRowHiddenState,
+    hiddenMap,
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // App keeps multiple tables mounted (hidden tabs preserve state).
+      // Process shortcuts only for the currently visible table instance.
+      const root = keyNavRootRef.current;
+      if (!root || root.offsetParent === null) return;
+
+      // Don't intercept when typing in an input
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const { pageRows, focusedRowId, setFocusedRowId, setExecPlanRow, setRowHiddenState } = keyNavRef.current;
+      if (pageRows.length === 0) return;
+
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const currentIdx = focusedRowId != null ? pageRows.findIndex((ir) => ir.id === focusedRowId) : -1;
+        let nextIdx: number;
+        if (e.key === "ArrowDown") {
+          nextIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, pageRows.length - 1);
+        } else {
+          nextIdx = currentIdx < 0 ? 0 : Math.max(currentIdx - 1, 0);
+        }
+        setFocusedRowId(pageRows[nextIdx].id);
+        return;
+      }
+
+      if (!focusedRowId) return;
+      const focused = pageRows.find((ir) => ir.id === focusedRowId);
+      if (!focused) return;
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        setExecPlanRow(focused.row);
+      } else if (e.key === "d" || e.key === "D") {
+        e.preventDefault();
+        void setRowHiddenState(focused.row, "done");
+        setFocusedRowId(null);
+      } else if (e.key === "i" || e.key === "I") {
+        e.preventDefault();
+        void setRowHiddenState(focused.row, "ignored");
+        setFocusedRowId(null);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Scroll focused row into view
+  useEffect(() => {
+    if (focusedRowId == null) return;
+    document.querySelector(`[data-row-id="${focusedRowId}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [focusedRowId]);
+
   // renderDataRow: renders a DataRow memo component — only the changed row re-renders
   const renderDataRow = useCallback(
     (
@@ -1808,6 +1922,7 @@ export function ScanResultsTable({
         compactMode={compactMode}
         isPinned={pinnedIds.has(ir.id)}
         isSelected={selectedIds.has(ir.id)}
+        isFocused={focusedRowId === ir.id}
         variant={variantByRowId.get(ir.id)}
         rowHidden={hiddenMap[flipStateKey(ir.row)]}
         isItemGrouped={isItemGrouped}
@@ -1825,6 +1940,7 @@ export function ScanResultsTable({
     [
       columnDefs,
       compactMode,
+      focusedRowId,
       handleContextMenu,
       hiddenMap,
       isItemGrouped,
@@ -1842,7 +1958,7 @@ export function ScanResultsTable({
 
   // ── Render ──
   return (
-    <div className="relative flex-1 flex flex-col min-h-0">
+    <div ref={keyNavRootRef} className="relative flex-1 flex flex-col min-h-0">
       {/* Toolbar */}
       <div className="shrink-0 flex items-center gap-2 px-2 py-1.5 text-xs">
         <div className="flex items-center gap-2 text-eve-dim">
@@ -1878,7 +1994,13 @@ export function ScanResultsTable({
             </span>
           )}
           {!scanning && results.length > 0 && isCacheStale && (
-            <span className="text-red-300">| {t("cacheStaleHint")}</span>
+            <span
+              title={t("cacheStaleHint")}
+              className="text-red-400 text-[13px] cursor-default"
+              aria-label={t("cacheStaleHint")}
+            >
+              ⚠
+            </span>
           )}
         </div>
 
@@ -1934,15 +2056,24 @@ export function ScanResultsTable({
                 <span>Group by item</span>
               </label>
             )}
-            <label className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-eve-border/60 bg-eve-dark/40 text-[11px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showHiddenRows}
-                onChange={(e) => setShowHiddenRows(e.target.checked)}
-                className="accent-eve-accent"
-              />
-              <span>{t("showHidden")}</span>
-            </label>
+            <button
+              type="button"
+              onClick={() => setShowHiddenRows((v) => !v)}
+              title={t("showHidden")}
+              className={`px-2 py-0.5 rounded-sm border text-[13px] transition-colors ${showHiddenRows ? "border-eve-accent/60 text-eve-accent bg-eve-accent/10" : "border-eve-border/60 text-eve-text/50 bg-eve-dark/40 hover:border-eve-accent/40 hover:text-eve-accent/70"}`}
+            >
+              {showHiddenRows ? (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+                  <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 0 1 0-1.186A10.004 10.004 0 0 1 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <path fillRule="evenodd" d="M3.28 2.22a.75.75 0 0 0-1.06 1.06l14.5 14.5a.75.75 0 1 0 1.06-1.06l-1.745-1.745a10.029 10.029 0 0 0 3.3-4.38 1.651 1.651 0 0 0 0-1.185A10.004 10.004 0 0 0 9.999 3a9.956 9.956 0 0 0-4.744 1.194L3.28 2.22ZM7.752 6.69l1.092 1.092a2.5 2.5 0 0 1 3.374 3.373l1.091 1.092a4 4 0 0 0-5.557-5.557Z" clipRule="evenodd" />
+                  <path d="M10.748 13.93l2.523 2.523a10.285 10.285 0 0 1-3.27.547c-4.258 0-7.894-2.66-9.337-6.41a1.651 1.651 0 0 1 0-1.186A10.007 10.007 0 0 1 2.839 6.02L6.07 9.252a4 4 0 0 0 4.678 4.678Z" />
+                </svg>
+              )}
+            </button>
             <button
               type="button"
               onClick={() => setIgnoredModalOpen(true)}
@@ -2217,56 +2348,96 @@ export function ScanResultsTable({
                 {t("columnsReset")}
               </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-1.5">
-              {orderedColumnDefs.map((col, idx) => {
+            <div className="flex flex-wrap items-center gap-y-2">
+              {orderedColumnDefs.map((col) => {
                 const visible = !hiddenColumns.has(col.key);
+                const isDragged = colDraggedKey === col.key;
+                const isOver = colDragOverKey === col.key && !isDragged;
+                const showGapBefore = isOver && colDragOverSide === "before";
+                const showGapAfter  = isOver && colDragOverSide === "after";
+
                 return (
-                  <div
-                    key={col.key}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                  <div key={col.key} className="flex items-center">
+                    {/* Drop gap — before */}
+                    <div className={[
+                      "flex items-center justify-center self-stretch transition-all duration-150 overflow-hidden",
+                      showGapBefore ? "w-7 opacity-100" : "w-0 opacity-0",
+                    ].join(" ")}>
+                      <div className="w-0.5 h-full min-h-[24px] rounded-full bg-eve-accent shadow-[0_0_6px_2px] shadow-eve-accent/40" />
+                    </div>
+
+                    {/* Chip */}
+                    <div
+                      tabIndex={0}
+                      draggable
+                      onDragStart={(e) => {
+                        setColDraggedKey(col.key);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => {
+                        setColDraggedKey(null);
+                        setColDragOverKey(null);
+                      }}
+                      onDragOver={(e) => {
                         e.preventDefault();
-                        moveColumn(col.key, -1);
-                      } else if (
-                        e.key === "ArrowRight" ||
-                        e.key === "ArrowDown"
-                      ) {
+                        e.dataTransfer.dropEffect = "move";
+                        if (colDraggedKey === col.key) return;
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const side = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                        if (colDragOverKey !== col.key || colDragOverSide !== side) {
+                          setColDragOverKey(col.key);
+                          setColDragOverSide(side);
+                        }
+                      }}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                          setColDragOverKey(null);
+                        }
+                      }}
+                      onDrop={(e) => {
                         e.preventDefault();
-                        moveColumn(col.key, 1);
-                      }
-                    }}
-                    className="flex items-center gap-1 rounded-sm border border-eve-border/40 bg-eve-panel/60 px-2 py-1"
-                  >
-                    <label className="flex items-center gap-1.5 min-w-0 flex-1">
-                      <input
-                        type="checkbox"
-                        checked={visible}
-                        onChange={(e) => toggleColumnVisibility(col.key, e.target.checked)}
-                        className="accent-eve-accent"
-                      />
-                      <span className="truncate" title={t(col.labelKey)}>
-                        {t(col.labelKey)}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => moveColumn(col.key, -1)}
-                      disabled={idx === 0}
-                      className="px-1 rounded-sm border border-eve-border/40 disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={t("columnsMoveLeft")}
+                        if (colDraggedKey && colDraggedKey !== col.key) {
+                          insertColumn(colDraggedKey, col.key, colDragOverSide);
+                        }
+                        setColDraggedKey(null);
+                        setColDragOverKey(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowLeft") { e.preventDefault(); moveColumn(col.key, -1); }
+                        else if (e.key === "ArrowRight") { e.preventDefault(); moveColumn(col.key, 1); }
+                      }}
+                      className={[
+                        "flex items-center gap-1.5 rounded-sm border px-2 py-1 cursor-grab active:cursor-grabbing select-none transition-all duration-150",
+                        isDragged
+                          ? "opacity-30 scale-95 border-eve-accent/30 bg-eve-accent/5"
+                          : isOver
+                            ? "border-eve-accent/50 bg-eve-accent/10"
+                            : colDraggedKey
+                              ? "border-eve-border/30 bg-eve-panel/40"
+                              : "border-eve-border/40 bg-eve-panel/60 hover:border-eve-accent/30 hover:bg-eve-accent/5",
+                      ].join(" ")}
                     >
-                      ←
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveColumn(col.key, 1)}
-                      disabled={idx === orderedColumnDefs.length - 1}
-                      className="px-1 rounded-sm border border-eve-border/40 disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={t("columnsMoveRight")}
-                    >
-                      →
-                    </button>
+                      <span className="text-eve-dim/40 text-[11px] leading-none">⠿</span>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={visible}
+                          onChange={(e) => toggleColumnVisibility(col.key, e.target.checked)}
+                          className="accent-eve-accent w-3 h-3"
+                        />
+                        <span className={visible ? "text-eve-text" : "text-eve-dim/50 line-through"}>
+                          {t(col.labelKey)}
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* Drop gap — after */}
+                    <div className={[
+                      "flex items-center justify-center self-stretch transition-all duration-150 overflow-hidden",
+                      showGapAfter ? "w-7 opacity-100" : "w-0 opacity-0",
+                    ].join(" ")}>
+                      <div className="w-0.5 h-full min-h-[24px] rounded-full bg-eve-accent shadow-[0_0_6px_2px] shadow-eve-accent/40" />
+                    </div>
                   </div>
                 );
               })}
@@ -2953,6 +3124,7 @@ interface DataRowProps {
   compactMode: boolean;
   isPinned: boolean;
   isSelected: boolean;
+  isFocused: boolean;
   variant: { index: number; total: number } | undefined;
   rowHidden: HiddenFlipEntry | undefined;
   isItemGrouped: boolean;
@@ -2988,13 +3160,14 @@ function TradeScoreBadge({ score }: { score: number }) {
 const DataRow = memo(
   function DataRow({
     ir, globalIdx, columnDefs, compactMode,
-    isPinned, isSelected, variant, rowHidden,
+    isPinned, isSelected, isFocused, variant, rowHidden,
     isItemGrouped, isRegionGrouped, variantExpandable, variantExpanded,
     onToggleVariantGroup, onContextMenu, onLmbClick,
     onToggleSelect, onTogglePin, tFn,
   }: DataRowProps) {
     return (
       <tr
+        data-row-id={ir.id}
         onContextMenu={(e) => onContextMenu(e, ir.id, ir.row)}
         onClick={(e) => {
           if (!isRegionGrouped) return;
@@ -3003,13 +3176,15 @@ const DataRow = memo(
           onLmbClick(ir.row);
         }}
         className={`border-b border-eve-border/50 hover:bg-eve-accent/5 transition-colors cursor-pointer ${compactMode ? "text-xs" : ""} ${
-          isPinned
-            ? "bg-eve-accent/10 border-l-2 border-l-eve-accent"
-            : isSelected
-              ? "bg-eve-accent/5"
-              : globalIdx % 2 === 0
-                ? "bg-eve-panel"
-                : "bg-eve-dark"
+          isFocused
+            ? "ring-1 ring-inset ring-eve-accent/60 bg-eve-accent/10"
+            : isPinned
+              ? "bg-eve-accent/10 border-l-2 border-l-eve-accent"
+              : isSelected
+                ? "bg-eve-accent/5"
+                : globalIdx % 2 === 0
+                  ? "bg-eve-panel"
+                  : "bg-eve-dark"
         } ${rowHidden ? "opacity-60" : ""}`}
       >
         <td className={`w-8 px-1 text-center ${compactMode ? "py-1" : "py-1.5"}`}>
@@ -3036,6 +3211,16 @@ const DataRow = memo(
           >
             {col.key === "TypeName" ? (
               <div className="flex items-center gap-1.5 min-w-0">
+                {ir.row.TypeID > 0 && !failedIconIds.has(ir.row.TypeID) && (
+                  <img
+                    src={`https://images.evetech.net/types/${ir.row.TypeID}/icon?size=32`}
+                    alt=""
+                    width={16}
+                    height={16}
+                    className="w-4 h-4 shrink-0 rounded-sm"
+                    onError={() => failedIconIds.add(ir.row.TypeID)}
+                  />
+                )}
                 <span className="truncate">{ir.row.TypeName}</span>
                 {/* Price-spike warning: now-profit > 0 but period-profit < 0 means temp spike */}
                 {(ir.row.DayNowProfit ?? 0) > 0 && (ir.row.DayPeriodProfit ?? 0) < 0 && (
@@ -3091,6 +3276,7 @@ const DataRow = memo(
   (prev, next) =>
     prev.isPinned === next.isPinned &&
     prev.isSelected === next.isSelected &&
+    prev.isFocused === next.isFocused &&
     prev.rowHidden === next.rowHidden &&
     prev.globalIdx === next.globalIdx &&
     prev.compactMode === next.compactMode &&

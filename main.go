@@ -1,3 +1,6 @@
+//go:build !wails
+// +build !wails
+
 package main
 
 import (
@@ -163,6 +166,7 @@ func main() {
 
 	srv := api.NewServer(cfg, esiClient, database, ssoConfig, sessions)
 	srv.SetAppVersion(version)
+	srv.SetAppFlavor("classic")
 
 	// Load SDE in background
 	go func() {

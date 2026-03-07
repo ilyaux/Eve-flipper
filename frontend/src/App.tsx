@@ -13,6 +13,8 @@ import { WarTracker } from "./components/WarTracker";
 import { PlexTab } from "./components/PlexTab";
 // import { MarketMakingTab } from "./components/MarketMakingTab";
 import { ScanHistory } from "./components/ScanHistory";
+import { CommandPalette } from "./components/CommandPalette";
+import { KeyboardShortcutsHelp } from "./components/KeyboardShortcutsHelp";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { useGlobalToast } from "./components/Toast";
@@ -82,6 +84,18 @@ const defaultPatronsURL = "https://ilyaux.github.io/eve-flipper-data/patrons.jso
 const patronsDataURL =
   (import.meta.env.VITE_PATRONS_URL as string | undefined)?.trim() ||
   defaultPatronsURL;
+
+type DesktopRuntimeWindow = Window & {
+  __TAURI_INTERNALS__?: unknown;
+  runtime?: { BrowserOpenURL?: (url: string) => void };
+};
+
+function getDesktopRuntimeFlags() {
+  const runtime = window as unknown as DesktopRuntimeWindow;
+  const isTauri = !!runtime.__TAURI_INTERNALS__;
+  const isWails = typeof runtime.runtime?.BrowserOpenURL === "function";
+  return { runtime, isTauri, isWails, isDesktop: isTauri || isWails };
+}
 
 function toRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") return null;
@@ -280,6 +294,10 @@ function normalizeRegionalResults(raw: unknown[]): FlipResult[] {
 
 function App() {
   const { t } = useI18n();
+  const [bootSplashState, setBootSplashState] = useState<
+    "visible" | "fading" | "hidden"
+  >("visible");
+  const showBootSplash = bootSplashState !== "hidden";
 
   const [params, setParams] = useState<ScanParams>({
     system_name: "Jita",
@@ -400,6 +418,8 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showPatrons, setShowPatrons] = useState(false);
   const [showCharacter, setShowCharacter] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateApplying, setUpdateApplying] = useState(false);
   const [updateApplyError, setUpdateApplyError] = useState("");
@@ -426,6 +446,24 @@ function App() {
   const regionAutoRefreshSignatureRef = useRef<string>("");
   const regionAutoRefreshLastRunRef = useRef<number>(0);
   const { addToast } = useGlobalToast();
+
+  const openExternalURL = useCallback(async (url: string) => {
+    const { runtime, isTauri, isWails } = getDesktopRuntimeFlags();
+    if (isWails) {
+      runtime.runtime?.BrowserOpenURL?.(url);
+      return;
+    }
+    if (isTauri) {
+      try {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(url);
+        return;
+      } catch {
+        // fallback below
+      }
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
 
   const [contractScanCompleted, setContractScanCompleted] = useState(false);
   const contractFilterHints = useMemo(() => {
@@ -506,11 +544,38 @@ function App() {
         handler: () => setShowHistory(true),
         description: "Open History",
       },
+      {
+        key: "k",
+        modifiers: ["ctrl"] as const,
+        handler: () => setShowCommandPalette((v) => !v),
+        description: "Open Command Palette",
+      },
+      {
+        key: "p",
+        modifiers: ["ctrl", "alt"] as const,
+        // Use "open" instead of toggle because this shortcut is also handled
+        // by a direct window listener below; both can fire for one keypress.
+        handler: () => setShowShortcutsHelp(true),
+        description: "Show keyboard shortcuts",
+      },
     ],
     [tab, params.system_name],
   );
 
   useKeyboardShortcuts(shortcuts);
+
+  // Direct listener for Alt+Ctrl+P — bypasses useKeyboardShortcuts so it works
+  // even when focus is inside an input or WebView2 intercepts modifier combos
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.code === "KeyP" && e.ctrlKey && e.altKey) {
+        e.preventDefault();
+        setShowShortcutsHelp(true);
+      }
+    };
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
+  }, []);
 
   const toggleAlertChannel = useCallback(
     (channel: keyof AlertChannels) => {
@@ -1053,6 +1118,70 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
+    const minVisibleMs = 1000;
+    const fadeMs = 420;
+    const fallbackMs = 2600;
+    const mountedAt = performance.now();
+    let fadeTimer = 0;
+    let hideTimer = 0;
+    let fallbackTimer = 0;
+    let finished = false;
+
+    const closeSplash = () => {
+      if (finished) return;
+      finished = true;
+      const elapsed = performance.now() - mountedAt;
+      const wait = Math.max(0, minVisibleMs - elapsed);
+      fadeTimer = window.setTimeout(() => {
+        setBootSplashState("fading");
+        hideTimer = window.setTimeout(() => {
+          setBootSplashState("hidden");
+        }, fadeMs);
+      }, wait);
+    };
+
+    if (document.readyState === "complete") {
+      closeSplash();
+    } else {
+      window.addEventListener("load", closeSplash, { once: true });
+      fallbackTimer = window.setTimeout(closeSplash, fallbackMs);
+    }
+
+    return () => {
+      finished = true;
+      window.removeEventListener("load", closeSplash);
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(fallbackTimer);
+    };
+  }, []);
+
+  // In desktop runtimes (Wails/Tauri), force external links to open in the
+  // system browser instead of inside the embedded WebView.
+  useEffect(() => {
+    const onDocumentClick = (event: globalThis.MouseEvent) => {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
+      if (!anchor) return;
+
+      const href = (anchor.getAttribute("href") || "").trim();
+      if (!/^https?:\/\//i.test(href)) return;
+
+      const { isDesktop } = getDesktopRuntimeFlags();
+      if (!isDesktop) return;
+
+      event.preventDefault();
+      void openExternalURL(href);
+    };
+
+    document.addEventListener("click", onDocumentClick);
+    return () => document.removeEventListener("click", onDocumentClick);
+  }, [openExternalURL]);
+
+  useEffect(() => {
     if (tab !== "region" || regionDefaultsAppliedRef.current) return;
     setParams((prev) => {
       const next = { ...prev };
@@ -1067,7 +1196,14 @@ function App() {
   }, [tab]);
 
   return (
-    <div className="h-screen flex flex-col gap-1.5 sm:gap-3 p-1.5 sm:p-4 select-none overflow-hidden">
+    <>
+      <div
+        className={`h-screen flex flex-col gap-1.5 sm:gap-3 p-1.5 sm:p-4 select-none overflow-hidden transition-[opacity,transform,filter] duration-500 ease-out ${
+          bootSplashState === "hidden"
+            ? "opacity-100 scale-100 blur-0"
+            : "opacity-0 scale-[0.995] blur-[1px]"
+        } ${bootSplashState !== "hidden" ? "pointer-events-none" : ""}`}
+      >
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -2052,6 +2188,23 @@ function App() {
         />
       )}
 
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp
+        open={showShortcutsHelp}
+        onClose={() => setShowShortcutsHelp(false)}
+      />
+
+      {/* Command Palette */}
+      <CommandPalette
+        open={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        onSwitchTab={(t) => setTab(t)}
+        onOpenWatchlist={() => setShowWatchlist(true)}
+        onOpenHistory={() => setShowHistory(true)}
+        onOpenCharacter={() => setShowCharacter(true)}
+        onStartScan={() => document.querySelector<HTMLButtonElement>("[data-scan-button]")?.click()}
+      />
+
       {/* ESI Unavailable Overlay */}
       {esiAvailable === false && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center">
@@ -2082,7 +2235,85 @@ function App() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+      {showBootSplash && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none fixed inset-0 z-[12000] transition-opacity duration-500 ${
+            bootSplashState === "fading" ? "opacity-0" : "opacity-100"
+          }`}
+        >
+          <div className="absolute inset-0 eve-preloader-backdrop" />
+          <div className="absolute inset-0 eve-preloader-grid" />
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="eve-preloader-sweep" />
+          </div>
+          <div className="relative z-10 flex h-full items-center justify-center px-4 sm:px-6">
+            <div className="eve-preloader-radar-field" />
+            <div className="eve-preloader-shell w-full max-w-[620px]">
+              <div className="eve-preloader-shell-head">
+                <span className="eve-preloader-led" />
+                <span className="eve-preloader-headline">{t("appTitle")}</span>
+                <span className="eve-preloader-build">{appVersion}</span>
+              </div>
+              <div className="eve-preloader-main">
+                <div className="eve-preloader-core-wrap">
+                  <div className="eve-preloader-core">
+                    <div className="eve-preloader-core-ring eve-preloader-core-ring--outer" />
+                    <div className="eve-preloader-core-ring eve-preloader-core-ring--mid" />
+                    <div className="eve-preloader-core-ring eve-preloader-core-ring--inner" />
+                    <div className="eve-preloader-core-sweep" />
+                    <div className="eve-preloader-center">
+                      <img src={logo} alt="" className="eve-preloader-logo" />
+                    </div>
+                  </div>
+                  <div className="eve-preloader-core-caption">Neocom uplink</div>
+                </div>
+                <div className="eve-preloader-copy">
+                  <div className="eve-preloader-kicker">
+                    <span>Capsuleer channel</span>
+                    <span className="eve-preloader-chip">Secure</span>
+                  </div>
+                  <div className="eve-preloader-title">{t("appTitle")}</div>
+                  <div className="eve-preloader-status">
+                    <span>{t("loading")}</span>
+                    <span className="eve-preloader-dot" />
+                    <span className="eve-preloader-dot eve-preloader-dot--delay-1" />
+                    <span className="eve-preloader-dot eve-preloader-dot--delay-2" />
+                  </div>
+                  <div className="eve-preloader-telemetry">
+                    <div className="eve-preloader-line">
+                      <span className="eve-preloader-label">Cluster</span>
+                      <span className="eve-preloader-value">Tranquility</span>
+                    </div>
+                    <div className="eve-preloader-line">
+                      <span className="eve-preloader-label">Uplink</span>
+                      <span className="eve-preloader-value eve-preloader-value--accent">Stable</span>
+                    </div>
+                    <div className="eve-preloader-line">
+                      <span className="eve-preloader-label">Session</span>
+                      <span className="eve-preloader-value">Handshake</span>
+                    </div>
+                  </div>
+                  <div className="eve-preloader-footer">
+                    <span className="eve-preloader-label">Node</span>
+                    <span className="eve-preloader-value eve-preloader-value--accent">Jita relay</span>
+                  </div>
+                </div>
+              </div>
+              <div className="eve-preloader-bar">
+                <span className="eve-preloader-bar-fill" />
+              </div>
+              <div className="eve-preloader-bar-scale">
+                <span>0%</span>
+                <span>50%</span>
+                <span>100%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

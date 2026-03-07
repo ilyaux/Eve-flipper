@@ -10,8 +10,8 @@ import { getStations, getStructures, getCharacterInfo } from "@/lib/api";
 import type { ScanParams, StationInfo } from "@/lib/types";
 
 // EVE skill IDs for trade fee calculation
-const SKILL_ACCOUNTING = 3443;      // reduces sales tax by 11% per level
-const SKILL_BROKER_RELATIONS = 3446; // reduces broker fee by 0.1% per level (station) + 0.03% (structure)
+const SKILL_ACCOUNTING = 16622;      // Accounting: reduces sales tax by 11% per level
+const SKILL_BROKER_RELATIONS = 3446; // Broker Relations: reduces broker fee by 0.3% per level (NPC stations)
 
 type TabForParams = "radius" | "region" | "contracts" | "route";
 
@@ -217,8 +217,8 @@ export function ParametersPanel({
       // Accounting: base sales tax 8%, each level reduces by 11% of base (not of current)
       // Formula: tax = 8% * (1 - 0.11 * level)
       const salesTax = parseFloat((8 * (1 - 0.11 * accounting)).toFixed(2));
-      // Broker Relations: base broker fee 3%, each level reduces by 0.1% (NPC station)
-      const brokerFee = parseFloat(Math.max(0, 3 - brokerRel * 0.1).toFixed(2));
+      // Broker Relations: base broker fee 3%, each level reduces by 0.3% (NPC station)
+      const brokerFee = parseFloat(Math.max(0, 3 - brokerRel * 0.3).toFixed(2));
 
       onChange({
         ...params,
@@ -459,8 +459,7 @@ export function ParametersPanel({
                       <NumberInput
                         value={params.buy_radius}
                         onChange={(v) => set("buy_radius", Math.round(v))}
-                        min={1}
-                        max={50}
+                        min={0}
                       />
                     </Field>
                   )}
@@ -815,8 +814,7 @@ export function ParametersPanel({
                     <NumberInput
                       value={params.buy_radius}
                       onChange={(v) => set("buy_radius", v)}
-                      min={1}
-                      max={50}
+                      min={0}
                     />
                   </Field>
                 )}
@@ -826,8 +824,7 @@ export function ParametersPanel({
                     <NumberInput
                       value={params.sell_radius}
                       onChange={(v) => set("sell_radius", v)}
-                      min={1}
-                      max={50}
+                      min={0}
                     />
                   </Field>
                 )}
@@ -1171,7 +1168,7 @@ function NumberInput({
   value: number;
   onChange: (v: number) => void;
   min: number;
-  max: number;
+  max?: number;
   step?: number;
 }) {
   return (
@@ -1180,7 +1177,7 @@ function NumberInput({
       value={value}
       onChange={(e) => {
         const v = parseFloat(e.target.value);
-        if (!isNaN(v) && v >= min && v <= max) onChange(v);
+        if (!isNaN(v) && v >= min && (max === undefined || v <= max)) onChange(v);
       }}
       min={min}
       max={max}

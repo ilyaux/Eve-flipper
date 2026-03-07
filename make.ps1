@@ -1,6 +1,6 @@
 param(
     [Parameter(Position=0)]
-    [ValidateSet("build","run","test","frontend","cross","tauri","tauri-dev","clean","all","help")]
+    [ValidateSet("build","run","test","frontend","wails","wails-run","cross","tauri","tauri-dev","clean","all","help")]
     [string]$Command = "help"
 )
 
@@ -29,8 +29,24 @@ function Load-DotEnv {
     }
 }
 
+function Ensure-WindowsResource {
+    $manifest = Join-Path $PSScriptRoot "assets/app.manifest"
+    $icon = Join-Path $PSScriptRoot "assets/logo_black.ico"
+    $out = Join-Path $PSScriptRoot "resource_windows_amd64.syso"
+
+    # Use the committed .syso as the source of truth. Only generate if missing.
+    if (Test-Path $out) { return }
+
+    $rsrc = Get-Command rsrc -ErrorAction SilentlyContinue
+    if (-not $rsrc) { return }
+    if ((Test-Path $manifest) -and (Test-Path $icon)) {
+        & $rsrc.Source -manifest $manifest -ico $icon -arch amd64 -o $out
+    }
+}
+
 function Build {
     Load-DotEnv
+    Ensure-WindowsResource
     Write-Host "Building frontend ($Version)..." -ForegroundColor Cyan
     Push-Location frontend
     $env:VITE_APP_VERSION = $Version
@@ -64,6 +80,31 @@ function Frontend {
     npm run build
     Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
     Pop-Location
+}
+
+function BuildWails {
+    Load-DotEnv
+    Ensure-WindowsResource
+    Write-Host "Building frontend for Wails ($Version)..." -ForegroundColor Cyan
+    Push-Location frontend
+    $env:VITE_APP_VERSION = $Version
+    npm install --silent 2>$null
+    npm run build:wails
+    $feExit = $LASTEXITCODE
+    Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
+    Pop-Location
+    if ($feExit -ne 0) { Write-Host "Frontend Wails build failed!" -ForegroundColor Red; return }
+
+    Write-Host "Building $AppName Wails desktop binary ($Version)..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
+    $wailsLdFlags = "-s -w -H=windowsgui -X main.version=$Version"
+    go build -tags "wails,production" -ldflags $wailsLdFlags -o "$BuildDir/$AppName-wails.exe" .
+    if ($LASTEXITCODE -eq 0) { Write-Host "OK: $BuildDir/$AppName-wails.exe" -ForegroundColor Green }
+}
+
+function RunWails {
+    BuildWails
+    if ($LASTEXITCODE -eq 0) { & "./$BuildDir/$AppName-wails.exe" }
 }
 
 function Cross {
@@ -225,6 +266,8 @@ Commands:
   run          Build and run the backend
   test         Run all Go tests
   frontend     Install deps and build frontend
+  wails        Build Wails desktop variant (.exe)
+  wails-run    Build and run Wails desktop variant
   cross        Cross-compile for Windows, Linux, macOS
   tauri        Build portable Tauri desktop app (Windows x64 zip)
   tauri-dev    Build sidecar + run Tauri in dev mode
@@ -239,6 +282,8 @@ switch ($Command) {
     "run"       { Run }
     "test"      { Test }
     "frontend"  { Frontend }
+    "wails"     { BuildWails }
+    "wails-run" { RunWails }
     "cross"     { Cross }
     "tauri"     { BuildTauri }
     "tauri-dev" { BuildTauriDev }
