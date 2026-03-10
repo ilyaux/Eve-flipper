@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteAuthCharacter, getAuthStatus, getDesktopLoginUrl, getWebLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
+import { deleteAuthCharacter, getAuthStatus, getDesktopLoginUrl, getLoginUrl, getWebLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
 import type { AuthStatus } from "./types";
 
 interface UseAuthReturn {
