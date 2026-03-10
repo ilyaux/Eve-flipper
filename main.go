@@ -166,7 +166,7 @@ func main() {
 
 	srv := api.NewServer(cfg, esiClient, database, ssoConfig, sessions)
 	srv.SetAppVersion(version)
-	srv.SetAppFlavor("classic")
+	srv.SetAppFlavor("web")
 
 	// Load SDE in background
 	go func() {

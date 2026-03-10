@@ -44,10 +44,10 @@ type updateResolved struct {
 
 func normalizeAppFlavor(flavor string) string {
 	flavor = strings.ToLower(strings.TrimSpace(flavor))
-	if flavor == "wails" {
-		return "wails"
+	if flavor == "desktop" {
+		return "desktop"
 	}
-	return "classic"
+	return "web"
 }
 
 type updateCheckResponse struct {
@@ -290,8 +290,10 @@ func (s *Server) fetchLatestRelease(ctx context.Context) (*githubLatestReleaseRe
 
 func expectedReleaseAssetName(goos, goarch, flavor string) string {
 	name := "eve-flipper"
-	if normalizeAppFlavor(flavor) == "wails" {
-		name += "-wails"
+	if normalizeAppFlavor(flavor) == "desktop" {
+		name += "-desktop"
+	} else {
+		name += "-web"
 	}
 	name += fmt.Sprintf("-%s-%s", goos, goarch)
 	if goos == "windows" {
@@ -303,10 +305,10 @@ func expectedReleaseAssetName(goos, goarch, flavor string) string {
 func isAssetNameForFlavor(name, flavor string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch normalizeAppFlavor(flavor) {
-	case "wails":
-		return strings.HasPrefix(name, "eve-flipper-wails-")
+	case "desktop":
+		return strings.HasPrefix(name, "eve-flipper-desktop-")
 	default:
-		return strings.HasPrefix(name, "eve-flipper-") && !strings.HasPrefix(name, "eve-flipper-wails-")
+		return strings.HasPrefix(name, "eve-flipper-web-")
 	}
 }
 

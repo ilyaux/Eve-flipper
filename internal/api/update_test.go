@@ -42,68 +42,68 @@ func TestSelectReleaseAsset(t *testing.T) {
 	t.Parallel()
 
 	assets := []githubReleaseAsset{
-		{Name: "eve-flipper-linux-amd64"},
-		{Name: "eve-flipper-linux-arm64"},
-		{Name: "eve-flipper-windows-amd64.exe"},
-		{Name: "eve-flipper-wails-windows-amd64.exe"},
+		{Name: "eve-flipper-web-linux-amd64"},
+		{Name: "eve-flipper-web-linux-arm64"},
+		{Name: "eve-flipper-web-windows-amd64.exe"},
+		{Name: "eve-flipper-desktop-windows-amd64.exe"},
 	}
 
-	got := selectReleaseAsset(assets, "windows", "amd64", "classic")
-	if got == nil || got.Name != "eve-flipper-windows-amd64.exe" {
+	got := selectReleaseAsset(assets, "windows", "amd64", "web")
+	if got == nil || got.Name != "eve-flipper-web-windows-amd64.exe" {
 		t.Fatalf("windows asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "linux", "arm64", "classic")
-	if got == nil || got.Name != "eve-flipper-linux-arm64" {
+	got = selectReleaseAsset(assets, "linux", "arm64", "web")
+	if got == nil || got.Name != "eve-flipper-web-linux-arm64" {
 		t.Fatalf("linux arm64 asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "darwin", "amd64", "classic")
+	got = selectReleaseAsset(assets, "darwin", "amd64", "web")
 	if got != nil {
 		t.Fatalf("expected nil for darwin/amd64, got %#v", got)
 	}
 }
 
-func TestSelectReleaseAssetWailsFlavor(t *testing.T) {
+func TestSelectReleaseAssetDesktopFlavor(t *testing.T) {
 	t.Parallel()
 
 	assets := []githubReleaseAsset{
-		{Name: "eve-flipper-wails-linux-amd64"},
-		{Name: "eve-flipper-wails-linux-arm64"},
-		{Name: "eve-flipper-wails-darwin-amd64"},
-		{Name: "eve-flipper-wails-darwin-arm64"},
-		{Name: "eve-flipper-windows-amd64.exe"},
-		{Name: "eve-flipper-wails-windows-amd64.exe"},
+		{Name: "eve-flipper-desktop-linux-amd64"},
+		{Name: "eve-flipper-desktop-linux-arm64"},
+		{Name: "eve-flipper-desktop-darwin-amd64"},
+		{Name: "eve-flipper-desktop-darwin-arm64"},
+		{Name: "eve-flipper-web-windows-amd64.exe"},
+		{Name: "eve-flipper-desktop-windows-amd64.exe"},
 	}
 
-	got := selectReleaseAsset(assets, "windows", "amd64", "wails")
-	if got == nil || got.Name != "eve-flipper-wails-windows-amd64.exe" {
-		t.Fatalf("wails windows asset mismatch: %#v", got)
+	got := selectReleaseAsset(assets, "windows", "amd64", "desktop")
+	if got == nil || got.Name != "eve-flipper-desktop-windows-amd64.exe" {
+		t.Fatalf("desktop windows asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets[:1], "windows", "amd64", "wails")
+	got = selectReleaseAsset(assets[:1], "windows", "amd64", "desktop")
 	if got != nil {
-		t.Fatalf("expected nil when wails asset missing, got %#v", got)
+		t.Fatalf("expected nil when desktop asset missing, got %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "linux", "amd64", "wails")
-	if got == nil || got.Name != "eve-flipper-wails-linux-amd64" {
-		t.Fatalf("wails linux amd64 asset mismatch: %#v", got)
+	got = selectReleaseAsset(assets, "linux", "amd64", "desktop")
+	if got == nil || got.Name != "eve-flipper-desktop-linux-amd64" {
+		t.Fatalf("desktop linux amd64 asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "linux", "arm64", "wails")
-	if got == nil || got.Name != "eve-flipper-wails-linux-arm64" {
-		t.Fatalf("wails linux arm64 asset mismatch: %#v", got)
+	got = selectReleaseAsset(assets, "linux", "arm64", "desktop")
+	if got == nil || got.Name != "eve-flipper-desktop-linux-arm64" {
+		t.Fatalf("desktop linux arm64 asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "darwin", "amd64", "wails")
-	if got == nil || got.Name != "eve-flipper-wails-darwin-amd64" {
-		t.Fatalf("wails darwin amd64 asset mismatch: %#v", got)
+	got = selectReleaseAsset(assets, "darwin", "amd64", "desktop")
+	if got == nil || got.Name != "eve-flipper-desktop-darwin-amd64" {
+		t.Fatalf("desktop darwin amd64 asset mismatch: %#v", got)
 	}
 
-	got = selectReleaseAsset(assets, "darwin", "arm64", "wails")
-	if got == nil || got.Name != "eve-flipper-wails-darwin-arm64" {
-		t.Fatalf("wails darwin arm64 asset mismatch: %#v", got)
+	got = selectReleaseAsset(assets, "darwin", "arm64", "desktop")
+	if got == nil || got.Name != "eve-flipper-desktop-darwin-arm64" {
+		t.Fatalf("desktop darwin arm64 asset mismatch: %#v", got)
 	}
 }
 

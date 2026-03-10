@@ -162,7 +162,7 @@ func startBackend(host string, port int) (*backendRuntime, error) {
 
 	srv := api.NewServer(cfg, esiClient, database, ssoConfig, sessions)
 	srv.SetAppVersion(version)
-	srv.SetAppFlavor("wails")
+	srv.SetAppFlavor("desktop")
 
 	// Load SDE in background.
 	go func() {
