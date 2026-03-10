@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteAuthCharacter, getAuthStatus, getDesktopLoginUrl, getLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
+import { deleteAuthCharacter, getAuthStatus, getDesktopLoginUrl, getWebLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
 import type { AuthStatus } from "./types";
 
 interface UseAuthReturn {
@@ -122,9 +122,18 @@ export function useAuth(): UseAuthReturn {
         window.open(url, "_blank");
       }
     } else {
-      // In regular browser, navigate in same window.
-      // Backend will redirect back to / after auth completes.
-      window.location.href = baseUrl;
+      // In regular browser: fetch the login URL via apiFetch first so that
+      // X-EveFlipper-UID header is sent and the OAuth state entry is bound
+      // to the correct user ID. Then navigate the window to EVE SSO.
+      // This prevents the race condition where the cookie is not yet set
+      // when the browser navigates to /api/auth/login directly.
+      let url = baseUrl;
+      try {
+        url = await getWebLoginUrl();
+      } catch {
+        // fallback: navigate directly (legacy behaviour)
+      }
+      window.location.href = url;
       return;
     }
     // Start polling for auth completion (desktop only)

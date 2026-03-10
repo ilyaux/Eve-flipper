@@ -1137,6 +1137,19 @@ export async function getDesktopLoginUrl(): Promise<string> {
   return url;
 }
 
+// Fetches the EVE SSO login URL for web (browser) flows via apiFetch so that
+// the X-EveFlipper-UID header is sent, binding the correct user ID to the
+// OAuth state entry before navigation begins.
+export async function getWebLoginUrl(): Promise<string> {
+  const res = await apiFetch(`${BASE}/api/auth/login?mode=json`);
+  const data = await handleResponse<{ url?: string }>(res);
+  const url = typeof data.url === "string" ? data.url.trim() : "";
+  if (!url) {
+    throw new Error("Web login URL is empty");
+  }
+  return url;
+}
+
 export type CharacterScope = number | "all";
 
 function appendCharacterScope(params: URLSearchParams, characterId?: CharacterScope): void {
