@@ -111,6 +111,7 @@ const defaultScanPresetParams = {
   max_s2b_bfs_ratio: 0,
   category_ids: [] as number[],
   sell_order_mode: false,
+  restrict_to_target_market: true,
   min_route_security: 0.45,
   source_regions: [],
   target_region: "",

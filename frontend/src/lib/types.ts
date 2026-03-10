@@ -456,6 +456,8 @@ export interface ScanParams {
   category_ids?: number[];
   /** When true, use lowest sell order at destination as revenue price instead of highest buy order. */
   sell_order_mode?: boolean;
+  /** Flipper only: when true restrict sell-side to target_market_system only; when false allow any buy order within sell radius. Default true. */
+  restrict_to_target_market?: boolean;
 }
 
 export interface AppConfig {

@@ -103,6 +103,8 @@ export const en = {
     paramsSellTax: "Sell Tax %",
     paramsBuyBrokerFee: "Buy Broker %",
     paramsSellBrokerFee: "Sell Broker %",
+    restrictToTargetMarket: "Target market only",
+    restrictToTargetMarketHint: "When enabled, only buy orders within the target market system count as sell destinations. Disable to consider any buy order within sell radius (v1.5.3 behavior).",
     paramsSecurity: "Security",
     routeSecurity: "Route security",
     routeSecurityHint: "Route only through systems with at least this security (0 = all space)",

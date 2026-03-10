@@ -101,6 +101,8 @@ export const ru = {
     routeSecurityMin07: "Мин. 0.7",
     routeSecurityMin08: "Мин. 0.8",
     routeSecurityMin09: "Мин. 0.9",
+    restrictToTargetMarket: "Только целевой маркет",
+    restrictToTargetMarketHint: "Включено: продажа только через buy-ордера в целевой системе. Выключено: любой buy-ордер в пределах sell-радиуса (поведение v1.5.3).",
     routeSecurityCustom: "Своё значение",
 
     // Contract filters

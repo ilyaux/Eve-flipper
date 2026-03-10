@@ -157,7 +157,8 @@ export function ParametersPanel({
         Number(tab === "region" && (params.max_dos ?? 0) > 0) +
         Number(tab === "region" && (params.min_demand_per_day ?? 0) > 0) +
         Number(tab === "region" && (params.category_ids ?? []).length > 0)
-      : 0);
+      : 0) +
+    Number(tab === "radius" && (params.restrict_to_target_market ?? true) === false);
 
   const toggleExpanded = () => {
     setExpanded((prev) => {
@@ -1006,6 +1007,24 @@ export function ParametersPanel({
                     <option value="0.7">{t("routeSecurityMin07")}</option>
                   </select>
                 </Field>
+
+                {tab === "radius" && (
+                  <Field label={t("restrictToTargetMarket")} hint={t("restrictToTargetMarketHint")}>
+                    <label className="h-[34px] px-2.5 py-1.5 bg-eve-input border border-eve-border rounded text-eve-text text-sm flex items-center justify-between cursor-pointer">
+                      <span className="text-eve-dim text-xs truncate">
+                        {(params.restrict_to_target_market ?? true)
+                          ? (params.target_market_system?.trim() || "Jita")
+                          : t("routeSecurityAll")}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={params.restrict_to_target_market ?? true}
+                        onChange={(e) => set("restrict_to_target_market", e.target.checked)}
+                        className="accent-eve-accent ml-2 shrink-0"
+                      />
+                    </label>
+                  </Field>
+                )}
 
                 {isFlowTab && (
                   <>

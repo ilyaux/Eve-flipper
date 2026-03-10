@@ -979,8 +979,12 @@ function App() {
         setContractScanCompleted(true);
       } else if (currentTab === "radius") {
         let meta: StationCacheMeta | undefined;
+        const radiusParams =
+          (params.restrict_to_target_market ?? true)
+            ? params
+            : { ...params, target_market_system: "" };
         const results = await scan(
-          params,
+          radiusParams,
           setProgress,
           controller.signal,
           (m) => {
