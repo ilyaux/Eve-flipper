@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -261,6 +262,7 @@ func stationAISyncWikiMirror(ctx context.Context, repo, mirrorDir string) error 
 	remoteURL := fmt.Sprintf("https://github.com/%s.wiki.git", repo)
 	_, statErr := os.Stat(filepath.Join(mirrorDir, ".git"))
 	if statErr == nil {
+		log.Printf("[AI][WIKI-RAG] sync start (pull): repo=%s", repo)
 		// Existing mirror: fast-forward pull. If it fails, reclone to keep state predictable.
 		if err := stationAIRunGit(ctx, "-C", mirrorDir, "remote", "set-url", "origin", remoteURL); err != nil {
 			return err
@@ -273,6 +275,7 @@ func stationAISyncWikiMirror(ctx context.Context, repo, mirrorDir string) error 
 	if err := os.MkdirAll(filepath.Dir(mirrorDir), 0o755); err != nil {
 		return err
 	}
+	log.Printf("[AI][WIKI-RAG] sync start (clone): repo=%s", repo)
 	return stationAIRunGit(ctx, "clone", "--depth", "1", remoteURL, mirrorDir)
 }
 
