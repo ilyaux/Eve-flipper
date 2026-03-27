@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getExecutionPlan, getStations, getStructures, type CharacterScope } from "../../lib/api";
 import { formatISK } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -203,6 +203,17 @@ function InjectorDestinationRow({
   const [loadingStations, setLoadingStations] = useState(false);
   const [loadingStructures, setLoadingStructures] = useState(false);
   const [loadingPrice, setLoadingPrice] = useState(false);
+  const latestValueRef = useRef(value);
+
+  useEffect(() => {
+    latestValueRef.current = value;
+  }, [value]);
+
+  const mergeValue = (patch: Partial<InjectorDestination>) => {
+    const next = { ...latestValueRef.current, ...patch };
+    latestValueRef.current = next;
+    onChange(next);
+  };
 
   useEffect(() => {
     if (!value.systemName.trim()) {
@@ -217,12 +228,12 @@ function InjectorDestinationRow({
       .then((resp) => {
         if (controller.signal.aborted) return;
         setStations(resp.stations);
-        onChange({
-          ...value,
+        const current = latestValueRef.current;
+        mergeValue({
           systemID: resp.system_id,
           regionID: resp.region_id,
-          locationID: resp.stations.some((entry) => entry.id === value.locationID) ? value.locationID : 0,
-          locationName: resp.stations.some((entry) => entry.id === value.locationID) ? value.locationName : "",
+          locationID: resp.stations.some((entry) => entry.id === current.locationID) ? current.locationID : 0,
+          locationName: resp.stations.some((entry) => entry.id === current.locationID) ? current.locationName : "",
         });
       })
       .catch(() => {
@@ -246,7 +257,7 @@ function InjectorDestinationRow({
 
     const controller = new AbortController();
     setLoadingStructures(true);
-    getStructures(value.systemID, value.regionID, controller.signal)
+    getStructures(value.systemID, value.regionID, controller.signal, activeCharacterId)
       .then((resp) => {
         if (controller.signal.aborted) return;
         setStructures(resp);
@@ -260,15 +271,20 @@ function InjectorDestinationRow({
       });
 
     return () => controller.abort();
-  }, [isLoggedIn, value.includeStructures, value.regionID, value.systemID]);
+  }, [activeCharacterId, isLoggedIn, value.includeStructures, value.regionID, value.systemID]);
 
   useEffect(() => {
-    if (value.regionID <= 0) return;
+    if (value.regionID <= 0 || (value.locationID === 0 && value.systemID <= 0)) {
+      setLoadingPrice(false);
+      return;
+    }
+
     const controller = new AbortController();
     setLoadingPrice(true);
     getExecutionPlan({
       type_id: 40520,
       region_id: value.regionID,
+      system_id: value.locationID === 0 ? value.systemID || undefined : undefined,
       location_id: value.locationID || undefined,
       quantity: 1,
       is_buy: true,
@@ -277,17 +293,17 @@ function InjectorDestinationRow({
     })
       .then((plan) => {
         if (controller.signal.aborted) return;
-        onChange({ ...value, sellPrice: plan.best_price || plan.expected_price || 0 });
+        mergeValue({ sellPrice: plan.best_price || plan.expected_price || 0 });
       })
       .catch(() => {
         if (controller.signal.aborted) return;
-        onChange({ ...value, sellPrice: 0 });
+        mergeValue({ sellPrice: 0 });
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoadingPrice(false);
       });
     return () => controller.abort();
-  }, [value.regionID, value.locationID]);
+  }, [activeCharacterId, value.locationID, value.regionID, value.systemID]);
 
   const locationOptions = value.includeStructures && isLoggedIn ? [...stations, ...structures] : stations;
   locationOptions.sort((left, right) => left.name.localeCompare(right.name));
@@ -460,6 +476,7 @@ export function SPFarmCard({
   const effectiveBrokerFee = brokerFee;
   const effectiveSalesTax = salesTax;
   const sellOrderNetMultiplier = 1 - effectiveSalesTax / 100 - effectiveBrokerFee / 100;
+  const instantSellNetMultiplier = 1 - effectiveSalesTax / 100;
   const spPerDay = profile.spPerHour * 24;
   const spPerMonth = profile.spPerHour * HOURS_PER_MONTH;
   const extractorsPerMonth = spPerMonth / SP_PER_EXTRACTOR;
@@ -498,7 +515,7 @@ export function SPFarmCard({
       : nesExtractorCost;
 
   const jitaSellNet = farm.injector_sell_price * sellOrderNetMultiplier;
-  const instantSellNet = farm.injector_buy_price;
+  const instantSellNet = farm.injector_buy_price * instantSellNetMultiplier;
   const destinationPctTotal = injectorDestinations.reduce((sum, entry) => sum + entry.percentage, 0);
   const customInjectorGross = injectorDestinations.reduce((sum, entry) => sum + (entry.percentage / 100) * entry.sellPrice, 0);
   const customInjectorNet = injectorDestinations.reduce((sum, entry) => sum + (entry.percentage / 100) * entry.sellPrice * sellOrderNetMultiplier, 0);
@@ -528,7 +545,7 @@ export function SPFarmCard({
   const accountRevenue = trainingCharsPerAccount * perCharRevenue;
   const accountProfit = accountRevenue - accountCost;
   const breakEvenInjectorGross = extractorsPerMonth > 0 && trainingCharsPerAccount > 0
-    ? accountCost / (trainingCharsPerAccount * extractorsPerMonth * (injectorMode === "instant" ? 1 : sellOrderNetMultiplier))
+    ? accountCost / (trainingCharsPerAccount * extractorsPerMonth * (injectorMode === "instant" ? instantSellNetMultiplier : sellOrderNetMultiplier))
     : 0;
   const accountPlexUsage =
     (profile.cloneType === "Omega" ? effectiveOmegaPlex : 0) +

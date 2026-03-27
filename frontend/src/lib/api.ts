@@ -477,14 +477,26 @@ export async function getStations(systemName: string, signal?: AbortSignal): Pro
   return handleResponse<StationsResponse>(res);
 }
 
-export async function getStructures(systemId: number, regionId: number, signal?: AbortSignal): Promise<StationInfo[]> {
-  const res = await apiFetch(`${BASE}/api/auth/structures?system_id=${systemId}&region_id=${regionId}`, { signal });
+export async function getStructures(
+  systemId: number,
+  regionId: number,
+  signal?: AbortSignal,
+  characterId?: CharacterScope,
+): Promise<StationInfo[]> {
+  const params = new URLSearchParams();
+  params.set("system_id", String(systemId));
+  params.set("region_id", String(regionId));
+  if (characterId != null && characterId !== "all") {
+    params.set("character_id", String(characterId));
+  }
+  const res = await apiFetch(`${BASE}/api/auth/structures?${params.toString()}`, { signal });
   return handleResponse<StationInfo[]>(res);
 }
 
 export async function getExecutionPlan(params: {
   type_id: number;
   region_id: number;
+  system_id?: number;
   location_id?: number;
   quantity: number;
   is_buy: boolean;
@@ -502,6 +514,7 @@ export async function getExecutionPlan(params: {
     body: JSON.stringify({
       type_id: params.type_id,
       region_id: params.region_id,
+      system_id: params.system_id ?? 0,
       location_id: params.location_id ?? 0,
       quantity: params.quantity,
       is_buy: params.is_buy,

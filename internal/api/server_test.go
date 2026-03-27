@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"eve-flipper/internal/auth"
 	"eve-flipper/internal/config"
 	"eve-flipper/internal/esi"
+
+	_ "modernc.org/sqlite"
 )
 
 // GET /api/status is not tested here because it calls esi.Client.HealthCheck() which performs a real HTTP request.
@@ -31,6 +35,80 @@ func TestHandleGetConfig_ReturnsConfig(t *testing.T) {
 	}
 	if out.SystemName != "Jita" || out.CargoCapacity != 10000 {
 		t.Errorf("config = %+v", out)
+	}
+}
+
+func newSessionStoreForAPITest(t *testing.T) *auth.SessionStore {
+	t.Helper()
+
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	_, err = sqlDB.Exec(`
+		CREATE TABLE auth_session (
+			user_id         TEXT NOT NULL,
+			character_id    INTEGER NOT NULL,
+			character_name  TEXT NOT NULL,
+			access_token    TEXT NOT NULL,
+			refresh_token   TEXT NOT NULL,
+			expires_at      INTEGER NOT NULL,
+			is_active       INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (user_id, character_id)
+		)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	return auth.NewSessionStore(sqlDB)
+}
+
+func TestHandleAuthStructures_UsesRequestedCharacterScope(t *testing.T) {
+	store := newSessionStoreForAPITest(t)
+
+	err := store.SaveAndActivateForUser("u1", &auth.Session{
+		CharacterID:   1001,
+		CharacterName: "Expired Active",
+		AccessToken:   "expired-token",
+		RefreshToken:  "expired-refresh",
+		ExpiresAt:     time.Now().Add(-2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("SaveAndActivateForUser(active): %v", err)
+	}
+
+	err = store.SaveForUser("u1", &auth.Session{
+		CharacterID:   2002,
+		CharacterName: "Scoped Pilot",
+		AccessToken:   "scoped-token",
+		RefreshToken:  "scoped-refresh",
+		ExpiresAt:     time.Now().Add(15 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("SaveForUser(scoped): %v", err)
+	}
+
+	srv := NewServer(config.Default(), &esi.Client{}, nil, nil, nil)
+	srv.sessions = store
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/structures?character_id=2002", nil)
+	req.Header.Set(userIDHeaderName, "u1")
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/auth/structures status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var out []any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode structures response: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("structures response length = %d, want 0", len(out))
 	}
 }
 

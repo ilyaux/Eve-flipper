@@ -3701,7 +3701,24 @@ func (s *Server) handleGetStations(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthStructures(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromRequest(r)
-	token, err := s.sessions.EnsureValidTokenForUser(s.sso, userID)
+
+	characterID, allScope, err := parseAuthScope(r)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	selectedSessions, err := s.authSessionsForScope(userID, characterID, allScope, false)
+	if err != nil {
+		if strings.Contains(err.Error(), "not logged in") {
+			writeError(w, 401, err.Error())
+		} else {
+			writeError(w, 400, err.Error())
+		}
+		return
+	}
+	sess := selectedSessions[0]
+
+	token, err := s.sessions.EnsureValidTokenForUserCharacter(s.sso, userID, sess.CharacterID)
 	if err != nil {
 		writeError(w, 401, err.Error())
 		return
@@ -3760,10 +3777,29 @@ func (s *Server) handleAuthStructures(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+func filterExecutionPlanOrders(orders []esi.MarketOrder, typeID int32, systemID int32, locationID int64) []esi.MarketOrder {
+	filtered := make([]esi.MarketOrder, 0, len(orders))
+	for _, o := range orders {
+		if o.TypeID != typeID {
+			continue
+		}
+		if locationID != 0 {
+			if o.LocationID != locationID {
+				continue
+			}
+		} else if systemID != 0 && o.SystemID != systemID {
+			continue
+		}
+		filtered = append(filtered, o)
+	}
+	return filtered
+}
+
 func (s *Server) handleExecutionPlan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TypeID     int32 `json:"type_id"`
 		RegionID   int32 `json:"region_id"`
+		SystemID   int32 `json:"system_id"`
 		LocationID int64 `json:"location_id"` // 0 = whole region
 		Quantity   int32 `json:"quantity"`
 		IsBuy      bool  `json:"is_buy"`
@@ -3822,25 +3858,7 @@ func (s *Server) handleExecutionPlan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Filter by type and optional location
-	var filtered []esi.MarketOrder
-	for _, o := range orders {
-		if o.TypeID != req.TypeID {
-			continue
-		}
-		if req.LocationID != 0 && isPlayerStructure(req.LocationID) {
-			if req.IsBuy && o.IsBuyOrder {
-				continue
-			}
-			if !req.IsBuy && !o.IsBuyOrder {
-				continue
-			}
-		}
-		if req.LocationID != 0 && o.LocationID != req.LocationID {
-			continue
-		}
-		filtered = append(filtered, o)
-	}
+	filtered := filterExecutionPlanOrders(orders, req.TypeID, req.SystemID, req.LocationID)
 
 	result := engine.ComputeExecutionPlan(filtered, req.Quantity, req.IsBuy)
 

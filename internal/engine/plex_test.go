@@ -465,6 +465,31 @@ func TestComputeSPFarm_Basic(t *testing.T) {
 	}
 }
 
+func TestComputeSPFarm_InstantSellUsesSalesTaxOnly(t *testing.T) {
+	plexPrice := 5_000_000.0
+	extractorBuy := 290_000_000.0
+	extractorSell := 300_000_000.0
+	injectorSell := 900_000_000.0
+	injectorBuy := 850_000_000.0
+	netMult := 0.954
+	salesTaxOnly := 0.964
+	nesExtractor := 293
+	nesOmega := 500
+	nesMPTC := 485
+
+	result := computeSPFarm(plexPrice, extractorBuy, extractorSell, injectorSell, injectorBuy, netMult, salesTaxOnly, nesExtractor, nesOmega, nesMPTC)
+
+	expectedRevenue := result.ExtractorsPerMonth * injectorBuy * salesTaxOnly
+	if !almostEqual(result.InstantSellRevenueISK, expectedRevenue, 1e-6) {
+		t.Fatalf("InstantSellRevenueISK = %f, want %f", result.InstantSellRevenueISK, expectedRevenue)
+	}
+
+	revenueWithoutTax := result.ExtractorsPerMonth * injectorBuy
+	if almostEqual(result.InstantSellRevenueISK, revenueWithoutTax, 1e-6) {
+		t.Fatalf("InstantSellRevenueISK should include sales tax deduction")
+	}
+}
+
 func TestComputeSPFarm_PaybackZeroWhenNotViable(t *testing.T) {
 	// Set injector price extremely low so profit is negative
 	result := computeSPFarm(5_000_000, 290_000_000, 300_000_000, 100_000_000, 90_000_000, 0.954, 0.964, 293, 500, 485)
