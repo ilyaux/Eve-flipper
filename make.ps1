@@ -58,7 +58,15 @@ function Build {
 
     Write-Host "Building $AppName ($Version)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
-    go build -ldflags $LdFlags -o "$BuildDir/$AppName.exe" .
+
+    # Embed ESI credentials if present
+    $buildLdFlags = $LdFlags
+    if ($env:ESI_CLIENT_ID -and $env:ESI_CLIENT_SECRET) {
+        $buildLdFlags += " -X main.esiClientID=$($env:ESI_CLIENT_ID) -X main.esiClientSecret=$($env:ESI_CLIENT_SECRET)"
+        Write-Host "  ESI credentials embedded" -ForegroundColor Green
+    }
+
+    go build -ldflags $buildLdFlags -o "$BuildDir/$AppName.exe" .
     if ($LASTEXITCODE -eq 0) { Write-Host "OK: $BuildDir/$AppName.exe" -ForegroundColor Green }
 }
 
@@ -98,6 +106,13 @@ function BuildWails {
     Write-Host "Building $AppName Wails desktop binary ($Version)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
     $wailsLdFlags = "-s -w -H=windowsgui -X main.version=$Version"
+
+    # Embed ESI credentials if present
+    if ($env:ESI_CLIENT_ID -and $env:ESI_CLIENT_SECRET) {
+        $wailsLdFlags += " -X main.esiClientID=$($env:ESI_CLIENT_ID) -X main.esiClientSecret=$($env:ESI_CLIENT_SECRET)"
+        Write-Host "  ESI credentials embedded" -ForegroundColor Green
+    }
+
     go build -tags "wails,production" -ldflags $wailsLdFlags -o "$BuildDir/$AppName-wails.exe" .
     if ($LASTEXITCODE -eq 0) { Write-Host "OK: $BuildDir/$AppName-wails.exe" -ForegroundColor Green }
 }
@@ -120,6 +135,13 @@ function Cross {
     Write-Host "Cross-compiling $AppName ($Version)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
 
+    # Embed ESI credentials if present
+    $crossLdFlags = $LdFlags
+    if ($env:ESI_CLIENT_ID -and $env:ESI_CLIENT_SECRET) {
+        $crossLdFlags += " -X main.esiClientID=$($env:ESI_CLIENT_ID) -X main.esiClientSecret=$($env:ESI_CLIENT_SECRET)"
+        Write-Host "  ESI credentials will be embedded in all binaries" -ForegroundColor Green
+    }
+
     $targets = @(
         @{ GOOS="windows"; GOARCH="amd64"; Ext=".exe" },
         @{ GOOS="linux";   GOARCH="amd64"; Ext="" },
@@ -134,7 +156,7 @@ function Cross {
         $env:GOOS   = $t.GOOS
         $env:GOARCH = $t.GOARCH
         $env:CGO_ENABLED = "0"
-        go build -ldflags $LdFlags -o $out .
+        go build -ldflags $crossLdFlags -o $out .
     }
 
     # Reset env
@@ -168,8 +190,16 @@ function BuildTauri {
     Write-Host ""
     Write-Host "=== Step 2/3: Building Go sidecar ===" -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $sidecarDir -Force | Out-Null
+
+    # Embed ESI credentials if present
+    $tauriLdFlags = $LdFlags
+    if ($env:ESI_CLIENT_ID -and $env:ESI_CLIENT_SECRET) {
+        $tauriLdFlags += " -X main.esiClientID=$($env:ESI_CLIENT_ID) -X main.esiClientSecret=$($env:ESI_CLIENT_SECRET)"
+        Write-Host "  ESI credentials embedded" -ForegroundColor Green
+    }
+
     $env:CGO_ENABLED = "0"
-    go build -ldflags $LdFlags -o "$sidecarDir/$sidecarName" .
+    go build -ldflags $tauriLdFlags -o "$sidecarDir/$sidecarName" .
     Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { Write-Host "Go sidecar build failed!" -ForegroundColor Red; return }
     Write-Host "  Sidecar: $sidecarDir/$sidecarName" -ForegroundColor Green
@@ -238,8 +268,16 @@ function BuildTauriDev {
     if ($feExit -ne 0) { Write-Host "Frontend build failed!" -ForegroundColor Red; return }
 
     New-Item -ItemType Directory -Path $sidecarDir -Force | Out-Null
+
+    # Embed ESI credentials if present
+    $tauriDevLdFlags = $LdFlags
+    if ($env:ESI_CLIENT_ID -and $env:ESI_CLIENT_SECRET) {
+        $tauriDevLdFlags += " -X main.esiClientID=$($env:ESI_CLIENT_ID) -X main.esiClientSecret=$($env:ESI_CLIENT_SECRET)"
+        Write-Host "  ESI credentials embedded" -ForegroundColor Green
+    }
+
     $env:CGO_ENABLED = "0"
-    go build -ldflags $LdFlags -o "$sidecarDir/$sidecarName" .
+    go build -ldflags $tauriDevLdFlags -o "$sidecarDir/$sidecarName" .
     Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { Write-Host "Go sidecar build failed!" -ForegroundColor Red; return }
     Write-Host "  Sidecar ready: $sidecarDir/$sidecarName" -ForegroundColor Green
@@ -274,6 +312,20 @@ Commands:
   clean        Remove build artifacts (including Tauri target/)
   all          Test + frontend + cross-compile
   help         Show this help
+
+ESI SSO Configuration:
+  To embed ESI credentials in the built executable, set environment variables:
+    `$env:ESI_CLIENT_ID = "your-client-id"`
+    `$env:ESI_CLIENT_SECRET = "your-client-secret"`
+
+  Before running any build command (build, run, wails, tauri, cross, etc.).
+  If set, credentials will be embedded via ldflags at compile time.
+
+  Register ESI application at: https://developers.eveonline.com/applications
+
+  Alternatively, load from .env file in repo root:
+    ESI_CLIENT_ID=your-client-id
+    ESI_CLIENT_SECRET=your-client-secret
 "@ -ForegroundColor Yellow
 }
 
