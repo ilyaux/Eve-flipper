@@ -306,6 +306,15 @@ func (c *Client) fetchRegionOrdersWithCache(regionID int32, orderType string) ([
 
 	// Store in cache
 	c.orderCache.Put(regionID, orderType, allOrders, respEtag, respExpires)
+	c.recordMarketOrderSnapshot(MarketOrderSnapshot{
+		RegionID:   regionID,
+		OrderType:  orderType,
+		Source:     "region",
+		ETag:       respEtag,
+		ExpiresAt:  respExpires,
+		CapturedAt: time.Now().UTC(),
+		Orders:     allOrders,
+	})
 	log.Printf("[ESI] OrderCache MISS region=%d type=%s (%d orders, expires=%s)",
 		regionID, orderType, len(allOrders), respExpires.Format("15:04:05"))
 

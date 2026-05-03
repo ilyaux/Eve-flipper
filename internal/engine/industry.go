@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 type IndustryParams struct {
 	TypeID              int32   // Target item to analyze
 	Runs                int32   // Number of runs (default 1)
+	ActivityMode        string  // auto/manufacturing/reaction/invention
 	MaterialEfficiency  int32   // Blueprint ME (0-10)
 	TimeEfficiency      int32   // Blueprint TE (0-20)
 	SystemID            int32   // Manufacturing system
@@ -28,55 +30,95 @@ type IndustryParams struct {
 	OwnBlueprint        bool    // true = user owns BP (default), false = must buy
 	BlueprintCost       float64 // ISK cost of blueprint (BPO or BPC)
 	BlueprintIsBPO      bool    // true = BPO (amortize over runs), false = BPC (one-time)
+	InventionChance     float64 // Optional invention chance override in percent (0 = SDE probability)
+	DecryptorCost       float64 // Optional per-attempt decryptor cost
+	InventionOutputRuns int32   // Optional successful BPC runs override
 }
 
 // MaterialNode represents a node in the production tree.
 type MaterialNode struct {
-	TypeID      int32           `json:"type_id"`
-	TypeName    string          `json:"type_name"`
-	Quantity    int32           `json:"quantity"`     // Required quantity
-	IsBase      bool            `json:"is_base"`      // True if cannot be further produced
-	BuyPrice    float64         `json:"buy_price"`    // Market buy price (sell orders)
-	BuildCost   float64         `json:"build_cost"`   // Total cost to build (materials + job cost)
-	ShouldBuild bool            `json:"should_build"` // True if building is cheaper than buying
-	JobCost     float64         `json:"job_cost"`     // Manufacturing job installation cost
-	Children    []*MaterialNode `json:"children"`     // Required sub-materials
-	Blueprint   *BlueprintInfo  `json:"blueprint"`    // Blueprint info if buildable
-	Depth       int             `json:"depth"`        // Depth in tree
+	TypeID       int32           `json:"type_id"`
+	TypeName     string          `json:"type_name"`
+	Quantity     int32           `json:"quantity"`      // Required quantity
+	Activity     string          `json:"activity"`      // manufacturing/reaction/base
+	Runs         int32           `json:"runs"`          // Blueprint runs needed for this node
+	IsBase       bool            `json:"is_base"`       // True if cannot be further produced
+	BuyPrice     float64         `json:"buy_price"`     // Market buy price (sell orders)
+	MaterialCost float64         `json:"material_cost"` // Sum of chosen child material costs
+	BuildCost    float64         `json:"build_cost"`    // Total cost to build (materials + job cost)
+	ShouldBuild  bool            `json:"should_build"`  // True if building is cheaper than buying
+	JobCost      float64         `json:"job_cost"`      // Manufacturing job installation cost
+	Children     []*MaterialNode `json:"children"`      // Required sub-materials
+	Blueprint    *BlueprintInfo  `json:"blueprint"`     // Blueprint info if buildable
+	Depth        int             `json:"depth"`         // Depth in tree
 }
 
 // BlueprintInfo contains blueprint information for display.
 type BlueprintInfo struct {
-	BlueprintTypeID int32 `json:"blueprint_type_id"`
-	ProductQuantity int32 `json:"product_quantity"`
-	ME              int32 `json:"me"`
-	TE              int32 `json:"te"`
-	Time            int32 `json:"time"` // Manufacturing time in seconds
+	BlueprintTypeID int32   `json:"blueprint_type_id"`
+	ProductQuantity int32   `json:"product_quantity"`
+	ME              int32   `json:"me"`
+	TE              int32   `json:"te"`
+	Time            int32   `json:"time"` // Manufacturing time in seconds
+	Activity        string  `json:"activity"`
+	Probability     float64 `json:"probability,omitempty"`
+}
+
+// IndustryActivityStep is one executable activity in the industry plan.
+type IndustryActivityStep struct {
+	Activity         string  `json:"activity"`
+	BlueprintTypeID  int32   `json:"blueprint_type_id"`
+	BlueprintName    string  `json:"blueprint_name"`
+	ProductTypeID    int32   `json:"product_type_id"`
+	ProductName      string  `json:"product_name"`
+	Runs             float64 `json:"runs"`
+	OutputQuantity   int32   `json:"output_quantity"`
+	MaterialCost     float64 `json:"material_cost"`
+	JobCost          float64 `json:"job_cost"`
+	TotalCost        float64 `json:"total_cost"`
+	TimeSeconds      int32   `json:"time_seconds"`
+	Probability      float64 `json:"probability,omitempty"`
+	ExpectedAttempts float64 `json:"expected_attempts,omitempty"`
+	Reason           string  `json:"reason,omitempty"`
 }
 
 // IndustryAnalysis is the result of analyzing a production chain.
 type IndustryAnalysis struct {
-	TargetTypeID          int32           `json:"target_type_id"`
-	TargetTypeName        string          `json:"target_type_name"`
-	Runs                  int32           `json:"runs"`
-	TotalQuantity         int32           `json:"total_quantity"`
-	MarketBuyPrice        float64         `json:"market_buy_price"`   // Cost to buy ready product (from sell orders, no broker fee)
-	TotalBuildCost        float64         `json:"total_build_cost"`   // Cost to build from scratch
-	OptimalBuildCost      float64         `json:"optimal_build_cost"` // Cost with optimal buy/build decisions
-	Savings               float64         `json:"savings"`            // MarketBuyPrice - OptimalBuildCost
-	SavingsPercent        float64         `json:"savings_percent"`
-	SellRevenue           float64         `json:"sell_revenue"`       // Revenue after sales tax + broker fee
-	Profit                float64         `json:"profit"`             // SellRevenue - OptimalBuildCost
-	ProfitPercent         float64         `json:"profit_percent"`     // Profit / OptimalBuildCost * 100
-	ISKPerHour            float64         `json:"isk_per_hour"`       // Profit / manufacturing hours
-	ManufacturingTime     int32           `json:"manufacturing_time"` // Total time in seconds
-	TotalJobCost          float64         `json:"total_job_cost"`     // Sum of all job installation costs
-	MaterialTree          *MaterialNode   `json:"material_tree"`
-	FlatMaterials         []*FlatMaterial `json:"flat_materials"` // Flattened list of base materials
-	SystemCostIndex       float64         `json:"system_cost_index"`
-	RegionID              int32           `json:"region_id"`               // Market region for execution plan
-	RegionName            string          `json:"region_name"`             // Optional display name
-	BlueprintCostIncluded float64         `json:"blueprint_cost_included"` // BP cost added to build cost
+	TargetTypeID          int32                  `json:"target_type_id"`
+	TargetTypeName        string                 `json:"target_type_name"`
+	Runs                  int32                  `json:"runs"`
+	TotalQuantity         int32                  `json:"total_quantity"`
+	MarketBuyPrice        float64                `json:"market_buy_price"`   // Cost to buy ready product (from sell orders, no broker fee)
+	TotalBuildCost        float64                `json:"total_build_cost"`   // Cost to build from scratch
+	OptimalBuildCost      float64                `json:"optimal_build_cost"` // Cost with optimal buy/build decisions
+	Savings               float64                `json:"savings"`            // MarketBuyPrice - OptimalBuildCost
+	SavingsPercent        float64                `json:"savings_percent"`
+	SellRevenue           float64                `json:"sell_revenue"`       // Revenue after sales tax + broker fee
+	Profit                float64                `json:"profit"`             // SellRevenue - OptimalBuildCost
+	ProfitPercent         float64                `json:"profit_percent"`     // Profit / OptimalBuildCost * 100
+	MakerSellRevenue      float64                `json:"maker_sell_revenue"` // Listing at visible ask after tax + broker fee
+	MakerSellProfit       float64                `json:"maker_sell_profit"`
+	InstantSellRevenue    float64                `json:"instant_sell_revenue"` // Selling into visible buy orders after sales tax
+	InstantSellProfit     float64                `json:"instant_sell_profit"`
+	InstantSellAvailable  bool                   `json:"instant_sell_available"`
+	ISKPerHour            float64                `json:"isk_per_hour"`       // Profit / manufacturing hours
+	ManufacturingTime     int32                  `json:"manufacturing_time"` // Total time in seconds
+	TotalActivityTime     int32                  `json:"total_activity_time"`
+	TotalJobCost          float64                `json:"total_job_cost"` // Sum of all job installation costs
+	ManufacturingCost     float64                `json:"manufacturing_cost"`
+	ReactionCost          float64                `json:"reaction_cost"`
+	InventionCost         float64                `json:"invention_cost"`
+	InventionJobCost      float64                `json:"invention_job_cost"`
+	InventionAttempts     float64                `json:"invention_attempts"`
+	InventionProbability  float64                `json:"invention_probability"`
+	ActivityMode          string                 `json:"activity_mode"`
+	ActivityPlan          []IndustryActivityStep `json:"activity_plan"`
+	MaterialTree          *MaterialNode          `json:"material_tree"`
+	FlatMaterials         []*FlatMaterial        `json:"flat_materials"` // Flattened list of base materials
+	SystemCostIndex       float64                `json:"system_cost_index"`
+	RegionID              int32                  `json:"region_id"`               // Market region for execution plan
+	RegionName            string                 `json:"region_name"`             // Optional display name
+	BlueprintCostIncluded float64                `json:"blueprint_cost_included"` // BP cost added to build cost
 }
 
 // FlatMaterial is a simplified material for the shopping list.
@@ -96,9 +138,13 @@ type IndustryAnalyzer struct {
 	IndustryCache        *esi.IndustryCache
 	adjustedPrices       map[int32]float64
 	marketPrices         map[int32]float64 // Best sell order prices
+	marketSellOrders     map[int32][]esi.MarketOrder
+	marketBuyOrders      map[int32][]esi.MarketOrder
+	systemCostIndices    *esi.SystemCostIndices
 	getAllAdjustedPrices func(cache *esi.IndustryCache) (map[int32]float64, error)
 	getSystemCostIndex   func(cache *esi.IndustryCache, systemID int32) (*esi.SystemCostIndices, error)
 	fetchMarketPricesFn  func(params IndustryParams) (map[int32]float64, error)
+	fetchMarketBooksFn   func(params IndustryParams) (map[int32][]esi.MarketOrder, map[int32][]esi.MarketOrder, error)
 }
 
 // NewIndustryAnalyzer creates a new analyzer.
@@ -148,6 +194,16 @@ func (a *IndustryAnalyzer) loadMarketPrices(params IndustryParams) (map[int32]fl
 	return a.fetchMarketPrices(params)
 }
 
+func (a *IndustryAnalyzer) loadMarketBooks(params IndustryParams) (map[int32][]esi.MarketOrder, map[int32][]esi.MarketOrder, error) {
+	if a.fetchMarketBooksFn != nil {
+		return a.fetchMarketBooksFn(params)
+	}
+	if a.ESI == nil {
+		return nil, nil, fmt.Errorf("esi client unavailable")
+	}
+	return a.fetchMarketBooks(params)
+}
+
 // Analyze performs full industry analysis for a given item.
 func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string)) (*IndustryAnalysis, error) {
 	if params.Runs <= 0 {
@@ -158,6 +214,13 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 	}
 	if params.ReprocessingYield <= 0 {
 		params.ReprocessingYield = 0.50 // Default 50%
+	}
+	params.ActivityMode = normalizeIndustryActivityMode(params.ActivityMode)
+	if params.InventionOutputRuns < 0 {
+		params.InventionOutputRuns = 0
+	}
+	if params.DecryptorCost < 0 {
+		params.DecryptorCost = 0
 	}
 
 	// Get type info
@@ -184,15 +247,28 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 		marketPrices = make(map[int32]float64)
 	}
 	a.marketPrices = marketPrices
+	a.marketSellOrders = nil
+	a.marketBuyOrders = nil
+
+	progress("Fetching order book depth...")
+	marketSellOrders, marketBuyOrders, err := a.loadMarketBooks(params)
+	if err != nil {
+		log.Printf("Warning: failed to fetch market order books: %v", err)
+	} else {
+		a.marketSellOrders = marketSellOrders
+		a.marketBuyOrders = marketBuyOrders
+	}
 
 	// Get system cost index
 	var costIndex float64
+	a.systemCostIndices = nil
 	if params.SystemID != 0 {
 		progress("Fetching system cost index...")
 		idx, err := a.loadSystemCostIndex(params.SystemID)
 		if err != nil {
 			log.Printf("Warning: failed to fetch cost index: %v", err)
 		} else {
+			a.systemCostIndices = idx
 			costIndex = idx.Manufacturing
 		}
 	}
@@ -203,7 +279,15 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 	// Calculate total items produced: runs × productQuantity.
 	totalQuantity := params.Runs
 	if bp, ok := a.SDE.Industry.GetBlueprintForProduct(params.TypeID); ok {
-		totalQuantity = params.Runs * bp.ProductQuantity
+		activity := a.activityForProduct(bp, params.TypeID, params.ActivityMode)
+		productQty, _ := blueprintProductForActivity(bp, params.TypeID, activity)
+		if productQty <= 0 {
+			productQty = bp.ProductQuantity
+		}
+		if productQty <= 0 {
+			productQty = 1
+		}
+		totalQuantity = params.Runs * productQty
 	}
 
 	// Build material tree recursively using totalQuantity as desired items
@@ -212,16 +296,18 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 	// Calculate costs
 	progress("Calculating optimal costs...")
 	a.calculateCosts(tree, costIndex, params)
+	if params.ActivityMode != "auto" && !tree.IsBase {
+		tree.ShouldBuild = true
+	}
 
 	// Flatten materials for shopping list
 	flatMaterials := a.flattenMaterials(tree)
 
-	// FIX #3: MarketBuyPrice = cost to buy from sell orders (NO broker fee).
-	// Buying instantly from sell orders doesn't incur broker fee in EVE.
-	marketBuyPrice := a.marketPrices[params.TypeID] * float64(totalQuantity)
+	// MarketBuyPrice is cost to buy from visible sell-order depth (no broker fee).
+	marketBuyPrice := a.marketBuyCost(params.TypeID, totalQuantity)
 
 	optimalCost := tree.BuildCost
-	if tree.BuyPrice < tree.BuildCost && tree.BuyPrice > 0 {
+	if params.ActivityMode == "auto" && tree.BuyPrice < tree.BuildCost && tree.BuyPrice > 0 {
 		optimalCost = tree.BuyPrice
 	}
 
@@ -236,6 +322,16 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 		optimalCost += bpCostIncluded
 	}
 
+	inventionStep, hasInvention := a.calculateInventionStep(params, tree, costIndex)
+	var inventionCost, inventionJobCost, inventionAttempts, inventionProbability float64
+	if hasInvention {
+		inventionCost = inventionStep.TotalCost
+		inventionJobCost = inventionStep.JobCost
+		inventionAttempts = inventionStep.ExpectedAttempts
+		inventionProbability = inventionStep.Probability
+		optimalCost += inventionCost
+	}
+
 	savings := marketBuyPrice - optimalCost
 	savingsPercent := 0.0
 	if marketBuyPrice > 0 {
@@ -244,7 +340,18 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 
 	// FIX #6: Calculate profit if you sell the built product.
 	// Revenue = sell price × quantity × (1 - salesTax%) × (1 - brokerFee%)
-	sellRevenue := marketBuyPrice * (1.0 - params.SalesTaxPercent/100) * (1.0 - params.BrokerFee/100)
+	makerSellRevenue := a.marketBestAsk(params.TypeID) * float64(totalQuantity) *
+		(1.0 - params.SalesTaxPercent/100) *
+		(1.0 - params.BrokerFee/100)
+	instantSellRevenue, instantSellAvailable := a.marketInstantSellRevenue(
+		params.TypeID,
+		totalQuantity,
+		1.0-params.SalesTaxPercent/100,
+	)
+	sellRevenue := makerSellRevenue
+	if instantSellAvailable {
+		sellRevenue = instantSellRevenue
+	}
 	profit := sellRevenue - optimalCost
 	profitPercent := 0.0
 	if optimalCost > 0 {
@@ -262,6 +369,21 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 	}
 
 	totalJobCost := a.sumJobCosts(tree)
+	if hasInvention {
+		totalJobCost += inventionJobCost
+	}
+	activityPlan := a.buildActivityPlan(tree)
+	if hasInvention {
+		activityPlan = append([]IndustryActivityStep{inventionStep}, activityPlan...)
+	}
+	manufacturingCost, reactionCost := sumActivityPlanCosts(activityPlan)
+	totalActivityTime := sumActivityPlanTime(activityPlan)
+	if totalActivityTime == 0 {
+		totalActivityTime = mfgTime
+	}
+	if totalActivityTime > 0 {
+		iskPerHour = profit / (float64(totalActivityTime) / 3600.0)
+	}
 
 	regionID, regionName := a.resolveMarketRegion(params)
 
@@ -278,9 +400,23 @@ func (a *IndustryAnalyzer) Analyze(params IndustryParams, progress func(string))
 		SellRevenue:           sellRevenue,
 		Profit:                profit,
 		ProfitPercent:         profitPercent,
+		MakerSellRevenue:      makerSellRevenue,
+		MakerSellProfit:       makerSellRevenue - optimalCost,
+		InstantSellRevenue:    instantSellRevenue,
+		InstantSellProfit:     instantSellRevenue - optimalCost,
+		InstantSellAvailable:  instantSellAvailable,
 		ISKPerHour:            iskPerHour,
-		ManufacturingTime:     mfgTime,
+		ManufacturingTime:     totalActivityTime,
+		TotalActivityTime:     totalActivityTime,
 		TotalJobCost:          totalJobCost,
+		ManufacturingCost:     manufacturingCost,
+		ReactionCost:          reactionCost,
+		InventionCost:         inventionCost,
+		InventionJobCost:      inventionJobCost,
+		InventionAttempts:     inventionAttempts,
+		InventionProbability:  inventionProbability,
+		ActivityMode:          params.ActivityMode,
+		ActivityPlan:          activityPlan,
 		MaterialTree:          tree,
 		FlatMaterials:         flatMaterials,
 		SystemCostIndex:       costIndex,
@@ -302,7 +438,8 @@ func (a *IndustryAnalyzer) buildMaterialTree(typeID int32, quantity int32, param
 		TypeName: typeName,
 		Quantity: quantity,
 		Depth:    depth,
-		BuyPrice: a.marketPrices[typeID] * float64(quantity),
+		BuyPrice: a.marketBuyCost(typeID, quantity),
+		Activity: "base",
 	}
 
 	// Check if we can build this item
@@ -311,25 +448,38 @@ func (a *IndustryAnalyzer) buildMaterialTree(typeID int32, quantity int32, param
 		node.IsBase = true
 		return node
 	}
+	activity := a.activityForProduct(bp, typeID, params.ActivityMode)
+	if activity == "" {
+		node.IsBase = true
+		return node
+	}
+	productQuantity, probability := blueprintProductForActivity(bp, typeID, activity)
+	if productQuantity <= 0 {
+		productQuantity = 1
+	}
 
 	// Calculate how many runs we need
-	runsNeeded := quantity / bp.ProductQuantity
-	if quantity%bp.ProductQuantity != 0 {
+	runsNeeded := quantity / productQuantity
+	if quantity%productQuantity != 0 {
 		runsNeeded++
 	}
+	node.Activity = activity
+	node.Runs = runsNeeded
 
 	node.Blueprint = &BlueprintInfo{
 		BlueprintTypeID: bp.BlueprintTypeID,
-		ProductQuantity: bp.ProductQuantity,
+		ProductQuantity: productQuantity,
 		ME:              params.MaterialEfficiency,
 		TE:              params.TimeEfficiency,
-		Time:            bp.CalculateTimeWithTE(runsNeeded, params.TimeEfficiency),
+		Time:            calculateActivityTime(bp, activity, runsNeeded, params.TimeEfficiency),
+		Activity:        activity,
+		Probability:     probability,
 	}
 
 	// FIX #5: Apply ME and structure bonus in a single step before ceiling
 	// to avoid rounding errors from intermediate truncation.
 	// EVE formula: max(runs, ceil(base × runs × (1-ME/100) × (1-structureBonus/100)))
-	materials := bp.CalculateMaterialsWithMEAndStructure(runsNeeded, params.MaterialEfficiency, params.StructureBonus)
+	materials := calculateActivityMaterials(bp, activity, runsNeeded, params.MaterialEfficiency, params.StructureBonus)
 
 	// Build children recursively
 	for _, mat := range materials {
@@ -363,11 +513,12 @@ func (a *IndustryAnalyzer) calculateCosts(node *MaterialNode, costIndex float64,
 			materialCost += child.BuyPrice
 		}
 	}
+	node.MaterialCost = materialCost
 
 	// Calculate job installation cost
 	// Formula: EIV * cost_index * (1 + facility_tax)
 	eiv := a.calculateEIV(node)
-	node.JobCost = eiv * costIndex * (1 + params.FacilityTax/100)
+	node.JobCost = eiv * a.costIndexForActivity(node.Activity, costIndex) * (1 + params.FacilityTax/100)
 
 	node.BuildCost = materialCost + node.JobCost
 
@@ -387,20 +538,337 @@ func (a *IndustryAnalyzer) calculateEIV(node *MaterialNode) float64 {
 	if !ok || bp == nil {
 		return 0
 	}
+	activity := node.Activity
+	if activity == "" {
+		activity = a.activityForProduct(bp, node.TypeID, "")
+	}
+	productQuantity, _ := blueprintProductForActivity(bp, node.TypeID, activity)
+	if productQuantity <= 0 {
+		productQuantity = 1
+	}
 
 	// Calculate actual blueprint runs for this node
-	runsNeeded := node.Quantity / bp.ProductQuantity
-	if node.Quantity%bp.ProductQuantity != 0 {
+	runsNeeded := node.Quantity / productQuantity
+	if node.Quantity%productQuantity != 0 {
 		runsNeeded++
 	}
 
 	var eiv float64
-	for _, mat := range bp.Materials {
+	for _, mat := range activityMaterials(bp, activity) {
 		price := a.adjustedPrices[mat.TypeID]
 		// Use base_quantity × runs (NOT ME-adjusted quantities)
 		eiv += price * float64(mat.Quantity) * float64(runsNeeded)
 	}
 	return eiv
+}
+
+func normalizeIndustryActivityMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "manufacturing", "reaction", "invention":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "auto"
+	}
+}
+
+func (a *IndustryAnalyzer) activityForProduct(bp *sde.Blueprint, productTypeID int32, preferred string) string {
+	if bp == nil {
+		return ""
+	}
+	preferred = normalizeIndustryActivityMode(preferred)
+	if (preferred == "auto" || preferred == "manufacturing") && bp.ProductTypeID == productTypeID && len(bp.Materials) > 0 {
+		return "manufacturing"
+	}
+	if preferred != "auto" && preferred != "invention" {
+		if activityProduces(bp, preferred, productTypeID) {
+			return preferred
+		}
+	}
+	if activityProduces(bp, "manufacturing", productTypeID) {
+		return "manufacturing"
+	}
+	if activityProduces(bp, "reaction", productTypeID) {
+		return "reaction"
+	}
+	if preferred != "auto" && preferred != "invention" {
+		if _, ok := bp.Activities[preferred]; ok {
+			return preferred
+		}
+	}
+	return ""
+}
+
+func activityProduces(bp *sde.Blueprint, activity string, productTypeID int32) bool {
+	if bp == nil {
+		return false
+	}
+	act := bp.Activities[activity]
+	if act == nil {
+		return false
+	}
+	for _, product := range act.Products {
+		if product.TypeID == productTypeID {
+			return true
+		}
+	}
+	return false
+}
+
+func blueprintProductForActivity(bp *sde.Blueprint, productTypeID int32, activity string) (int32, float64) {
+	if bp == nil {
+		return 0, 0
+	}
+	act := bp.Activities[activity]
+	if act == nil {
+		return bp.ProductQuantity, 0
+	}
+	for _, product := range act.Products {
+		if product.TypeID == productTypeID {
+			return product.Quantity, normalizeProbability(product.Probability)
+		}
+	}
+	if len(act.Products) > 0 {
+		return act.Products[0].Quantity, normalizeProbability(act.Products[0].Probability)
+	}
+	return bp.ProductQuantity, 0
+}
+
+func activityMaterials(bp *sde.Blueprint, activity string) []sde.BlueprintMaterial {
+	if bp == nil {
+		return nil
+	}
+	if act := bp.Activities[activity]; act != nil {
+		return act.Materials
+	}
+	return bp.Materials
+}
+
+func calculateActivityMaterials(bp *sde.Blueprint, activity string, runs, me int32, structureBonus float64) []sde.BlueprintMaterial {
+	materials := activityMaterials(bp, activity)
+	if len(materials) == 0 || runs <= 0 {
+		return nil
+	}
+	result := make([]sde.BlueprintMaterial, 0, len(materials))
+	switch activity {
+	case "manufacturing":
+		if me < 0 {
+			me = 0
+		}
+		if me > 10 {
+			me = 10
+		}
+		if structureBonus < 0 {
+			structureBonus = 0
+		}
+		meMultiplier := 1.0 - float64(me)/100.0
+		structureMultiplier := 1.0 - structureBonus/100.0
+		for _, mat := range materials {
+			qty := int32(math.Ceil(float64(mat.Quantity) * float64(runs) * meMultiplier * structureMultiplier))
+			if qty < runs {
+				qty = runs
+			}
+			result = append(result, sde.BlueprintMaterial{TypeID: mat.TypeID, Quantity: qty})
+		}
+	default:
+		for _, mat := range materials {
+			result = append(result, sde.BlueprintMaterial{TypeID: mat.TypeID, Quantity: mat.Quantity * runs})
+		}
+	}
+	return result
+}
+
+func calculateActivityTime(bp *sde.Blueprint, activity string, runs, te int32) int32 {
+	if bp == nil || runs <= 0 {
+		return 0
+	}
+	baseTime := bp.Time
+	if act := bp.Activities[activity]; act != nil && act.Time > 0 {
+		baseTime = act.Time
+	}
+	if activity == "manufacturing" {
+		if te < 0 {
+			te = 0
+		}
+		if te > 20 {
+			te = 20
+		}
+		return int32(float64(baseTime) * float64(runs) * (1.0 - float64(te)/100.0))
+	}
+	return baseTime * runs
+}
+
+func normalizeProbability(probability float64) float64 {
+	if probability <= 0 {
+		return 0
+	}
+	if probability > 1 {
+		probability /= 100
+	}
+	if probability > 1 {
+		return 1
+	}
+	return probability
+}
+
+func (a *IndustryAnalyzer) costIndexForActivity(activity string, fallback float64) float64 {
+	if a.systemCostIndices == nil {
+		return fallback
+	}
+	switch activity {
+	case "reaction":
+		if a.systemCostIndices.Reaction > 0 {
+			return a.systemCostIndices.Reaction
+		}
+	case "invention":
+		if a.systemCostIndices.Invention > 0 {
+			return a.systemCostIndices.Invention
+		}
+	default:
+		if a.systemCostIndices.Manufacturing > 0 {
+			return a.systemCostIndices.Manufacturing
+		}
+	}
+	return fallback
+}
+
+func (a *IndustryAnalyzer) calculateInventionStep(params IndustryParams, tree *MaterialNode, fallbackCostIndex float64) (IndustryActivityStep, bool) {
+	if params.ActivityMode != "invention" || tree == nil || tree.Blueprint == nil {
+		return IndustryActivityStep{}, false
+	}
+	sourceBP, product, ok := a.findInventionForBlueprint(tree.Blueprint.BlueprintTypeID)
+	if !ok || sourceBP == nil || product.TypeID == 0 {
+		return IndustryActivityStep{}, false
+	}
+	chance := normalizeProbability(product.Probability)
+	if params.InventionChance > 0 {
+		chance = normalizeProbability(params.InventionChance)
+	}
+	if chance <= 0 {
+		return IndustryActivityStep{}, false
+	}
+	outputRuns := product.Quantity
+	if params.InventionOutputRuns > 0 {
+		outputRuns = params.InventionOutputRuns
+	}
+	if outputRuns <= 0 {
+		outputRuns = 1
+	}
+	successesNeeded := math.Ceil(float64(params.Runs) / float64(outputRuns))
+	if successesNeeded < 1 {
+		successesNeeded = 1
+	}
+	expectedAttempts := successesNeeded / chance
+	attemptMaterials := calculateActivityMaterials(sourceBP, "invention", 1, 0, 0)
+	materialCostPerAttempt := 0.0
+	eivPerAttempt := 0.0
+	for _, mat := range attemptMaterials {
+		materialCostPerAttempt += a.marketBuyCost(mat.TypeID, mat.Quantity)
+		eivPerAttempt += a.adjustedPrices[mat.TypeID] * float64(mat.Quantity)
+	}
+	jobCostPerAttempt := eivPerAttempt * a.costIndexForActivity("invention", fallbackCostIndex) * (1 + params.FacilityTax/100)
+	totalPerAttempt := materialCostPerAttempt + jobCostPerAttempt + params.DecryptorCost
+	step := IndustryActivityStep{
+		Activity:         "invention",
+		BlueprintTypeID:  sourceBP.BlueprintTypeID,
+		BlueprintName:    a.typeName(sourceBP.BlueprintTypeID),
+		ProductTypeID:    product.TypeID,
+		ProductName:      a.typeName(product.TypeID),
+		Runs:             expectedAttempts,
+		OutputQuantity:   int32(math.Ceil(successesNeeded)) * outputRuns,
+		MaterialCost:     materialCostPerAttempt * expectedAttempts,
+		JobCost:          jobCostPerAttempt * expectedAttempts,
+		TotalCost:        totalPerAttempt * expectedAttempts,
+		TimeSeconds:      int32(math.Ceil(float64(calculateActivityTime(sourceBP, "invention", 1, 0)) * expectedAttempts)),
+		Probability:      chance,
+		ExpectedAttempts: expectedAttempts,
+		Reason:           "expected_bpc_cost",
+	}
+	return step, true
+}
+
+func (a *IndustryAnalyzer) findInventionForBlueprint(blueprintTypeID int32) (*sde.Blueprint, sde.BlueprintProduct, bool) {
+	if a == nil || a.SDE == nil || a.SDE.Industry == nil {
+		return nil, sde.BlueprintProduct{}, false
+	}
+	for _, bp := range a.SDE.Industry.Blueprints {
+		act := bp.Activities["invention"]
+		if act == nil {
+			continue
+		}
+		for _, product := range act.Products {
+			if product.TypeID == blueprintTypeID {
+				return bp, product, true
+			}
+		}
+	}
+	return nil, sde.BlueprintProduct{}, false
+}
+
+func (a *IndustryAnalyzer) buildActivityPlan(root *MaterialNode) []IndustryActivityStep {
+	var out []IndustryActivityStep
+	var walk func(*MaterialNode)
+	walk = func(node *MaterialNode) {
+		if node == nil {
+			return
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+		if node.IsBase || !node.ShouldBuild || node.Blueprint == nil {
+			return
+		}
+		out = append(out, IndustryActivityStep{
+			Activity:        node.Activity,
+			BlueprintTypeID: node.Blueprint.BlueprintTypeID,
+			BlueprintName:   a.typeName(node.Blueprint.BlueprintTypeID),
+			ProductTypeID:   node.TypeID,
+			ProductName:     node.TypeName,
+			Runs:            float64(node.Runs),
+			OutputQuantity:  node.Quantity,
+			MaterialCost:    node.MaterialCost,
+			JobCost:         node.JobCost,
+			TotalCost:       node.BuildCost,
+			TimeSeconds:     node.Blueprint.Time,
+			Probability:     node.Blueprint.Probability,
+		})
+	}
+	walk(root)
+	return out
+}
+
+func sumActivityPlanCosts(steps []IndustryActivityStep) (manufacturingCost, reactionCost float64) {
+	for _, step := range steps {
+		switch step.Activity {
+		case "reaction":
+			reactionCost += step.TotalCost
+		case "manufacturing":
+			manufacturingCost += step.TotalCost
+		}
+	}
+	return manufacturingCost, reactionCost
+}
+
+func sumActivityPlanTime(steps []IndustryActivityStep) int32 {
+	var total int64
+	for _, step := range steps {
+		if step.TimeSeconds > 0 {
+			total += int64(step.TimeSeconds)
+		}
+	}
+	const maxInt32 = int64(1<<31 - 1)
+	if total > maxInt32 {
+		return int32(maxInt32)
+	}
+	return int32(total)
+}
+
+func (a *IndustryAnalyzer) typeName(typeID int32) string {
+	if a != nil && a.SDE != nil {
+		if t, ok := a.SDE.Types[typeID]; ok {
+			return t.Name
+		}
+	}
+	return fmt.Sprintf("Type %d", typeID)
 }
 
 // flattenMaterials creates a shopping list of base materials.
@@ -501,6 +969,83 @@ func mergeMarketPrices(regionPrices, stationPrices map[int32]float64) map[int32]
 		out[typeID] = price
 	}
 	return out
+}
+
+func groupIndustryOrdersByType(orders []esi.MarketOrder, locationID int64, isBuy bool) map[int32][]esi.MarketOrder {
+	out := make(map[int32][]esi.MarketOrder)
+	for _, o := range orders {
+		if locationID != 0 && o.LocationID != locationID {
+			continue
+		}
+		if o.VolumeRemain <= 0 || o.Price <= 0 {
+			continue
+		}
+		o.IsBuyOrder = isBuy
+		out[o.TypeID] = append(out[o.TypeID], o)
+	}
+	return out
+}
+
+func (a *IndustryAnalyzer) fetchMarketBooks(params IndustryParams) (map[int32][]esi.MarketOrder, map[int32][]esi.MarketOrder, error) {
+	regionID, _ := a.resolveMarketRegion(params)
+
+	sellOrders, err := a.ESI.FetchRegionOrders(regionID, "sell")
+	if err != nil {
+		return nil, nil, err
+	}
+	buyOrders, err := a.ESI.FetchRegionOrders(regionID, "buy")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return groupIndustryOrdersByType(sellOrders, params.StationID, false),
+		groupIndustryOrdersByType(buyOrders, params.StationID, true),
+		nil
+}
+
+func (a *IndustryAnalyzer) marketBestAsk(typeID int32) float64 {
+	if price := a.marketPrices[typeID]; price > 0 {
+		return price
+	}
+	orders := a.marketSellOrders[typeID]
+	best := 0.0
+	for _, o := range orders {
+		if o.Price <= 0 || o.VolumeRemain <= 0 {
+			continue
+		}
+		if best == 0 || o.Price < best {
+			best = o.Price
+		}
+	}
+	return best
+}
+
+func (a *IndustryAnalyzer) marketBuyCost(typeID int32, quantity int32) float64 {
+	if quantity <= 0 {
+		return 0
+	}
+	if orders := a.marketSellOrders[typeID]; len(orders) > 0 {
+		plan := ComputeExecutionPlan(orders, quantity, true)
+		if plan.CanFill && plan.TotalCost > 0 && !math.IsNaN(plan.TotalCost) && !math.IsInf(plan.TotalCost, 0) {
+			return plan.TotalCost
+		}
+	}
+	return a.marketBestAsk(typeID) * float64(quantity)
+}
+
+func (a *IndustryAnalyzer) marketInstantSellRevenue(typeID int32, quantity int32, revenueMult float64) (float64, bool) {
+	if quantity <= 0 || revenueMult <= 0 {
+		return 0, false
+	}
+	orders := a.marketBuyOrders[typeID]
+	if len(orders) == 0 {
+		return 0, false
+	}
+	plan := ComputeExecutionPlan(orders, quantity, false)
+	if !plan.CanFill || plan.TotalCost <= 0 || math.IsNaN(plan.TotalCost) || math.IsInf(plan.TotalCost, 0) {
+		return 0, false
+	}
+	return plan.TotalCost * revenueMult, true
 }
 
 // fetchMarketPrices fetches best sell order prices for materials.

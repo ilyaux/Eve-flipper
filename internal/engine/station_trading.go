@@ -83,12 +83,15 @@ type StationTrade struct {
 	// Execution-aware effective margin after slippage and fees.
 	RealMarginPercent float64 `json:"RealMarginPercent,omitempty"`
 	// True when market history for this type/region was fetched successfully.
-	HistoryAvailable bool    `json:"HistoryAvailable"`
-	ROI              float64 `json:"ROI"` // profit / investment * 100
-	StationName      string  `json:"StationName"`
-	StationID        int64   `json:"StationID"`
-	SystemID         int32   `json:"SystemID,omitempty"`
-	RegionID         int32   `json:"RegionID,omitempty"`
+	HistoryAvailable    bool    `json:"HistoryAvailable"`
+	ROI                 float64 `json:"ROI"` // profit / investment * 100
+	StationName         string  `json:"StationName"`
+	StationID           int64   `json:"StationID"`
+	SystemID            int32   `json:"SystemID,omitempty"`
+	RegionID            int32   `json:"RegionID,omitempty"`
+	CharacterAssets     int64   `json:"CharacterAssets,omitempty"`
+	CharacterBuyOrders  int64   `json:"CharacterBuyOrders,omitempty"`
+	CharacterSellOrders int64   `json:"CharacterSellOrders,omitempty"`
 
 	// --- EVE Guru style metrics ---
 	CapitalRequired float64 `json:"CapitalRequired"` // Cycle capital: effectiveBuy * tradableUnits
@@ -146,7 +149,7 @@ func stationSortProxy(r *StationTrade) float64 {
 	if float64(r.SellVolume) < minVol {
 		minVol = float64(r.SellVolume)
 	}
-	// Order count bonus: more competing orders → more likely a real market.
+	// Order count bonus: more competing orders ? more likely a real market.
 	orderBonus := math.Log2(float64(r.BuyOrderCount+r.SellOrderCount) + 1)
 	return cappedMargin * minVol * orderBonus
 }
@@ -728,7 +731,7 @@ func (s *Scanner) ScanStationTrades(params StationTradeParams, progress func(str
 		results = filtered
 		if skippedCount > 0 {
 			log.Printf("[DEBUG] Skipped %d inaccessible player structures", skippedCount)
-			progress(fmt.Sprintf("⚠️ Skipped %d private/inaccessible structures", skippedCount))
+			progress(fmt.Sprintf("?? Skipped %d private/inaccessible structures", skippedCount))
 		}
 	}
 

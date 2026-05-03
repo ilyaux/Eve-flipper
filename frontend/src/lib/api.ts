@@ -16,8 +16,12 @@ import type {
   DemandRegionResponse,
   DemandRegionsResponse,
   ExecutionPlanResult,
+  FlipBacktestResult,
   FlipResult,
   HotZonesResponse,
+  IndustryCoverageBlueprintNeed,
+  IndustryCoverageMaterialNeed,
+  IndustryCoverageResult,
   IndustryJob,
   IndustryJobStatus,
   IndustryLedger,
@@ -30,7 +34,14 @@ import type {
   IndustryTaskRecord,
   IndustryTaskStatus,
   OptimizerDiagnostic,
+  OrderBookCleanupPlan,
+  OrderBookCoverageResult,
+  OrderBookStats,
   OrderDeskResponse,
+  PaperTrade,
+  PaperTradeCreatePayload,
+  PaperTradePatch,
+  PaperTradeReconcileResponse,
   PLEXDashboard,
   PortfolioPnL,
   PortfolioOptimization,
@@ -392,6 +403,12 @@ export async function findRoutes(
       ignored_system_ids: params.ignored_system_ids ?? [],
       target_system_name: params.route_target_system_name,
       cargo_capacity: params.cargo_capacity,
+      route_mode: params.route_mode,
+      route_cargo_capacity: params.route_cargo_capacity,
+      route_ship_profile: params.route_ship_profile,
+      route_minutes_per_jump: params.route_minutes_per_jump,
+      route_dock_minutes: params.route_dock_minutes,
+      route_safety_delay_percent: params.route_safety_delay_percent,
       min_margin: params.min_margin,
       min_isk_per_jump: params.route_min_isk_per_jump,
       sales_tax_percent: params.sales_tax_percent,
@@ -411,6 +428,170 @@ export async function findRoutes(
     signal,
     "Route search failed"
   );
+}
+
+export async function runFlipBacktest(params: {
+  rows: FlipResult[];
+  strategy_mode?: "hold" | "instant_flip";
+  instant_price_mode?: "scan_spread" | "history_pair" | "recorded_orderbook";
+  hold_days?: number;
+  window_days?: number;
+  max_rows?: number;
+  entry_spacing_days?: number;
+  travel_cooldown_days?: number;
+  non_overlapping?: boolean;
+  quantity_mode?: "scan" | "fixed" | "budget";
+  fixed_quantity?: number;
+  budget_isk?: number;
+  buy_price_source?: "history" | "scan";
+  volume_fill_fraction?: number;
+  skip_unfillable?: boolean;
+  buy_price_markup_percent?: number;
+  sell_price_haircut_percent?: number;
+  min_roi_percent?: number;
+  exclude_open_trades?: boolean;
+  sales_tax_percent?: number;
+  broker_fee_percent?: number;
+  split_trade_fees?: boolean;
+  buy_broker_fee_percent?: number;
+  sell_broker_fee_percent?: number;
+  buy_sales_tax_percent?: number;
+  sell_sales_tax_percent?: number;
+  orderbook_max_age_minutes?: number;
+  orderbook_cooldown_minutes?: number;
+  cooldown_mode?: "manual" | "route_time";
+  cargo_capacity?: number;
+  route_minutes_per_jump?: number;
+  route_dock_minutes?: number;
+  route_safety_multiplier?: number;
+  route_safety_mode?: "manual" | "auto";
+  route_min_security?: number;
+  route_min_cooldown_minutes?: number;
+  signal?: AbortSignal;
+}): Promise<FlipBacktestResult> {
+  const { signal, ...body } = params;
+  const res = await apiFetch(`${BASE}/api/backtest/flips`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(body),
+  });
+  return handleResponse<FlipBacktestResult>(res);
+}
+
+export async function checkOrderBookCoverage(params: {
+  rows: FlipResult[];
+  window_days?: number;
+  max_rows?: number;
+  orderbook_max_age_minutes?: number;
+  orderbook_cooldown_minutes?: number;
+  signal?: AbortSignal;
+}): Promise<OrderBookCoverageResult> {
+  const { signal, ...body } = params;
+  const res = await apiFetch(`${BASE}/api/orderbook/coverage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(body),
+  });
+  return handleResponse<OrderBookCoverageResult>(res);
+}
+
+export async function getOrderBookStats(limit = 10): Promise<OrderBookStats> {
+  const qp = new URLSearchParams();
+  if (limit > 0) qp.set("limit", String(limit));
+  const qs = qp.toString();
+  const res = await apiFetch(`${BASE}/api/orderbook/stats${qs ? `?${qs}` : ""}`);
+  return handleResponse<OrderBookStats>(res);
+}
+
+export async function cleanupOrderBook(params: {
+  keep_days: number;
+  dry_run?: boolean;
+  vacuum?: boolean;
+}): Promise<OrderBookCleanupPlan> {
+  const res = await apiFetch(`${BASE}/api/orderbook/cleanup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return handleResponse<OrderBookCleanupPlan>(res);
+}
+
+export interface PaperTradesResponse {
+  trades: PaperTrade[];
+  count: number;
+}
+
+export async function getPaperTrades(params?: {
+  status?: "active" | "all" | string;
+  limit?: number;
+}): Promise<PaperTradesResponse> {
+  const qp = new URLSearchParams();
+  if (params?.status) qp.set("status", params.status);
+  if (params?.limit != null && params.limit > 0) qp.set("limit", String(params.limit));
+  const qs = qp.toString();
+  const res = await apiFetch(`${BASE}/api/auth/paper-trades${qs ? `?${qs}` : ""}`);
+  const data = await handleResponse<PaperTradesResponse>(res);
+  return {
+    trades: Array.isArray(data.trades) ? data.trades : [],
+    count: Number.isFinite(data.count) ? data.count : 0,
+  };
+}
+
+export async function createPaperTrade(
+  payload: PaperTradeCreatePayload,
+): Promise<{ ok: boolean; trade: PaperTrade }> {
+  const res = await apiFetch(`${BASE}/api/auth/paper-trades`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<{ ok: boolean; trade: PaperTrade }>(res);
+}
+
+export async function reconcilePaperTrades(params?: {
+  status?: "active" | "all" | string;
+  limit?: number;
+  scope?: "active" | "all";
+  character_id?: number;
+}): Promise<PaperTradeReconcileResponse> {
+  const qp = new URLSearchParams();
+  if (params?.status) qp.set("status", params.status);
+  if (params?.limit != null && params.limit > 0) qp.set("limit", String(params.limit));
+  if (params?.scope === "all") qp.set("scope", "all");
+  if (params?.character_id != null && params.character_id > 0) qp.set("character_id", String(params.character_id));
+  const qs = qp.toString();
+  const res = await apiFetch(`${BASE}/api/auth/paper-trades/reconcile${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+  });
+  const data = await handleResponse<PaperTradeReconcileResponse>(res);
+  return {
+    ...data,
+    rows: Array.isArray(data.rows) ? data.rows : [],
+    warnings: Array.isArray(data.warnings) ? data.warnings : [],
+  };
+}
+
+export async function updatePaperTrade(
+  tradeID: number,
+  patch: PaperTradePatch,
+): Promise<{ ok: boolean; trade: PaperTrade }> {
+  const res = await apiFetch(`${BASE}/api/auth/paper-trades/${tradeID}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return handleResponse<{ ok: boolean; trade: PaperTrade }>(res);
+}
+
+export async function deletePaperTrade(
+  tradeID: number,
+): Promise<{ ok: boolean; deleted: number }> {
+  const res = await apiFetch(`${BASE}/api/auth/paper-trades/${tradeID}`, {
+    method: "DELETE",
+  });
+  return handleResponse<{ ok: boolean; deleted: number }>(res);
 }
 
 // --- Watchlist ---
@@ -831,6 +1012,57 @@ export async function syncAuthIndustryProjectBlueprintPool(
     body: JSON.stringify(payload ?? {}),
   });
   return handleResponse<IndustryProjectBlueprintSyncResponse>(res);
+}
+
+export interface AuthIndustryCoveragePayload {
+  scope?: "single" | "all";
+  character_id?: number;
+  location_ids?: number[];
+  default_bpc_runs?: number;
+  materials?: IndustryCoverageMaterialNeed[];
+  blueprints?: IndustryCoverageBlueprintNeed[];
+}
+
+export interface AuthIndustryCoverageResponse {
+  ok: boolean;
+  coverage: IndustryCoverageResult;
+  summary: {
+    scope: "single" | "all";
+    characters: number;
+    characters_used: number;
+    assets_scanned: number;
+    blueprint_rows_scanned: number;
+    blueprints_endpoint_characters: number;
+    assets_fallback_characters: number;
+    default_bpc_runs: number;
+    location_filter_count: number;
+    warnings: string[];
+  };
+}
+
+export async function getAuthIndustryCoverage(
+  payload: AuthIndustryCoveragePayload
+): Promise<AuthIndustryCoverageResponse> {
+  const res = await apiFetch(`${BASE}/api/auth/industry/coverage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  });
+  const data = await handleResponse<AuthIndustryCoverageResponse>(res);
+  return {
+    ...data,
+    coverage: {
+      ...data.coverage,
+      materials: Array.isArray(data.coverage?.materials) ? data.coverage.materials : [],
+      blueprints: Array.isArray(data.coverage?.blueprints) ? data.coverage.blueprints : [],
+      actions: Array.isArray(data.coverage?.actions) ? data.coverage.actions : [],
+      warnings: Array.isArray(data.coverage?.warnings) ? data.coverage.warnings : [],
+    },
+    summary: {
+      ...data.summary,
+      warnings: Array.isArray(data.summary?.warnings) ? data.summary.warnings : [],
+    },
+  };
 }
 
 export interface IndustryJobStatusUpdatePayload {

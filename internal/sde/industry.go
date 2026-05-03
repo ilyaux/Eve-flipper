@@ -10,12 +10,12 @@ import (
 
 // Blueprint represents a manufacturing blueprint from the SDE.
 type Blueprint struct {
-	BlueprintTypeID int32                     // The blueprint item type ID
-	ProductTypeID   int32                     // What this blueprint produces
-	ProductQuantity int32                     // How many items are produced per run
-	Materials       []BlueprintMaterial       // Required materials for manufacturing
-	Time            int32                     // Manufacturing time in seconds (base)
-	Activities      map[string]*ActivityData  // All activities (manufacturing, copying, invention, etc.)
+	BlueprintTypeID int32                    // The blueprint item type ID
+	ProductTypeID   int32                    // What this blueprint produces
+	ProductQuantity int32                    // How many items are produced per run
+	Materials       []BlueprintMaterial      // Required materials for manufacturing
+	Time            int32                    // Manufacturing time in seconds (base)
+	Activities      map[string]*ActivityData // All activities (manufacturing, copying, invention, etc.)
 }
 
 // BlueprintMaterial represents a single material requirement.
@@ -26,10 +26,10 @@ type BlueprintMaterial struct {
 
 // ActivityData holds data for a specific blueprint activity.
 type ActivityData struct {
-	Time      int32                 // Base time in seconds
-	Materials []BlueprintMaterial   // Materials for this activity
-	Products  []BlueprintProduct    // Products of this activity
-	Skills    []BlueprintSkill      // Required skills
+	Time      int32               // Base time in seconds
+	Materials []BlueprintMaterial // Materials for this activity
+	Products  []BlueprintProduct  // Products of this activity
+	Skills    []BlueprintSkill    // Required skills
 }
 
 // BlueprintProduct represents what an activity produces.
@@ -47,8 +47,8 @@ type BlueprintSkill struct {
 
 // ReprocessingMaterial represents ore -> mineral conversion.
 type ReprocessingMaterial struct {
-	TypeID   int32 // Source type (ore)
-	Yields   []MaterialYield
+	TypeID int32 // Source type (ore)
+	Yields []MaterialYield
 }
 
 // MaterialYield represents a single material output from reprocessing.
@@ -59,10 +59,10 @@ type MaterialYield struct {
 
 // IndustryData holds all industry-related SDE data.
 type IndustryData struct {
-	Blueprints          map[int32]*Blueprint          // blueprintTypeID -> Blueprint
-	ProductToBlueprint  map[int32]int32               // productTypeID -> blueprintTypeID
-	Reprocessing        map[int32]*ReprocessingMaterial // oreTypeID -> yields
-	BaseCategories      map[int32]bool                // categoryIDs that are "base" materials (minerals, PI, etc.)
+	Blueprints         map[int32]*Blueprint            // blueprintTypeID -> Blueprint
+	ProductToBlueprint map[int32]int32                 // productTypeID -> blueprintTypeID
+	Reprocessing       map[int32]*ReprocessingMaterial // oreTypeID -> yields
+	BaseCategories     map[int32]bool                  // categoryIDs that are "base" materials (minerals, PI, etc.)
 }
 
 // NewIndustryData creates a new IndustryData instance.
@@ -95,7 +95,7 @@ func (d *Data) LoadIndustry(extractDir string) (*IndustryData, error) {
 func (ind *IndustryData) loadBlueprints(dir string) error {
 	// Try different possible file names
 	fileNames := []string{"industryBlueprints", "blueprints", "industryActivityMaterials"}
-	
+
 	for _, name := range fileNames {
 		count := 0
 		err := readJSONL(dir, name, func(raw json.RawMessage) error {
@@ -110,7 +110,7 @@ func (ind *IndustryData) loadBlueprints(dir string) error {
 			return nil
 		}
 	}
-	
+
 	logger.Warn("SDE", "No blueprint files found")
 	return nil
 }
@@ -248,10 +248,42 @@ func (ind *IndustryData) parseBlueprintLine(raw json.RawMessage) error {
 		}
 	}
 
+	// Process invention activity. Invention products are usually blueprint copies,
+	// so they are kept in Activities but are not mapped as normal build products.
+	if inv := bp.Activities.Invention; inv != nil {
+		actData := &ActivityData{
+			Time: inv.Time,
+		}
+		for _, m := range inv.Materials {
+			actData.Materials = append(actData.Materials, BlueprintMaterial{
+				TypeID: m.TypeID, Quantity: m.Quantity,
+			})
+		}
+		for _, p := range inv.Products {
+			actData.Products = append(actData.Products, BlueprintProduct{
+				TypeID: p.TypeID, Quantity: p.Quantity, Probability: p.Probability,
+			})
+		}
+		blueprint.Activities["invention"] = actData
+	}
+
 	// Only store blueprints that produce something
 	if blueprint.ProductTypeID != 0 {
 		ind.Blueprints[bp.Key] = blueprint
-		ind.ProductToBlueprint[blueprint.ProductTypeID] = bp.Key
+		if mfg := blueprint.Activities["manufacturing"]; mfg != nil {
+			for _, product := range mfg.Products {
+				if product.TypeID != 0 {
+					ind.ProductToBlueprint[product.TypeID] = bp.Key
+				}
+			}
+		}
+		if rxn := blueprint.Activities["reaction"]; rxn != nil {
+			for _, product := range rxn.Products {
+				if product.TypeID != 0 {
+					ind.ProductToBlueprint[product.TypeID] = bp.Key
+				}
+			}
+		}
 	}
 
 	return nil

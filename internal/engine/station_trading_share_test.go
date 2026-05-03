@@ -129,4 +129,3 @@ func TestEnrichStationWithHistory_UsesFullRegionDepthDenominator_AllStations(t *
 		t.Fatalf("sum DailyVolume = %d, want 100", sum)
 	}
 }
-

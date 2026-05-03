@@ -55,8 +55,9 @@ const (
 
 // ComputePortfolioRiskFromTransactions builds a daily realized P&L series from wallet
 // transactions using FIFO matching (buys matched to sells per item type) and estimates
-// risk metrics. Unmatched buys (inventory accumulation) are excluded from the P&L
-// to avoid treating investment days as losses.
+// risk metrics. Unmatched buys (inventory accumulation) and unmatched sells
+// (unknown cost basis) are excluded from P&L to avoid treating cashflow as
+// realized trading performance.
 func ComputePortfolioRiskFromTransactions(txns []esi.WalletTransaction) *PortfolioRiskSummary {
 	if len(txns) == 0 {
 		return nil
@@ -130,11 +131,7 @@ func ComputePortfolioRiskFromTransactions(txns []esi.WalletTransaction) *Portfol
 			}
 			buyQueues[tx.TypeID] = queue
 
-			// Unmatched sells (no buy history) — treat as pure revenue.
-			// This happens for items bought before the lookback window.
-			if sellQty > 0 {
-				dailyPnL[day] += sellPrice * float64(sellQty)
-			}
+			// Do not count any remaining quantity because the cost basis is unknown.
 		}
 	}
 

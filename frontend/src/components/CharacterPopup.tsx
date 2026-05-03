@@ -9,12 +9,14 @@ import { useI18n } from "../lib/i18n";
 import type { AuthCharacter, CharacterInfo, CharacterRoles } from "../lib/types";
 import {
   CombinedOrdersTab,
+  IndustryJobsTab,
   OptimizerTab,
   OverviewTab,
   PnLTab,
   RiskTab,
   TabBtn,
   TransactionsTab,
+  WalletDashboardTab,
 } from "./character-popup/CharacterPopupTabs";
 
 interface CharacterPopupProps {
@@ -28,7 +30,7 @@ interface CharacterPopupProps {
   onAuthRefresh: () => Promise<void>;
 }
 
-type CharTab = "overview" | "orders" | "transactions" | "pnl" | "risk" | "optimizer";
+type CharTab = "overview" | "orders" | "transactions" | "ledger" | "industry" | "pnl" | "risk" | "optimizer";
 const SCOPE_COLLAPSE_KEY = "eve-character-scope-collapsed";
 
 export function CharacterPopup({
@@ -292,6 +294,8 @@ export function CharacterPopup({
             <TabBtn active={tab === "overview"} onClick={() => setTab("overview")} label={t("charOverview")} />
             <TabBtn active={tab === "orders"} onClick={() => setTab("orders")} label={`${t("charOrders")} (${data?.orders.length ?? 0})`} />
             <TabBtn active={tab === "transactions"} onClick={() => setTab("transactions")} label={`${t("charTransactions")} (${data?.transactions?.length ?? 0})`} />
+            <TabBtn active={tab === "ledger"} onClick={() => setTab("ledger")} label={t("ledgerTab")} />
+            <TabBtn active={tab === "industry"} onClick={() => setTab("industry")} label={`${t("industryJobsTab")} (${data?.industry_jobs?.length ?? 0})`} />
             <TabBtn active={tab === "pnl"} onClick={() => setTab("pnl")} label={t("charPnlTab")} />
             <TabBtn active={tab === "risk"} onClick={() => setTab("risk")} label={t("charRiskTab")} />
             <TabBtn active={tab === "optimizer"} onClick={() => setTab("optimizer")} label={t("charOptimizerTab")} />
@@ -349,6 +353,24 @@ export function CharacterPopup({
               )}
               {tab === "transactions" && (
                 <TransactionsTab transactions={data.transactions ?? []} formatIsk={formatIsk} formatDate={formatDate} t={t} />
+              )}
+              {tab === "ledger" && (
+                <WalletDashboardTab
+                  wallet={data.wallet}
+                  orders={data.orders ?? []}
+                  transactions={data.transactions ?? []}
+                  assets={data.assets ?? []}
+                  formatIsk={formatIsk}
+                  t={t}
+                />
+              )}
+              {tab === "industry" && (
+                <IndustryJobsTab
+                  jobs={data.industry_jobs ?? []}
+                  formatIsk={formatIsk}
+                  formatDate={formatDate}
+                  t={t}
+                />
               )}
               {tab === "pnl" && (
                 <PnLTab formatIsk={formatIsk} characterScope={selectedScope} t={t} />

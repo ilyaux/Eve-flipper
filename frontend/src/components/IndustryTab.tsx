@@ -12,6 +12,7 @@ import {
   planAuthIndustryProject,
   rebalanceAuthIndustryProjectMaterials,
   syncAuthIndustryProjectBlueprintPool,
+  getAuthIndustryCoverage,
   getAuthIndustryLedger,
   updateAuthIndustryTaskStatus,
   updateAuthIndustryTaskStatusBulk,
@@ -22,6 +23,10 @@ import {
 } from "@/lib/api";
 import type {
   IndustryAnalysis,
+  IndustryCoverageBlueprintNeed,
+  IndustryCoverageMaterialNeed,
+  IndustryCoverageResult,
+  IndustryActivityStep,
   IndustryParams,
   FlatMaterial,
   BuildableItem,
@@ -102,6 +107,7 @@ interface Props {
 type IndustryInnerTab = "analysis" | "jobs";
 type PlanBuilderSection = "tasks" | "jobs" | "materials" | "blueprints";
 type IndustryStrategyPreset = "conservative" | "balanced" | "aggressive";
+type IndustryActivityMode = "auto" | "manufacturing" | "reaction" | "invention";
 
 const INDUSTRY_LEDGER_SELECTED_PROJECT_STORAGE_KEY = "eve-flipper-industry-selected-project-id";
 const INDUSTRY_SCHEDULER_DEFAULTS: Record<
@@ -163,6 +169,63 @@ function schedulerDefaultsForStrategy(strategy?: string) {
   return INDUSTRY_SCHEDULER_DEFAULTS[normalized] ?? INDUSTRY_SCHEDULER_DEFAULTS.balanced;
 }
 
+function buildIndustryCoverageNeeds(analysis: IndustryAnalysis): {
+  materials: IndustryCoverageMaterialNeed[];
+  blueprints: IndustryCoverageBlueprintNeed[];
+} {
+  const materials = (analysis.flat_materials ?? [])
+    .filter((m) => m.type_id > 0 && m.quantity > 0)
+    .map((m) => ({
+      type_id: m.type_id,
+      type_name: m.type_name,
+      required_qty: Math.ceil(m.quantity),
+    }));
+
+  const bpByID = new Map<number, IndustryCoverageBlueprintNeed>();
+  for (const step of analysis.activity_plan ?? []) {
+    if (!step.blueprint_type_id || step.blueprint_type_id <= 0) continue;
+    const requiredRuns = Math.max(
+      1,
+      Math.ceil(step.activity === "invention" && step.expected_attempts ? step.expected_attempts : step.runs || 1)
+    );
+    const existing = bpByID.get(step.blueprint_type_id);
+    bpByID.set(step.blueprint_type_id, {
+      blueprint_type_id: step.blueprint_type_id,
+      blueprint_name: step.blueprint_name || existing?.blueprint_name || "",
+      activity: existing?.activity && existing.activity !== step.activity ? "mixed" : step.activity || existing?.activity || "",
+      required_runs: (existing?.required_runs ?? 0) + requiredRuns,
+    });
+  }
+
+  const rootBlueprintID = analysis.material_tree?.blueprint?.blueprint_type_id ?? 0;
+  if (bpByID.size === 0 && rootBlueprintID > 0) {
+    bpByID.set(rootBlueprintID, {
+      blueprint_type_id: rootBlueprintID,
+      blueprint_name: "",
+      activity: analysis.material_tree?.blueprint?.activity || analysis.activity_mode || "manufacturing",
+      required_runs: Math.max(1, Math.ceil(analysis.runs || 1)),
+    });
+  }
+
+  return {
+    materials,
+    blueprints: Array.from(bpByID.values()),
+  };
+}
+
+function industryStepRuns(step: IndustryActivityStep): number {
+  if (step.activity === "invention" && step.expected_attempts) {
+    return Math.max(1, Math.ceil(step.expected_attempts));
+  }
+  return Math.max(1, Math.ceil(step.runs || 1));
+}
+
+function industryStepLabel(step: IndustryActivityStep): string {
+  const activity = step.activity || "industry";
+  const product = step.product_name || `Type ${step.product_type_id}`;
+  return `${activity} ${product}`;
+}
+
 export function IndustryTab({ onError, isLoggedIn = false }: Props) {
   const { t } = useI18n();
   const { addToast } = useGlobalToast();
@@ -196,6 +259,7 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
 
   // Parameters
   const [runs, setRuns] = useState(1);
+  const [activityMode, setActivityMode] = useState<IndustryActivityMode>("auto");
   const [me, setME] = useState(10);
   const [te, setTE] = useState(20);
   const [systemName, setSystemName] = useState("Jita");
@@ -206,6 +270,9 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
   const [ownBlueprint, setOwnBlueprint] = useState(true);
   const [blueprintCost, setBlueprintCost] = useState(0);
   const [blueprintIsBPO, setBlueprintIsBPO] = useState(true);
+  const [inventionChance, setInventionChance] = useState(0);
+  const [decryptorCost, setDecryptorCost] = useState(0);
+  const [inventionOutputRuns, setInventionOutputRuns] = useState(0);
 
   // Station/Structure selection
   const [stations, setStations] = useState<StationInfo[]>([]);
@@ -220,11 +287,19 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
   const stationsRequestSeqRef = useRef(0);
   const structuresAbortRef = useRef<AbortController | null>(null);
   const structuresRequestSeqRef = useRef(0);
+  const selectedStationLabel = useMemo(() => {
+    if (selectedStationId <= 0) return "";
+    const station = [...stations, ...structureStations].find((s) => s.id === selectedStationId);
+    return station?.name || `Location ${selectedStationId}`;
+  }, [selectedStationId, stations, structureStations]);
 
   // Analysis state
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState<IndustryAnalysis | null>(null);
+  const [industryCoverage, setIndustryCoverage] = useState<IndustryCoverageResult | null>(null);
+  const [industryCoverageLoading, setIndustryCoverageLoading] = useState(false);
+  const [industryCoverageMeta, setIndustryCoverageMeta] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
   // View mode
@@ -851,21 +926,111 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     onError,
   ]);
 
+  const handleCheckCurrentIndustryCoverage = useCallback(async () => {
+    if (!isLoggedIn || !result) return;
+    const needs = buildIndustryCoverageNeeds(result);
+    if (needs.materials.length === 0 && needs.blueprints.length === 0) {
+      addToast("No material or blueprint rows to check", "warning", 2200);
+      return;
+    }
+    setIndustryCoverageLoading(true);
+    try {
+      const locationIDs = rebalanceUseSelectedStation && selectedStationId > 0
+        ? [selectedStationId]
+        : [];
+      const resp = await getAuthIndustryCoverage({
+        scope: rebalanceInventoryScope,
+        default_bpc_runs: Math.max(1, Math.min(1000, Math.round(blueprintSyncDefaultBPCRuns || 1))),
+        location_ids: locationIDs,
+        materials: needs.materials,
+        blueprints: needs.blueprints,
+      });
+      setIndustryCoverage(resp.coverage);
+      const s = resp.summary;
+      setIndustryCoverageMeta(
+        `${s.scope} / ${s.characters_used}/${s.characters} chars / ${s.assets_scanned} assets / ${s.blueprint_rows_scanned} bp rows`
+      );
+      const c = resp.coverage.summary;
+      addToast(
+        `Coverage: ${c.materials_covered}/${c.materials} materials, ${c.blueprints_ready}/${c.blueprints} blueprints`,
+        c.can_start_now ? "success" : "warning",
+        2600
+      );
+      const warnings = resp.coverage.warnings ?? resp.summary.warnings ?? [];
+      if (warnings.length > 0) {
+        addToast(warnings.slice(0, 2).join(" | "), "warning", 3200);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to check industry coverage";
+      onError?.(msg);
+      addToast(msg, "error", 2600);
+    } finally {
+      setIndustryCoverageLoading(false);
+    }
+  }, [
+    isLoggedIn,
+    result,
+    rebalanceUseSelectedStation,
+    selectedStationId,
+    rebalanceInventoryScope,
+    blueprintSyncDefaultBPCRuns,
+    addToast,
+    onError,
+  ]);
+
   const buildAutoPlanPatch = useCallback((): IndustryPlanPatch | null => {
     if (!result || !selectedItem) {
       return null;
     }
     const topBlueprintTypeID = result.material_tree?.blueprint?.blueprint_type_id ?? 0;
-    const taskName = `Build ${selectedItem.type_name}`;
+    const activitySteps = result.activity_plan ?? [];
+    const tasks: IndustryTaskPlanInput[] = [];
+    const jobs: IndustryJobPlanInput[] = [];
 
-    const tasks = [
-      {
+    if (activitySteps.length > 0) {
+      activitySteps.forEach((step, index) => {
+        const targetRuns = industryStepRuns(step);
+        const taskRef = -(index + 1);
+        tasks.push({
+          name: industryStepLabel(step),
+          activity: step.activity || "manufacturing",
+          product_type_id: step.product_type_id,
+          target_runs: targetRuns,
+          priority: 100 + index,
+          status: "planned",
+          constraints: {
+            me,
+            te,
+            system_name: systemName,
+            station_id: selectedStationId || 0,
+            blueprint_type_id: step.blueprint_type_id || 0,
+            blueprint_location_id: selectedStationId || 0,
+            duration_seconds_per_run: targetRuns > 0 ? Math.round((step.time_seconds || 0) / targetRuns) : 0,
+            cost_isk_per_run: targetRuns > 0 ? (step.job_cost || 0) / targetRuns : 0,
+          },
+        });
+        jobs.push({
+          task_id: taskRef,
+          facility_id: selectedStationId || 0,
+          activity: step.activity || "manufacturing",
+          runs: targetRuns,
+          duration_seconds: step.time_seconds ?? 0,
+          cost_isk: step.job_cost ?? 0,
+          status: "planned",
+          started_at: "",
+          finished_at: "",
+          notes: industryCoverage ? "Coverage-aware draft from Industry analyzer" : "Draft from Industry analyzer activity plan",
+        });
+      });
+    } else {
+      const taskName = `Build ${selectedItem.type_name}`;
+      tasks.push({
         name: taskName,
         activity: "manufacturing",
         product_type_id: selectedItem.type_id,
         target_runs: runs,
         priority: 100,
-        status: "planned" as const,
+        status: "planned",
         constraints: {
           me,
           te,
@@ -873,48 +1038,102 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
           station_id: selectedStationId || 0,
           blueprint_type_id: topBlueprintTypeID || 0,
           blueprint_location_id: selectedStationId || 0,
+          duration_seconds_per_run: runs > 0 ? Math.round((result.manufacturing_time ?? 0) / runs) : 0,
+          cost_isk_per_run: runs > 0 ? (result.total_job_cost ?? 0) / runs : 0,
         },
-      },
-    ];
-
-    const jobs = [
-      {
+      });
+      jobs.push({
+        task_id: -1,
+        facility_id: selectedStationId || 0,
         activity: "manufacturing",
         runs,
         duration_seconds: result.manufacturing_time ?? 0,
         cost_isk: result.total_job_cost ?? 0,
-        status: "planned" as const,
+        status: "planned",
         started_at: "",
         finished_at: "",
-        notes: "Auto-seeded from Industry analyzer",
-      },
-    ];
+        notes: industryCoverage ? "Coverage-aware draft from Industry analyzer" : "Auto-seeded from Industry analyzer",
+      });
+    }
 
-    const materials = (result.flat_materials ?? []).map((m) => ({
-      type_id: m.type_id,
-      type_name: m.type_name,
-      required_qty: m.quantity,
-      available_qty: 0,
-      buy_qty: m.quantity,
-      build_qty: 0,
-      unit_cost_isk: m.unit_price,
-      source: "market" as const,
-    }));
+    const flatByType = new Map((result.flat_materials ?? []).map((m) => [m.type_id, m]));
+    const materialSourceRows = industryCoverage?.materials?.length
+      ? industryCoverage.materials
+      : (result.flat_materials ?? []).map((m) => ({
+          type_id: m.type_id,
+          type_name: m.type_name,
+          required_qty: m.quantity,
+          available_qty: 0,
+          missing_qty: m.quantity,
+          coverage_pct: 0,
+          status: "missing",
+        }));
+    const materials = materialSourceRows.map((m) => {
+      const flat = flatByType.get(m.type_id);
+      const requiredQty = Math.max(0, Math.ceil(m.required_qty ?? 0));
+      const availableQty = Math.max(0, Math.min(requiredQty, Math.ceil(m.available_qty ?? 0)));
+      const buyQty = Math.max(0, Math.ceil(m.missing_qty ?? Math.max(0, requiredQty - availableQty)));
+      return {
+        type_id: m.type_id,
+        type_name: m.type_name || flat?.type_name || "",
+        required_qty: requiredQty,
+        available_qty: availableQty,
+        buy_qty: buyQty,
+        build_qty: 0,
+        unit_cost_isk: flat?.unit_price ?? 0,
+        source: buyQty > 0 ? "market" as const : "stock" as const,
+      };
+    });
 
-    const blueprints = topBlueprintTypeID > 0
-      ? [
-          {
-            blueprint_type_id: topBlueprintTypeID,
-            blueprint_name: `${selectedItem.type_name} Blueprint`,
-            location_id: selectedStationId || 0,
-            quantity: 1,
-            me,
-            te,
-            is_bpo: ownBlueprint,
-            available_runs: 0,
-          },
-        ]
-      : [];
+    const blueprintsFromCoverage = (industryCoverage?.blueprints ?? [])
+      .filter((bp) => (bp.owned_qty ?? 0) > 0 && ((bp.bpo_qty ?? 0) > 0 || (bp.available_runs ?? 0) > 0))
+      .map((bp) => {
+        const isBPO = (bp.bpo_qty ?? 0) > 0;
+        return {
+          blueprint_type_id: bp.blueprint_type_id,
+          blueprint_name: bp.blueprint_name || "",
+          location_id: selectedStationId || 0,
+          quantity: isBPO ? Math.max(1, bp.bpo_qty || 1) : Math.max(1, bp.bpc_qty || 1),
+          me: bp.best_me || me,
+          te: bp.best_te || te,
+          is_bpo: isBPO,
+          available_runs: isBPO ? 0 : Math.max(0, bp.available_runs || 0),
+        };
+      });
+
+    const fallbackBlueprintMap = new Map<number, IndustryBlueprintPoolInput>();
+    if (blueprintsFromCoverage.length === 0) {
+      for (const step of activitySteps) {
+        if (!step.blueprint_type_id || step.blueprint_type_id <= 0) continue;
+        const requiredRuns = industryStepRuns(step);
+        const existing = fallbackBlueprintMap.get(step.blueprint_type_id);
+        fallbackBlueprintMap.set(step.blueprint_type_id, {
+          blueprint_type_id: step.blueprint_type_id,
+          blueprint_name: step.blueprint_name || existing?.blueprint_name || "",
+          location_id: selectedStationId || 0,
+          quantity: 1,
+          me,
+          te,
+          is_bpo: ownBlueprint,
+          available_runs: ownBlueprint ? 0 : (existing?.available_runs ?? 0) + requiredRuns,
+        });
+      }
+      if (fallbackBlueprintMap.size === 0 && topBlueprintTypeID > 0) {
+        fallbackBlueprintMap.set(topBlueprintTypeID, {
+          blueprint_type_id: topBlueprintTypeID,
+          blueprint_name: `${selectedItem.type_name} Blueprint`,
+          location_id: selectedStationId || 0,
+          quantity: 1,
+          me,
+          te,
+          is_bpo: ownBlueprint,
+          available_runs: ownBlueprint ? 0 : runs,
+        });
+      }
+    }
+    const blueprints = blueprintsFromCoverage.length > 0
+      ? blueprintsFromCoverage
+      : Array.from(fallbackBlueprintMap.values());
 
     return {
       replace: replaceLedgerPlanOnApply,
@@ -934,6 +1153,7 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     selectedStationId,
     ownBlueprint,
     replaceLedgerPlanOnApply,
+    industryCoverage,
   ]);
 
   const seedVisualPlanBuilderFromPatch = useCallback((patch: IndustryPlanPatch) => {
@@ -1459,6 +1679,12 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     setLastLedgerPlanPreviewPatch(null);
     addToast(t("industryLedgerBuilderSeeded"), "success", 1600);
   }, [buildAutoPlanPatch, seedVisualPlanBuilderFromPatch, addToast, t]);
+
+  const handleSeedCurrentIndustryPlanFromAnalysis = useCallback(() => {
+    handleGeneratePlanDraft();
+    setIndustryInnerTab("jobs");
+    setJobsWorkspaceTab("planning");
+  }, [handleGeneratePlanDraft]);
 
   const buildLedgerPlanPatchToSend = useCallback((): IndustryPlanPatch | null => {
     let patch: IndustryPlanPatch | null = null;
@@ -2024,6 +2250,8 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     setShowDropdown(false);
     setHighlightedIndex(-1);
     setResult(null);
+    setIndustryCoverage(null);
+    setIndustryCoverageMeta("");
   }, []);
 
   // Keyboard navigation
@@ -2070,10 +2298,13 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     setAnalyzing(true);
     setProgress(t("scanStarting"));
     setResult(null);
+    setIndustryCoverage(null);
+    setIndustryCoverageMeta("");
 
     const params: IndustryParams = {
       type_id: selectedItem.type_id,
       runs,
+      activity_mode: activityMode,
       me,
       te,
       system_name: systemName,
@@ -2086,6 +2317,9 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
       own_blueprint: ownBlueprint,
       blueprint_cost: ownBlueprint ? 0 : blueprintCost,
       blueprint_is_bpo: blueprintIsBPO,
+      invention_chance: activityMode === "invention" ? inventionChance : 0,
+      decryptor_cost: activityMode === "invention" ? decryptorCost : 0,
+      invention_output_runs: activityMode === "invention" ? inventionOutputRuns : 0,
     };
 
     try {
@@ -2102,7 +2336,7 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
     } finally {
       setAnalyzing(false);
     }
-  }, [analyzing, selectedItem, runs, me, te, systemName, selectedStationId, facilityTax, structureBonus, brokerFee, salesTaxPercent, ownBlueprint, blueprintCost, blueprintIsBPO, t, onError]);
+  }, [analyzing, selectedItem, runs, activityMode, me, te, systemName, selectedStationId, facilityTax, structureBonus, brokerFee, salesTaxPercent, ownBlueprint, blueprintCost, blueprintIsBPO, inventionChance, decryptorCost, inventionOutputRuns, t, onError]);
 
   const clearPlanPreview = useCallback(() => {
     setLastLedgerPlanPreview(null);
@@ -2429,7 +2663,19 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
 
           {/* Production parameters (Runs, ME, TE, Facility Tax) */}
           <div className="mb-3">
-            <SettingsGrid cols={4}>
+            <SettingsGrid cols={5}>
+              <SettingsField label="Mode">
+                <SettingsSelect
+                  value={activityMode}
+                  onChange={(value) => setActivityMode(value as IndustryActivityMode)}
+                  options={[
+                    { value: "auto", label: "Auto" },
+                    { value: "manufacturing", label: "Manufacturing" },
+                    { value: "reaction", label: "Reaction" },
+                    { value: "invention", label: "Invention + build" },
+                  ]}
+                />
+              </SettingsField>
               <SettingsField label={t("industryRuns")}>
                 <SettingsNumberInput value={runs} onChange={setRuns} min={1} max={10000} />
               </SettingsField>
@@ -2444,6 +2690,26 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
               </SettingsField>
             </SettingsGrid>
           </div>
+
+          {activityMode === "invention" && (
+            <div className="mt-3 pt-3 border-t border-eve-border/30">
+              <div className="text-[10px] uppercase tracking-wider text-eve-dim mb-2">Invention</div>
+              <SettingsGrid cols={3}>
+                <SettingsField label="Chance override %">
+                  <SettingsNumberInput value={inventionChance} onChange={setInventionChance} min={0} max={100} step={0.1} />
+                </SettingsField>
+                <SettingsField label="Decryptor / attempt">
+                  <SettingsNumberInput value={decryptorCost} onChange={setDecryptorCost} min={0} max={100000000000} step={100000} />
+                </SettingsField>
+                <SettingsField label="BPC runs / success">
+                  <SettingsNumberInput value={inventionOutputRuns} onChange={setInventionOutputRuns} min={0} max={100000} />
+                </SettingsField>
+              </SettingsGrid>
+              <div className="text-[10px] text-eve-dim mt-1">
+                Zero uses SDE probability and output runs.
+              </div>
+            </div>
+          )}
 
           {/* After broker: broker fee and sales tax */}
           <div className="mt-3 pt-3 border-t border-eve-border/30">
@@ -2683,6 +2949,19 @@ export function IndustryTab({ onError, isLoggedIn = false }: Props) {
             salesTaxPercent={salesTaxPercent}
             brokerFee={brokerFee}
             onOpenExecutionPlan={setExecPlanMaterial}
+            isLoggedIn={isLoggedIn}
+            coverage={industryCoverage}
+            coverageLoading={industryCoverageLoading}
+            coverageMeta={industryCoverageMeta}
+            coverageScope={rebalanceInventoryScope}
+            onCoverageScopeChange={setRebalanceInventoryScope}
+            coverageUseSelectedStation={rebalanceUseSelectedStation}
+            onCoverageUseSelectedStationChange={setRebalanceUseSelectedStation}
+            coverageStationLabel={selectedStationLabel}
+            coverageDefaultBPCRuns={blueprintSyncDefaultBPCRuns}
+            onCoverageDefaultBPCRunsChange={setBlueprintSyncDefaultBPCRuns}
+            onRefreshCoverage={handleCheckCurrentIndustryCoverage}
+            onSeedLedgerDraft={handleSeedCurrentIndustryPlanFromAnalysis}
           />
         </Suspense>
       )}

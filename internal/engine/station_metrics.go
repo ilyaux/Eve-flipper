@@ -18,7 +18,7 @@ func filterLastNDays(history []esi.HistoryEntry, days int) []esi.HistoryEntry {
 	// ESI history dates parse as midnight UTC; without truncation, a
 	// time-of-day offset causes entries from the Nth day ago to be
 	// included or excluded depending on when the scan runs.
-	cutoff := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -days)
+	cutoff := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -days)
 	var filtered []esi.HistoryEntry
 	for _, h := range history {
 		t, err := time.Parse("2006-01-02", h.Date)

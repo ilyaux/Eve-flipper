@@ -208,14 +208,15 @@ func normalizePortfolioOptions(opt PortfolioPnLOptions) PortfolioPnLOptions {
 }
 
 // ComputePortfolioPnL keeps legacy signature for callers/tests.
-// It defaults to zero fees and includes unmatched sells as zero-cost proceeds.
+// It defaults to zero fees and strict realized matching. Sells without known
+// cost basis are reported in coverage but excluded from P&L.
 func ComputePortfolioPnL(txns []esi.WalletTransaction, lookbackDays int) *PortfolioPnL {
 	return ComputePortfolioPnLWithOptions(txns, PortfolioPnLOptions{
 		LookbackDays:         lookbackDays,
 		SalesTaxPercent:      0,
 		BrokerFeePercent:     0,
 		LedgerLimit:          500,
-		IncludeUnmatchedSell: true,
+		IncludeUnmatchedSell: false,
 	})
 }
 

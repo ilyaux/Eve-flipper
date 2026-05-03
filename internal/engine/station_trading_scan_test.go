@@ -101,4 +101,3 @@ func TestScanStationTrades_UsesFullRegionDepthWhenStationFiltered(t *testing.T) 
 		t.Fatalf("RegionID/SystemID = %d/%d, want %d/%d", row.RegionID, row.SystemID, regionID, targetSystemID)
 	}
 }
-

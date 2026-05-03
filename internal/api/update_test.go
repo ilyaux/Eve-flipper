@@ -107,6 +107,56 @@ func TestSelectReleaseAssetDesktopFlavor(t *testing.T) {
 	}
 }
 
+func TestSelectChecksumAsset(t *testing.T) {
+	t.Parallel()
+
+	assets := []githubReleaseAsset{
+		{Name: "eve-flipper-web-windows-amd64.exe"},
+		{Name: "eve-flipper-web-windows-amd64.exe.sha256"},
+		{Name: "checksums.txt"},
+	}
+
+	got := selectChecksumAsset(assets, "eve-flipper-web-windows-amd64.exe")
+	if got == nil || got.Name != "eve-flipper-web-windows-amd64.exe.sha256" {
+		t.Fatalf("checksum asset mismatch: %#v", got)
+	}
+
+	got = selectChecksumAsset(assets[:1], "eve-flipper-web-windows-amd64.exe")
+	if got != nil {
+		t.Fatalf("expected nil when checksum asset is missing, got %#v", got)
+	}
+
+	manifestOnly := []githubReleaseAsset{
+		{Name: "eve-flipper-web-windows-amd64.exe"},
+		{Name: "SHA256SUMS.txt"},
+	}
+	got = selectChecksumAsset(manifestOnly, "eve-flipper-web-windows-amd64.exe")
+	if got == nil || got.Name != "SHA256SUMS.txt" {
+		t.Fatalf("manifest checksum asset mismatch: %#v", got)
+	}
+}
+
+func TestExpectedSHA256FromText(t *testing.T) {
+	t.Parallel()
+
+	const hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	got, err := expectedSHA256FromText(hash+"  eve-flipper-web-linux-amd64\n", "eve-flipper-web-linux-amd64")
+	if err != nil {
+		t.Fatalf("expectedSHA256FromText: %v", err)
+	}
+	if got != hash {
+		t.Fatalf("hash = %q, want %q", got, hash)
+	}
+
+	got, err = expectedSHA256FromText(hash+"\n", "anything")
+	if err != nil {
+		t.Fatalf("expected single-hash checksum to parse: %v", err)
+	}
+	if got != hash {
+		t.Fatalf("single hash = %q, want %q", got, hash)
+	}
+}
+
 func TestUpdateDismissedForSessionMemory(t *testing.T) {
 	t.Parallel()
 

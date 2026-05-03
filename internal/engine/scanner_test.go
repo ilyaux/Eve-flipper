@@ -342,6 +342,96 @@ func TestCalculateResults_TracksBestLevelPriceAndQty(t *testing.T) {
 	}
 }
 
+func TestCalculateResults_TotalProfitUsesDepthAwareProfit(t *testing.T) {
+	u := graph.NewUniverse()
+	u.SetRegion(1, 10000002)
+	u.SetRegion(2, 10000002)
+	u.SetSecurity(1, 0.9)
+	u.SetSecurity(2, 0.9)
+	u.AddGate(1, 2)
+	u.AddGate(2, 1)
+
+	const (
+		typeID       = int32(4242)
+		buyLocID     = int64(300000000001)
+		sellLocID    = int64(300000000002)
+		currentSys   = int32(1)
+		buySystemID  = int32(1)
+		sellSystemID = int32(2)
+	)
+
+	scanner := &Scanner{
+		SDE: &sde.Data{
+			Universe: u,
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Alpha", RegionID: 10000002},
+				2: {ID: 2, Name: "Beta", RegionID: 10000002},
+			},
+			Types: map[int32]*sde.ItemType{
+				typeID: {ID: typeID, Name: "Thin Book Item", Volume: 1},
+			},
+		},
+		ESI: esi.NewClient(nil),
+	}
+
+	asks := []esi.MarketOrder{
+		{TypeID: typeID, LocationID: buyLocID, SystemID: buySystemID, Price: 10, VolumeRemain: 1},
+		{TypeID: typeID, LocationID: buyLocID, SystemID: buySystemID, Price: 100, VolumeRemain: 99},
+	}
+	bids := []esi.MarketOrder{
+		{TypeID: typeID, LocationID: sellLocID, SystemID: sellSystemID, Price: 110, VolumeRemain: 100, IsBuyOrder: true},
+	}
+
+	idx := &scanIndex{
+		sellByType: map[int32][]sellInfo{
+			typeID: {
+				{Price: 10, VolumeRemain: 1, LocationID: buyLocID, SystemID: buySystemID},
+				{Price: 100, VolumeRemain: 99, LocationID: buyLocID, SystemID: buySystemID},
+			},
+		},
+		buyByType: map[int32][]buyInfo{
+			typeID: {
+				{Price: 110, VolumeRemain: 100, LocationID: sellLocID, SystemID: sellSystemID},
+			},
+		},
+		sellOrders: asks,
+		buyOrders:  bids,
+		sellSideBuyDepthByType: map[int32]int64{
+			typeID: 100,
+		},
+		sellSideSellDepthByType: map[int32]int64{
+			typeID: 100,
+		},
+	}
+
+	results, err := scanner.calculateResults(ScanParams{
+		CurrentSystemID: currentSys,
+		CargoCapacity:   100,
+		MinMargin:       0,
+	}, idx, map[int32]int{currentSys: 0}, func(string) {})
+	if err != nil {
+		t.Fatalf("calculateResults error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+
+	r := results[0]
+	const wantProfit = 1090.0 // sell 100*110 - buy (1*10 + 99*100)
+	if math.Abs(r.RealProfit-wantProfit) > 1e-9 {
+		t.Fatalf("RealProfit = %f, want %f", r.RealProfit, wantProfit)
+	}
+	if math.Abs(r.TotalProfit-r.RealProfit) > 1e-9 {
+		t.Fatalf("TotalProfit = %f, want depth-aware RealProfit %f", r.TotalProfit, r.RealProfit)
+	}
+	if math.Abs(r.ProfitPerUnit-(wantProfit/100)) > 1e-9 {
+		t.Fatalf("ProfitPerUnit = %f, want depth-aware %f", r.ProfitPerUnit, wantProfit/100)
+	}
+	if r.TotalProfit >= 10_000 {
+		t.Fatalf("TotalProfit still uses top-book fantasy profit: %f", r.TotalProfit)
+	}
+}
+
 func TestCalculateResults_CargoCapacityZeroMeansUnlimited(t *testing.T) {
 	u := graph.NewUniverse()
 	u.SetRegion(1, 10000002)

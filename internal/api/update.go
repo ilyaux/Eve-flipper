@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,6 +42,7 @@ type updateResolved struct {
 	PublishedAt         string
 	Platform            string
 	Asset               *githubReleaseAsset
+	ChecksumAsset       *githubReleaseAsset
 }
 
 func normalizeAppFlavor(flavor string) string {
@@ -60,6 +63,7 @@ type updateCheckResponse struct {
 	PublishedAt         string `json:"published_at,omitempty"`
 	Platform            string `json:"platform"`
 	AssetName           string `json:"asset_name,omitempty"`
+	ChecksumAssetName   string `json:"checksum_asset_name,omitempty"`
 	CheckError          string `json:"check_error,omitempty"`
 }
 
@@ -80,6 +84,9 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	if resolved.Asset != nil {
 		resp.AssetName = resolved.Asset.Name
+	}
+	if resolved.ChecksumAsset != nil {
+		resp.ChecksumAssetName = resolved.ChecksumAsset.Name
 	}
 	if err != nil {
 		// Fail soft: UI can keep working if GitHub is unreachable.
@@ -129,6 +136,10 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "auto-update is not available for this platform")
 		return
 	}
+	if resolved.ChecksumAsset == nil || strings.TrimSpace(resolved.ChecksumAsset.BrowserDownloadURL) == "" {
+		writeError(w, http.StatusBadRequest, "auto-update requires a SHA256 checksum asset for this platform")
+		return
+	}
 
 	exePath, err := os.Executable()
 	if err != nil {
@@ -148,6 +159,11 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	if err := downloadFile(ctx, resolved.Asset.BrowserDownloadURL, tmpPath); err != nil {
 		_ = os.Remove(tmpPath)
 		writeError(w, http.StatusBadGateway, "failed to download update: "+err.Error())
+		return
+	}
+	if err := verifyDownloadedFileChecksum(ctx, tmpPath, resolved.Asset.Name, resolved.ChecksumAsset.BrowserDownloadURL); err != nil {
+		_ = os.Remove(tmpPath)
+		writeError(w, http.StatusBadGateway, "failed to verify update checksum: "+err.Error())
 		return
 	}
 	if runtime.GOOS != "windows" {
@@ -253,7 +269,10 @@ func (s *Server) resolveUpdate(ctx context.Context) (updateResolved, error) {
 
 	resp.HasUpdate = isVersionNewer(latestNorm, currentNorm)
 	resp.Asset = selectReleaseAsset(rel.Assets, runtime.GOOS, runtime.GOARCH, s.appFlavor)
-	resp.AutoUpdateSupported = resp.HasUpdate && resp.Asset != nil
+	if resp.Asset != nil {
+		resp.ChecksumAsset = selectChecksumAsset(rel.Assets, resp.Asset.Name)
+	}
+	resp.AutoUpdateSupported = resp.HasUpdate && resp.Asset != nil && resp.ChecksumAsset != nil
 	return resp, nil
 }
 
@@ -333,6 +352,35 @@ func selectReleaseAsset(assets []githubReleaseAsset, goos, goarch, flavor string
 	return nil
 }
 
+func selectChecksumAsset(assets []githubReleaseAsset, assetName string) *githubReleaseAsset {
+	assetName = strings.TrimSpace(assetName)
+	if assetName == "" {
+		return nil
+	}
+	exactCandidates := map[string]bool{
+		strings.ToLower(assetName + ".sha256"):     true,
+		strings.ToLower(assetName + ".sha256.txt"): true,
+	}
+	for i := range assets {
+		name := strings.ToLower(strings.TrimSpace(assets[i].Name))
+		if exactCandidates[name] {
+			return &assets[i]
+		}
+	}
+	manifestCandidates := map[string]bool{
+		"sha256sums":     true,
+		"sha256sums.txt": true,
+		"checksums.txt":  true,
+	}
+	for i := range assets {
+		name := strings.ToLower(strings.TrimSpace(assets[i].Name))
+		if manifestCandidates[name] {
+			return &assets[i]
+		}
+	}
+	return nil
+}
+
 func downloadFile(ctx context.Context, srcURL, dstPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
 	if err != nil {
@@ -357,6 +405,81 @@ func downloadFile(ctx context.Context, srcURL, dstPath string) error {
 
 	if _, err := io.Copy(f, res.Body); err != nil {
 		return err
+	}
+	return nil
+}
+
+func downloadText(ctx context.Context, srcURL string, maxBytes int64) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "eve-flipper-updater")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1024))
+		return "", fmt.Errorf("download http %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(body)) > maxBytes {
+		return "", fmt.Errorf("checksum response exceeds %d bytes", maxBytes)
+	}
+	return string(body), nil
+}
+
+func expectedSHA256FromText(text, assetName string) (string, error) {
+	assetName = strings.TrimSpace(assetName)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 1 && len(fields[0]) == sha256.Size*2 {
+			if _, err := hex.DecodeString(fields[0]); err == nil {
+				return strings.ToLower(fields[0]), nil
+			}
+		}
+		if len(fields) >= 2 && strings.TrimLeft(fields[1], "*") == assetName {
+			if len(fields[0]) == sha256.Size*2 {
+				if _, err := hex.DecodeString(fields[0]); err == nil {
+					return strings.ToLower(fields[0]), nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("no SHA256 entry for %s", assetName)
+}
+
+func verifyDownloadedFileChecksum(ctx context.Context, filePath, assetName, checksumURL string) error {
+	text, err := downloadText(ctx, checksumURL, 64*1024)
+	if err != nil {
+		return err
+	}
+	expected, err := expectedSHA256FromText(text, assetName)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("sha256 mismatch for %s", assetName)
 	}
 	return nil
 }

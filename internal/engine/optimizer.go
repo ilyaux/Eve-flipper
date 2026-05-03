@@ -10,18 +10,23 @@ import (
 
 // PortfolioOptimization is the response for the portfolio optimizer tab.
 type PortfolioOptimization struct {
-	Assets               []AssetStats           `json:"assets"`
-	CorrelationMatrix    [][]float64            `json:"correlation_matrix"`
-	CurrentWeights       []float64              `json:"current_weights"`
-	OptimalWeights       []float64              `json:"optimal_weights"`
-	MinVarWeights        []float64              `json:"min_var_weights"`
-	EfficientFrontier    []FrontierPoint        `json:"efficient_frontier"`
-	DiversificationRatio float64                `json:"diversification_ratio"`
-	CurrentSharpe        float64                `json:"current_sharpe"`
-	OptimalSharpe        float64                `json:"optimal_sharpe"`
-	MinVarSharpe         float64                `json:"min_var_sharpe"`
-	HHI                  float64                `json:"hhi"` // Herfindahl-Hirschman Index (0-1)
-	Suggestions          []AllocationSuggestion `json:"suggestions"`
+	Assets               []AssetStats            `json:"assets"`
+	CorrelationMatrix    [][]float64             `json:"correlation_matrix"`
+	CurrentWeights       []float64               `json:"current_weights"`
+	OptimalWeights       []float64               `json:"optimal_weights"`
+	MinVarWeights        []float64               `json:"min_var_weights"`
+	EfficientFrontier    []FrontierPoint         `json:"efficient_frontier"`
+	DiversificationRatio float64                 `json:"diversification_ratio"`
+	CurrentSharpe        float64                 `json:"current_sharpe"`
+	OptimalSharpe        float64                 `json:"optimal_sharpe"`
+	MinVarSharpe         float64                 `json:"min_var_sharpe"`
+	HHI                  float64                 `json:"hhi"` // Herfindahl-Hirschman Index (0-1)
+	Suggestions          []AllocationSuggestion  `json:"suggestions"`
+	OptimizerReady       bool                    `json:"optimizer_ready"`
+	Diagnostic           *OptimizerDiagnostic    `json:"diagnostic,omitempty"`
+	Capital              PortfolioCapital        `json:"capital"`
+	PositionRisks        []PortfolioPositionRisk `json:"position_risks"`
+	Warnings             []string                `json:"warnings,omitempty"`
 }
 
 // OptimizerDiagnostic is returned when optimization fails to help users understand why.
@@ -73,6 +78,70 @@ type AllocationSuggestion struct {
 	Reason     string  `json:"reason"`
 }
 
+// PortfolioCapital describes deployable capital, open inventory, and order exposure.
+type PortfolioCapital struct {
+	WalletISK          float64  `json:"wallet_isk"`
+	InventoryCostISK   float64  `json:"inventory_cost_isk"`
+	InventoryMarkISK   float64  `json:"inventory_mark_isk"`
+	ActiveBuyOrderISK  float64  `json:"active_buy_order_isk"`
+	ActiveSellOrderISK float64  `json:"active_sell_order_isk"`
+	UsedCapitalISK     float64  `json:"used_capital_isk"`
+	TotalExposureISK   float64  `json:"total_exposure_isk"`
+	EstimatedEquityISK float64  `json:"estimated_equity_isk"`
+	FreeCapitalPct     float64  `json:"free_capital_pct"`
+	LockedBuyPct       float64  `json:"locked_buy_pct"`
+	InventoryPct       float64  `json:"inventory_pct"`
+	SellBacklogPct     float64  `json:"sell_backlog_pct"`
+	ConcentrationHHI   float64  `json:"concentration_hhi"`
+	TopExposurePct     float64  `json:"top_exposure_pct"`
+	RiskScore          float64  `json:"risk_score"`
+	RiskLevel          string   `json:"risk_level"`
+	Warnings           []string `json:"warnings,omitempty"`
+}
+
+// PortfolioPositionRisk is an item-level capital and risk recommendation.
+type PortfolioPositionRisk struct {
+	TypeID              int32   `json:"type_id"`
+	TypeName            string  `json:"type_name"`
+	InventoryQty        int64   `json:"inventory_qty"`
+	AssetQty            int64   `json:"asset_qty"`
+	AssetBacked         bool    `json:"asset_backed"`
+	InventoryCostISK    float64 `json:"inventory_cost_isk"`
+	InventoryMarkISK    float64 `json:"inventory_mark_isk"`
+	InventorySource     string  `json:"inventory_source"`
+	UnrealizedPnL       float64 `json:"unrealized_pnl"`
+	UnrealizedROIPct    float64 `json:"unrealized_roi_pct"`
+	ActiveBuyQty        int64   `json:"active_buy_qty"`
+	ActiveBuyISK        float64 `json:"active_buy_isk"`
+	ActiveSellQty       int64   `json:"active_sell_qty"`
+	ActiveSellISK       float64 `json:"active_sell_isk"`
+	RecentSellQty       int64   `json:"recent_sell_qty"`
+	AvgDailySellQty     float64 `json:"avg_daily_sell_qty"`
+	DaysToLiquidate     float64 `json:"days_to_liquidate"`
+	RealizedPnL         float64 `json:"realized_pnl"`
+	AvgDailyPnL         float64 `json:"avg_daily_pnl"`
+	TradingDays         int     `json:"trading_days"`
+	ExposureISK         float64 `json:"exposure_isk"`
+	ExposurePct         float64 `json:"exposure_pct"`
+	TargetPct           float64 `json:"target_pct"`
+	DeltaPct            float64 `json:"delta_pct"`
+	ConcentrationRisk   float64 `json:"concentration_risk"`
+	LiquidityRisk       float64 `json:"liquidity_risk"`
+	BacklogRisk         float64 `json:"backlog_risk"`
+	LossRisk            float64 `json:"loss_risk"`
+	StaleRisk           float64 `json:"stale_risk"`
+	RiskScore           float64 `json:"risk_score"`
+	RiskLevel           string  `json:"risk_level"`
+	Action              string  `json:"action"`
+	Reason              string  `json:"reason"`
+	MaxCapitalISK       float64 `json:"max_capital_isk"`
+	SuggestedBuyISK     float64 `json:"suggested_buy_isk"`
+	SuggestedSellISK    float64 `json:"suggested_sell_isk"`
+	MarkPrice           float64 `json:"mark_price"`
+	MarkPriceSource     string  `json:"mark_price_source"`
+	OldestInventoryDate string  `json:"oldest_inventory_date"`
+}
+
 const (
 	// minOptimizerDays is the minimum number of days an item must have traded
 	// to be included in the optimization. Lowered to 3 because the ESI wallet
@@ -111,33 +180,80 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 	allDays := make(map[string]bool)
 	withinLookback := 0
 
-	for _, tx := range txns {
+	type optBuyLot struct {
+		unitPrice float64
+		remaining int32
+	}
+	buyQueues := make(map[int32][]optBuyLot)
+	sortedTxns := make([]esi.WalletTransaction, len(txns))
+	copy(sortedTxns, txns)
+	sort.SliceStable(sortedTxns, func(i, j int) bool {
+		if sortedTxns[i].Date == sortedTxns[j].Date {
+			return sortedTxns[i].TransactionID < sortedTxns[j].TransactionID
+		}
+		return sortedTxns[i].Date < sortedTxns[j].Date
+	})
+
+	for _, tx := range sortedTxns {
 		t, err := time.Parse(time.RFC3339, tx.Date)
-		if err != nil || t.Before(cutoff) {
+		if err != nil {
 			continue
 		}
-		withinLookback++
-		day := t.Format("2006-01-02")
-		allDays[day] = true
-
-		item, ok := items[tx.TypeID]
-		if !ok {
-			item = &itemDayPnL{
-				pnlByDay: make(map[string]float64),
-				typeName: tx.TypeName,
-			}
-			items[tx.TypeID] = item
-		}
-
-		item.transactions++
-		amount := tx.UnitPrice * float64(tx.Quantity)
 		if tx.IsBuy {
-			item.pnlByDay[day] -= amount
-			item.totalBought += amount
-		} else {
-			item.pnlByDay[day] += amount
-			item.totalSold += amount
+			if !t.Before(cutoff) {
+				withinLookback++
+				item, ok := items[tx.TypeID]
+				if !ok {
+					item = &itemDayPnL{
+						pnlByDay: make(map[string]float64),
+						typeName: tx.TypeName,
+					}
+					items[tx.TypeID] = item
+				}
+				item.transactions++
+				item.totalBought += tx.UnitPrice * float64(tx.Quantity)
+			}
+			buyQueues[tx.TypeID] = append(buyQueues[tx.TypeID], optBuyLot{
+				unitPrice: tx.UnitPrice,
+				remaining: tx.Quantity,
+			})
+			continue
 		}
+
+		if !t.Before(cutoff) {
+			withinLookback++
+		}
+
+		sellQty := tx.Quantity
+		queue := buyQueues[tx.TypeID]
+		for sellQty > 0 && len(queue) > 0 {
+			lot := &queue[0]
+			matched := lot.remaining
+			if matched > sellQty {
+				matched = sellQty
+			}
+			if !t.Before(cutoff) {
+				day := t.Format("2006-01-02")
+				item, ok := items[tx.TypeID]
+				if !ok {
+					item = &itemDayPnL{
+						pnlByDay: make(map[string]float64),
+						typeName: tx.TypeName,
+					}
+					items[tx.TypeID] = item
+				}
+				item.transactions++
+				item.pnlByDay[day] += (tx.UnitPrice - lot.unitPrice) * float64(matched)
+				item.totalSold += tx.UnitPrice * float64(matched)
+				allDays[day] = true
+			}
+			lot.remaining -= matched
+			sellQty -= matched
+			if lot.remaining <= 0 {
+				queue = queue[1:]
+			}
+		}
+		buyQueues[tx.TypeID] = queue
 	}
 
 	// Sort all days.
@@ -385,7 +501,557 @@ func ComputePortfolioOptimization(txns []esi.WalletTransaction, lookbackDays int
 		MinVarSharpe:         minVarSharpe,
 		HHI:                  hhi,
 		Suggestions:          suggestions,
+		OptimizerReady:       true,
 	}, nil
+}
+
+// ComputePortfolioOptimizationWithContext adds active-order and inventory-aware
+// capital/risk recommendations around the historical optimizer.
+func ComputePortfolioOptimizationWithContext(txns []esi.WalletTransaction, orders []esi.CharacterOrder, walletISK float64, lookbackDays int) *PortfolioOptimization {
+	return ComputePortfolioOptimizationWithRuntime(txns, orders, nil, walletISK, lookbackDays, false)
+}
+
+// ComputePortfolioOptimizationWithRuntime adds active-order, wallet, and
+// asset-snapshot context around the historical optimizer. When
+// assetSnapshotComplete is true, ESI assets are treated as the authoritative
+// current inventory for items already present in the trading portfolio.
+func ComputePortfolioOptimizationWithRuntime(txns []esi.WalletTransaction, orders []esi.CharacterOrder, assets []esi.CharacterAsset, walletISK float64, lookbackDays int, assetSnapshotComplete bool) *PortfolioOptimization {
+	result, diag := ComputePortfolioOptimization(txns, lookbackDays)
+	if result == nil {
+		result = &PortfolioOptimization{
+			Assets:            []AssetStats{},
+			CorrelationMatrix: [][]float64{},
+			CurrentWeights:    []float64{},
+			OptimalWeights:    []float64{},
+			MinVarWeights:     []float64{},
+			EfficientFrontier: []FrontierPoint{},
+			Suggestions:       []AllocationSuggestion{},
+			OptimizerReady:    false,
+			Diagnostic:        diag,
+		}
+	} else {
+		result.OptimizerReady = true
+	}
+
+	capital, positions, warnings := buildPortfolioCapitalRisk(txns, orders, assets, walletISK, lookbackDays, result, assetSnapshotComplete)
+	result.Capital = capital
+	result.PositionRisks = positions
+	result.Warnings = append(result.Warnings, warnings...)
+	return result
+}
+
+type portfolioPositionAgg struct {
+	typeID          int32
+	typeName        string
+	inventoryQty    int64
+	inventoryCost   float64
+	oldestInventory string
+	assetQty        int64
+	assetKnown      bool
+	assetReconciled bool
+	costEstimated   bool
+	activeBuyQty    int64
+	activeBuyISK    float64
+	activeSellQty   int64
+	activeSellISK   float64
+	recentSellQty   int64
+	recentSellISK   float64
+	sellDays        map[string]bool
+	realizedPnL     float64
+	avgDailyPnL     float64
+	tradingDays     int
+	targetPct       float64
+}
+
+func buildPortfolioCapitalRisk(txns []esi.WalletTransaction, orders []esi.CharacterOrder, assets []esi.CharacterAsset, walletISK float64, lookbackDays int, opt *PortfolioOptimization, assetSnapshotComplete bool) (PortfolioCapital, []PortfolioPositionRisk, []string) {
+	if lookbackDays <= 0 {
+		lookbackDays = 90
+	}
+	if lookbackDays > 365 {
+		lookbackDays = 365
+	}
+
+	pnl := ComputePortfolioPnLWithOptions(txns, PortfolioPnLOptions{
+		LookbackDays:         lookbackDays,
+		LedgerLimit:          0,
+		IncludeUnmatchedSell: false,
+	})
+
+	positions := make(map[int32]*portfolioPositionAgg)
+	get := func(typeID int32, typeName string) *portfolioPositionAgg {
+		if typeID <= 0 {
+			return nil
+		}
+		p := positions[typeID]
+		if p == nil {
+			p = &portfolioPositionAgg{typeID: typeID, typeName: typeName, sellDays: make(map[string]bool)}
+			positions[typeID] = p
+		}
+		if p.typeName == "" && typeName != "" {
+			p.typeName = typeName
+		}
+		return p
+	}
+
+	for _, pos := range pnl.OpenPositions {
+		p := get(pos.TypeID, pos.TypeName)
+		if p == nil {
+			continue
+		}
+		p.inventoryQty += pos.Quantity
+		p.inventoryCost += pos.CostBasis
+		if p.oldestInventory == "" || (pos.OldestLotDate != "" && pos.OldestLotDate < p.oldestInventory) {
+			p.oldestInventory = pos.OldestLotDate
+		}
+	}
+	for _, item := range pnl.TopItems {
+		p := get(item.TypeID, item.TypeName)
+		if p == nil {
+			continue
+		}
+		p.realizedPnL = item.NetPnL
+		p.tradingDays = item.Transactions
+		if lookbackDays > 0 {
+			p.avgDailyPnL = item.NetPnL / float64(lookbackDays)
+		}
+	}
+
+	now := time.Now().UTC()
+	cutoff := now.AddDate(0, 0, -lookbackDays)
+	for _, tx := range txns {
+		t, err := time.Parse(time.RFC3339, tx.Date)
+		if err != nil || t.Before(cutoff) || tx.IsBuy || tx.Quantity <= 0 {
+			continue
+		}
+		p := get(tx.TypeID, tx.TypeName)
+		if p == nil {
+			continue
+		}
+		p.recentSellQty += int64(tx.Quantity)
+		p.recentSellISK += tx.UnitPrice * float64(tx.Quantity)
+		p.sellDays[t.Format("2006-01-02")] = true
+	}
+
+	var activeBuyISK, activeSellISK float64
+	for _, order := range orders {
+		if order.TypeID <= 0 || order.VolumeRemain <= 0 || order.Price <= 0 {
+			continue
+		}
+		p := get(order.TypeID, order.TypeName)
+		if p == nil {
+			continue
+		}
+		notional := order.Price * float64(order.VolumeRemain)
+		if order.IsBuyOrder {
+			p.activeBuyQty += int64(order.VolumeRemain)
+			p.activeBuyISK += notional
+			activeBuyISK += notional
+		} else {
+			p.activeSellQty += int64(order.VolumeRemain)
+			p.activeSellISK += notional
+			activeSellISK += notional
+		}
+	}
+
+	if assetSnapshotComplete {
+		assetQtyByType := make(map[int32]int64)
+		for _, asset := range assets {
+			qty := portfolioAssetInventoryQty(asset)
+			if qty <= 0 {
+				continue
+			}
+			assetQtyByType[asset.TypeID] += qty
+		}
+		for _, p := range positions {
+			p.assetKnown = true
+			p.assetQty = assetQtyByType[p.typeID]
+			reconcilePortfolioInventoryWithAssets(p)
+		}
+	}
+
+	targetByType := make(map[int32]float64)
+	if opt != nil && len(opt.Assets) == len(opt.OptimalWeights) {
+		for i, asset := range opt.Assets {
+			targetByType[asset.TypeID] = opt.OptimalWeights[i] * 100
+			if p := positions[asset.TypeID]; p != nil {
+				p.avgDailyPnL = asset.AvgDailyPnL
+				p.tradingDays = asset.TradingDays
+			}
+		}
+	}
+	for typeID, pct := range targetByType {
+		if p := positions[typeID]; p != nil {
+			p.targetPct = pct
+		}
+	}
+
+	rows := make([]PortfolioPositionRisk, 0, len(positions))
+	var inventoryCost, inventoryMark, totalExposure float64
+	var assetReconciled, assetZeroed, assetCostEstimated bool
+	for _, p := range positions {
+		if p == nil {
+			continue
+		}
+		markPrice, source := portfolioMarkPrice(p)
+		positionMark := markPrice * float64(p.inventoryQty)
+		if positionMark <= 0 && p.inventoryCost <= 0 && p.activeSellISK > 0 {
+			positionMark = p.activeSellISK
+			markPrice = 0
+			if p.activeSellQty > 0 {
+				markPrice = p.activeSellISK / float64(p.activeSellQty)
+			}
+			source = "active_sell"
+		}
+		if p.inventoryQty > 0 && p.inventoryCost <= 0 && positionMark > 0 {
+			p.inventoryCost = positionMark
+			p.costEstimated = true
+		}
+		inventoryExposure := math.Max(p.inventoryCost, positionMark)
+		inventoryExposure = math.Max(inventoryExposure, p.activeSellISK)
+		exposure := inventoryExposure + p.activeBuyISK
+		if exposure <= 0 && p.activeBuyISK > 0 {
+			exposure = p.activeBuyISK
+		}
+		inventoryCost += p.inventoryCost
+		inventoryMark += positionMark
+		totalExposure += exposure
+		if p.assetReconciled {
+			assetReconciled = true
+			if p.assetQty == 0 {
+				assetZeroed = true
+			}
+		}
+		if p.costEstimated {
+			assetCostEstimated = true
+		}
+		rows = append(rows, PortfolioPositionRisk{
+			TypeID:              p.typeID,
+			TypeName:            p.typeName,
+			InventoryQty:        p.inventoryQty,
+			AssetQty:            p.assetQty,
+			AssetBacked:         p.assetKnown,
+			InventoryCostISK:    p.inventoryCost,
+			InventoryMarkISK:    positionMark,
+			InventorySource:     portfolioInventorySource(p),
+			UnrealizedPnL:       positionMark - p.inventoryCost,
+			ActiveBuyQty:        p.activeBuyQty,
+			ActiveBuyISK:        p.activeBuyISK,
+			ActiveSellQty:       p.activeSellQty,
+			ActiveSellISK:       p.activeSellISK,
+			RecentSellQty:       p.recentSellQty,
+			AvgDailySellQty:     avgDailySellQty(p),
+			RealizedPnL:         p.realizedPnL,
+			AvgDailyPnL:         p.avgDailyPnL,
+			TradingDays:         p.tradingDays,
+			ExposureISK:         exposure,
+			TargetPct:           p.targetPct,
+			MarkPrice:           markPrice,
+			MarkPriceSource:     source,
+			OldestInventoryDate: p.oldestInventory,
+		})
+	}
+
+	for i := range rows {
+		if rows[i].InventoryCostISK > 0 {
+			rows[i].UnrealizedROIPct = rows[i].UnrealizedPnL / rows[i].InventoryCostISK * 100
+		}
+		if rows[i].AvgDailySellQty > 0 {
+			rows[i].DaysToLiquidate = float64(rows[i].InventoryQty+rows[i].ActiveSellQty) / rows[i].AvgDailySellQty
+		} else if rows[i].InventoryQty+rows[i].ActiveSellQty > 0 {
+			rows[i].DaysToLiquidate = 999
+		}
+		if totalExposure > 0 {
+			rows[i].ExposurePct = rows[i].ExposureISK / totalExposure * 100
+		}
+		rows[i].DeltaPct = rows[i].TargetPct - rows[i].ExposurePct
+		scorePortfolioPositionRisk(&rows[i], walletISK, totalExposure)
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].RiskScore == rows[j].RiskScore {
+			return rows[i].ExposureISK > rows[j].ExposureISK
+		}
+		return rows[i].RiskScore > rows[j].RiskScore
+	})
+
+	capital := PortfolioCapital{
+		WalletISK:          walletISK,
+		InventoryCostISK:   inventoryCost,
+		InventoryMarkISK:   inventoryMark,
+		ActiveBuyOrderISK:  activeBuyISK,
+		ActiveSellOrderISK: activeSellISK,
+		UsedCapitalISK:     math.Max(inventoryCost, inventoryMark) + activeBuyISK,
+		TotalExposureISK:   totalExposure,
+		EstimatedEquityISK: walletISK + inventoryMark,
+		Warnings:           []string{},
+	}
+	if capital.EstimatedEquityISK <= 0 {
+		capital.EstimatedEquityISK = walletISK + inventoryCost
+	}
+	denom := walletISK + capital.UsedCapitalISK
+	if denom > 0 {
+		capital.FreeCapitalPct = walletISK / denom * 100
+		capital.LockedBuyPct = activeBuyISK / denom * 100
+		capital.InventoryPct = inventoryCost / denom * 100
+	}
+	if totalExposure > 0 {
+		var hhi float64
+		for _, row := range rows {
+			w := row.ExposureISK / totalExposure
+			hhi += w * w
+			if row.ExposurePct > capital.TopExposurePct {
+				capital.TopExposurePct = row.ExposurePct
+			}
+		}
+		capital.ConcentrationHHI = hhi
+		capital.SellBacklogPct = activeSellISK / totalExposure * 100
+	}
+	capital.RiskScore = portfolioCapitalRiskScore(capital, rows)
+	capital.RiskLevel = portfolioRiskLevel(capital.RiskScore)
+	if capital.TopExposurePct > 45 {
+		capital.Warnings = append(capital.Warnings, "single_item_concentration")
+	}
+	if capital.LockedBuyPct > 50 {
+		capital.Warnings = append(capital.Warnings, "buy_orders_lock_most_capital")
+	}
+	if capital.SellBacklogPct > 80 {
+		capital.Warnings = append(capital.Warnings, "large_sell_backlog")
+	}
+	if assetReconciled {
+		capital.Warnings = append(capital.Warnings, "asset_inventory_reconciled")
+	}
+	if assetZeroed {
+		capital.Warnings = append(capital.Warnings, "stale_txn_inventory_absent_from_assets")
+	}
+	if assetCostEstimated {
+		capital.Warnings = append(capital.Warnings, "asset_cost_basis_estimated")
+	}
+
+	warnings := make([]string, 0, len(capital.Warnings))
+	warnings = append(warnings, capital.Warnings...)
+	return capital, rows, warnings
+}
+
+func portfolioAssetInventoryQty(asset esi.CharacterAsset) int64 {
+	if asset.TypeID <= 0 || asset.IsBlueprintCopy {
+		return 0
+	}
+	if asset.Quantity > 0 {
+		return asset.Quantity
+	}
+	if asset.IsSingleton {
+		return 1
+	}
+	return 0
+}
+
+func reconcilePortfolioInventoryWithAssets(p *portfolioPositionAgg) {
+	if p == nil || !p.assetKnown {
+		return
+	}
+	txnQty := p.inventoryQty
+	txnCost := p.inventoryCost
+	if txnQty == p.assetQty {
+		return
+	}
+	p.assetReconciled = true
+	p.inventoryQty = p.assetQty
+	if p.assetQty <= 0 {
+		p.inventoryCost = 0
+		p.oldestInventory = ""
+		return
+	}
+	if txnQty > 0 && txnCost > 0 {
+		p.inventoryCost = txnCost / float64(txnQty) * float64(p.assetQty)
+		return
+	}
+	p.inventoryCost = 0
+	p.costEstimated = true
+}
+
+func portfolioInventorySource(p *portfolioPositionAgg) string {
+	if p == nil {
+		return ""
+	}
+	if p.assetKnown {
+		if p.assetReconciled {
+			if p.assetQty <= 0 {
+				return "assets_zero"
+			}
+			if p.costEstimated {
+				return "assets_estimated_cost"
+			}
+			return "assets"
+		}
+		if p.assetQty > 0 {
+			return "assets_match"
+		}
+		return "assets_zero"
+	}
+	if p.inventoryQty > 0 {
+		return "transactions"
+	}
+	if p.activeSellQty > 0 {
+		return "active_sell"
+	}
+	if p.activeBuyQty > 0 {
+		return "active_buy"
+	}
+	return ""
+}
+
+func portfolioMarkPrice(p *portfolioPositionAgg) (float64, string) {
+	if p == nil {
+		return 0, ""
+	}
+	if p.activeSellQty > 0 && p.activeSellISK > 0 {
+		return p.activeSellISK / float64(p.activeSellQty), "active_sell"
+	}
+	if p.recentSellQty > 0 && p.recentSellISK > 0 {
+		return p.recentSellISK / float64(p.recentSellQty), "recent_sell"
+	}
+	if p.inventoryQty > 0 && p.inventoryCost > 0 {
+		return p.inventoryCost / float64(p.inventoryQty), "cost"
+	}
+	return 0, ""
+}
+
+func avgDailySellQty(p *portfolioPositionAgg) float64 {
+	if p == nil || p.recentSellQty <= 0 {
+		return 0
+	}
+	days := len(p.sellDays)
+	if days <= 0 {
+		days = 1
+	}
+	return float64(p.recentSellQty) / float64(days)
+}
+
+func scorePortfolioPositionRisk(row *PortfolioPositionRisk, walletISK, totalExposure float64) {
+	if row == nil {
+		return
+	}
+	row.ConcentrationRisk = clampFloat(row.ExposurePct/35*100, 0, 100)
+	if row.DaysToLiquidate >= 999 {
+		row.LiquidityRisk = 100
+	} else {
+		row.LiquidityRisk = clampFloat(row.DaysToLiquidate/14*100, 0, 100)
+	}
+	if row.AvgDailySellQty > 0 {
+		row.BacklogRisk = clampFloat((float64(row.ActiveSellQty)/row.AvgDailySellQty)/7*100, 0, 100)
+	} else if row.ActiveSellQty > 0 {
+		row.BacklogRisk = 80
+	}
+	if row.UnrealizedROIPct < 0 {
+		row.LossRisk = clampFloat(math.Abs(row.UnrealizedROIPct)/30*100, 0, 100)
+	}
+	if row.RealizedPnL < 0 && row.InventoryCostISK > 0 {
+		row.LossRisk = math.Max(row.LossRisk, clampFloat(math.Abs(row.RealizedPnL)/row.InventoryCostISK*100, 0, 100))
+	}
+	row.StaleRisk = staleInventoryRisk(row.OldestInventoryDate)
+	row.RiskScore = clampFloat(
+		row.ConcentrationRisk*0.35+
+			row.LiquidityRisk*0.25+
+			row.BacklogRisk*0.20+
+			row.LossRisk*0.15+
+			row.StaleRisk*0.05,
+		0,
+		100,
+	)
+	row.RiskLevel = portfolioRiskLevel(row.RiskScore)
+
+	row.Action = "hold"
+	row.Reason = "balanced"
+	switch {
+	case row.LossRisk >= 60 && row.LiquidityRisk >= 60:
+		row.Action = "liquidate"
+		row.Reason = "negative_slow_inventory"
+	case row.ConcentrationRisk >= 80:
+		row.Action = "reduce"
+		row.Reason = "over_concentrated"
+	case row.BacklogRisk >= 70 && row.ActiveBuyISK > 0:
+		row.Action = "pause_buy"
+		row.Reason = "sell_backlog"
+	case row.DeltaPct < -5:
+		row.Action = "reduce"
+		row.Reason = "above_target"
+	case row.DeltaPct > 5 && row.RiskScore < 45 && row.AvgDailyPnL >= 0:
+		row.Action = "increase"
+		row.Reason = "below_target_good_risk"
+	case row.LiquidityRisk >= 80:
+		row.Action = "reduce"
+		row.Reason = "slow_liquidation"
+	case row.LossRisk >= 55:
+		row.Action = "reduce"
+		row.Reason = "negative_pnl"
+	}
+
+	if row.TargetPct > 0 && totalExposure > 0 {
+		row.MaxCapitalISK = totalExposure * row.TargetPct / 100
+	}
+	switch row.Action {
+	case "increase":
+		deltaISK := math.Max(row.MaxCapitalISK-row.ExposureISK, 0)
+		if walletISK > 0 {
+			deltaISK = math.Min(deltaISK, walletISK*0.30)
+		}
+		row.SuggestedBuyISK = deltaISK
+	case "reduce", "liquidate", "pause_buy":
+		if row.MaxCapitalISK > 0 {
+			row.SuggestedSellISK = math.Max(row.ExposureISK-row.MaxCapitalISK, 0)
+		}
+		if row.Action == "liquidate" || row.SuggestedSellISK <= 0 {
+			row.SuggestedSellISK = math.Max(row.InventoryMarkISK, row.ActiveSellISK)
+		}
+	}
+}
+
+func staleInventoryRisk(oldest string) float64 {
+	if oldest == "" {
+		return 0
+	}
+	t, err := time.Parse("2006-01-02", oldest)
+	if err != nil {
+		return 0
+	}
+	ageDays := time.Since(t).Hours() / 24
+	return clampFloat((ageDays-14)/46*100, 0, 100)
+}
+
+func portfolioCapitalRiskScore(cap PortfolioCapital, rows []PortfolioPositionRisk) float64 {
+	score := 0.0
+	score += clampFloat(cap.TopExposurePct/45*100, 0, 100) * 0.40
+	score += clampFloat(cap.LockedBuyPct/50*100, 0, 100) * 0.20
+	score += clampFloat(cap.SellBacklogPct/80*100, 0, 100) * 0.20
+	maxRowRisk := 0.0
+	for _, row := range rows {
+		if row.RiskScore > maxRowRisk {
+			maxRowRisk = row.RiskScore
+		}
+	}
+	score += maxRowRisk * 0.20
+	return clampFloat(score, 0, 100)
+}
+
+func portfolioRiskLevel(score float64) string {
+	switch {
+	case score >= 70:
+		return "high"
+	case score >= 35:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func clampFloat(value, minValue, maxValue float64) float64 {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 // --- Linear algebra utilities for small matrices ---

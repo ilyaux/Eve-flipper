@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"testing"
 
 	"eve-flipper/internal/esi"
@@ -294,6 +295,63 @@ func TestFindBestTrades_MathInvariants(t *testing.T) {
 	}
 	if h.Profit != 150 {
 		t.Fatalf("hop profit = %f, want 150", h.Profit)
+	}
+}
+
+func TestFindBestTrades_UsesDepthAwareProfit(t *testing.T) {
+	u := graph.NewUniverse()
+	u.AddGate(1, 2)
+	u.AddGate(2, 1)
+	u.SetRegion(1, 100)
+	u.SetRegion(2, 200)
+	u.SetSecurity(1, 1.0)
+	u.SetSecurity(2, 1.0)
+
+	s := &Scanner{
+		SDE: &sde.Data{
+			Universe: u,
+			Types: map[int32]*sde.ItemType{
+				34: {ID: 34, Name: "Tritanium", Volume: 1},
+			},
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Alpha", RegionID: 100, Security: 1.0},
+				2: {ID: 2, Name: "Beta", RegionID: 200, Security: 1.0},
+			},
+		},
+	}
+
+	sellOrders := []esi.MarketOrder{
+		{SystemID: 1, TypeID: 34, Price: 10, VolumeRemain: 1, LocationID: 1001},
+		{SystemID: 1, TypeID: 34, Price: 100, VolumeRemain: 99, LocationID: 1001},
+	}
+	buyOrders := []esi.MarketOrder{
+		{SystemID: 2, TypeID: 34, Price: 110, VolumeRemain: 100, LocationID: 2001},
+	}
+	idx := buildOrderIndex(sellOrders, buyOrders)
+
+	hops := s.findBestTrades(idx, 1, RouteParams{
+		CargoCapacity:    100,
+		MinMargin:        0,
+		SalesTaxPercent:  0,
+		BrokerFeePercent: 0,
+	}, 10)
+	if len(hops) != 1 {
+		t.Fatalf("len(hops) = %d, want 1", len(hops))
+	}
+
+	h := hops[0]
+	if h.Units != 100 {
+		t.Fatalf("Units = %d, want 100", h.Units)
+	}
+	const wantProfit = 1090.0
+	if math.Abs(h.Profit-wantProfit) > 1e-9 {
+		t.Fatalf("Profit = %f, want depth-aware %f", h.Profit, wantProfit)
+	}
+	if math.Abs(h.BuyPrice-99.1) > 1e-9 {
+		t.Fatalf("BuyPrice = %f, want VWAP 99.1", h.BuyPrice)
+	}
+	if h.Profit >= 10_000 {
+		t.Fatalf("Profit still uses top-book fantasy value: %f", h.Profit)
 	}
 }
 

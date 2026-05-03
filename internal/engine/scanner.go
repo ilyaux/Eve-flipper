@@ -969,16 +969,18 @@ func (s *Scanner) calculateResults(
 
 			r.FilledQty = safeQty
 			r.CanFill = safeQty >= requestedQty
+			r.ProfitPerUnit = sanitizeFloat(execProfitPerUnit)
+			r.TotalProfit = sanitizeFloat(expectedProfit)
 			r.RealMarginPercent = realMarginPct
+			r.MarginPercent = realMarginPct
+			if r.TotalJumps > 0 {
+				r.ProfitPerJump = sanitizeFloat(expectedProfit / float64(r.TotalJumps))
+			} else {
+				r.ProfitPerJump = 0
+			}
 
 			if safeQty != requestedQty {
 				r.UnitsToBuy = safeQty
-				r.TotalProfit = r.ProfitPerUnit * float64(safeQty)
-				if r.TotalJumps > 0 {
-					r.ProfitPerJump = sanitizeFloat(r.TotalProfit / float64(r.TotalJumps))
-				} else {
-					r.ProfitPerJump = 0
-				}
 			}
 			r.ExpectedBuyPrice = planBuy.ExpectedPrice
 			r.ExpectedSellPrice = planSell.ExpectedPrice
@@ -1046,6 +1048,15 @@ func (s *Scanner) calculateResults(
 		if results[i].BfSPerDay > 0 {
 			results[i].S2BBfSRatio = sanitizeFloat(results[i].S2BPerDay / results[i].BfSPerDay)
 		}
+		qtyForFill := results[i].FilledQty
+		if qtyForFill <= 0 {
+			qtyForFill = results[i].UnitsToBuy
+		}
+		results[i].FillTimeDays = estimateCycleFillTimeDays(qtyForFill, results[i].S2BPerDay, results[i].BfSPerDay)
+		results[i].LiquidityScore, results[i].LiquidityLabel = liquidityScoreFromFillTime(
+			results[i].FillTimeDays,
+			results[i].HistoryAvailable,
+		)
 	}
 
 	// Compute DailyProfit using cycle-constrained daily executable units.
@@ -1448,6 +1459,7 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 	type historyNeed struct {
 		idx         int
 		totalListed int32
+		units       int32
 	}
 	needed := make(map[historyKey][]historyNeed) // key -> all result indices with total listed quantity
 	totalNeeds := 0
@@ -1458,9 +1470,14 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 		}
 		key := historyKey{regionID, results[i].TypeID}
 		totalListed := results[i].SellOrderRemain + results[i].BuyOrderRemain
+		units := results[i].FilledQty
+		if units <= 0 {
+			units = results[i].UnitsToBuy
+		}
 		needed[key] = append(needed[key], historyNeed{
 			idx:         i,
 			totalListed: totalListed,
+			units:       units,
 		})
 		totalNeeds++
 	}
@@ -1469,6 +1486,7 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 	type histResult struct {
 		idx              int
 		stats            esi.MarketStats
+		backtest         historicalFillBacktest
 		historyAvailable bool
 	}
 	ch := make(chan histResult, totalNeeds)
@@ -1499,6 +1517,7 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 				ch <- histResult{
 					idx:              n.idx,
 					stats:            stats,
+					backtest:         computeHistoricalFillBacktest(entries, n.units),
 					historyAvailable: historyAvailable,
 				}
 			}
@@ -1511,5 +1530,8 @@ func (s *Scanner) enrichWithHistory(results []FlipResult, progress func(string))
 		results[r.idx].Velocity = sanitizeFloat(r.stats.Velocity)
 		results[r.idx].PriceTrend = sanitizeFloat(r.stats.PriceTrend)
 		results[r.idx].HistoryAvailable = r.historyAvailable
+		results[r.idx].BacktestDays = r.backtest.Days
+		results[r.idx].BacktestFillRate = sanitizeFloat(r.backtest.FillRate)
+		results[r.idx].BacktestMedianVol = r.backtest.MedianVol
 	}
 }

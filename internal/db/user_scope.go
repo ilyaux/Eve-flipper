@@ -11,4 +11,3 @@ func normalizeUserID(userID string) string {
 	}
 	return trimmed
 }
-

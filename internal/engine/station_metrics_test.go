@@ -353,7 +353,7 @@ func TestFilterLastNDays_IncludesBoundaryDay(t *testing.T) {
 	// An entry dated exactly N days ago must always be included,
 	// regardless of time-of-day when the test runs. This verifies
 	// the UTC truncation fix in filterLastNDays.
-	exactlyNDaysAgo := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -7).Format("2006-01-02")
+	exactlyNDaysAgo := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -7).Format("2006-01-02")
 	history := []esi.HistoryEntry{
 		{Date: exactlyNDaysAgo, Volume: 42},
 	}

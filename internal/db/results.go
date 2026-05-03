@@ -30,8 +30,11 @@ func (d *DB) InsertFlipResults(scanID int64, results []engine.FlipResult) {
 		s2b_per_day, bfs_per_day, s2b_bfs_ratio,
 		daily_profit, real_profit, real_margin_percent, filled_qty, can_fill,
 		expected_profit, expected_buy_price, expected_sell_price,
-		slippage_buy_pct, slippage_sell_pct, history_available
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		slippage_buy_pct, slippage_sell_pct, history_available,
+		fill_time_days, liquidity_score, liquidity_label,
+		backtest_days, backtest_fill_rate, backtest_median_vol,
+		character_assets, character_buy_orders, character_sell_orders
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("[DB] InsertFlipResults prepare: %v", err)
@@ -60,6 +63,9 @@ func (d *DB) InsertFlipResults(scanID int64, results []engine.FlipResult) {
 			r.DailyProfit, r.RealProfit, r.RealMarginPercent, r.FilledQty, canFill,
 			r.ExpectedProfit, r.ExpectedBuyPrice, r.ExpectedSellPrice,
 			r.SlippageBuyPct, r.SlippageSellPct, historyAvailable,
+			r.FillTimeDays, r.LiquidityScore, r.LiquidityLabel,
+			r.BacktestDays, r.BacktestFillRate, r.BacktestMedianVol,
+			r.CharacterAssets, r.CharacterBuyOrders, r.CharacterSellOrders,
 		); err != nil {
 			tx.Rollback()
 			log.Printf("[DB] InsertFlipResults exec row type_id=%d: %v", r.TypeID, err)
@@ -85,7 +91,10 @@ func (d *DB) GetFlipResults(scanID int64) []engine.FlipResult {
 			s2b_per_day, bfs_per_day, s2b_bfs_ratio,
 			daily_profit, real_profit, real_margin_percent, filled_qty, can_fill,
 			expected_profit, expected_buy_price, expected_sell_price,
-			slippage_buy_pct, slippage_sell_pct, history_available
+			slippage_buy_pct, slippage_sell_pct, history_available,
+			COALESCE(fill_time_days, 0), COALESCE(liquidity_score, 0), COALESCE(liquidity_label, ''),
+			COALESCE(backtest_days, 0), COALESCE(backtest_fill_rate, 0), COALESCE(backtest_median_vol, 0),
+			COALESCE(character_assets, 0), COALESCE(character_buy_orders, 0), COALESCE(character_sell_orders, 0)
 		FROM flip_results WHERE scan_id = ?
 	`, scanID)
 	if err != nil {
@@ -110,6 +119,9 @@ func (d *DB) GetFlipResults(scanID int64) []engine.FlipResult {
 			&r.DailyProfit, &r.RealProfit, &r.RealMarginPercent, &r.FilledQty, &canFill,
 			&r.ExpectedProfit, &r.ExpectedBuyPrice, &r.ExpectedSellPrice,
 			&r.SlippageBuyPct, &r.SlippageSellPct, &historyAvailable,
+			&r.FillTimeDays, &r.LiquidityScore, &r.LiquidityLabel,
+			&r.BacktestDays, &r.BacktestFillRate, &r.BacktestMedianVol,
+			&r.CharacterAssets, &r.CharacterBuyOrders, &r.CharacterSellOrders,
 		); err != nil {
 			log.Printf("[DB] GetFlipResults scan row: %v", err)
 			continue
@@ -371,8 +383,15 @@ func (d *DB) InsertRouteResults(scanID int64, routes []engine.RouteResult) {
 		scan_id, route_index, hop_index,
 		system_name, station_name, dest_system_name, dest_station_name,
 		type_name, type_id, buy_price, sell_price, units, profit, jumps,
-		total_profit, total_jumps, profit_per_jump, hop_count
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		total_profit, total_jumps, profit_per_jump, hop_count,
+		hop_volume_m3, hop_cargo_m3, hop_cargo_trips, hop_execution_minutes, hop_profit_per_hour,
+		route_cargo_m3, route_cargo_trips, route_execution_minutes, route_profit_per_hour,
+		hop_daily_volume, hop_fill_time_days, hop_liquidity_score, hop_liquidity_label,
+		route_fill_time_days, route_liquidity_score, route_liquidity_label,
+		hauling_risk_known, hauling_danger, hauling_kills, hauling_isk, hauling_risk_score, hauling_safety_multiplier,
+		route_cargo_value_isk, courier_collateral_isk, courier_reward_floor_isk, courier_reward_per_jump_isk,
+		courier_profit_after_reward_isk, courier_risk_premium_percent, courier_viable
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		log.Printf("[DB] InsertRouteResults prepare: %v", err)
@@ -381,12 +400,27 @@ func (d *DB) InsertRouteResults(scanID int64, routes []engine.RouteResult) {
 	defer stmt.Close()
 
 	for ri, route := range routes {
+		riskKnown := 0
+		if route.HaulingRiskKnown {
+			riskKnown = 1
+		}
+		courierViable := 0
+		if route.CourierViable {
+			courierViable = 1
+		}
 		for hi, hop := range route.Hops {
 			if _, err := stmt.Exec(
 				scanID, ri, hi,
 				hop.SystemName, hop.StationName, hop.DestSystemName, hop.DestStationName,
 				hop.TypeName, hop.TypeID, hop.BuyPrice, hop.SellPrice, hop.Units, hop.Profit, hop.Jumps,
 				route.TotalProfit, route.TotalJumps, route.ProfitPerJump, route.HopCount,
+				hop.VolumeM3, hop.CargoM3, hop.CargoTrips, hop.ExecutionMinutes, hop.ProfitPerHour,
+				route.CargoM3, route.CargoTrips, route.ExecutionMinutes, route.ProfitPerHour,
+				hop.DailyVolume, hop.FillTimeDays, hop.LiquidityScore, hop.LiquidityLabel,
+				route.FillTimeDays, route.LiquidityScore, route.LiquidityLabel,
+				riskKnown, route.HaulingDanger, route.HaulingKills, route.HaulingISK, route.HaulingRiskScore, route.HaulingSafetyMultiplier,
+				route.CargoValueISK, route.CourierCollateralISK, route.CourierRewardFloorISK, route.CourierRewardPerJumpISK,
+				route.CourierProfitAfterRewardISK, route.CourierRiskPremiumPercent, courierViable,
 			); err != nil {
 				tx.Rollback()
 				log.Printf("[DB] InsertRouteResults exec route=%d hop=%d: %v", ri, hi, err)
@@ -406,7 +440,23 @@ func (d *DB) GetRouteResults(scanID int64) []engine.RouteResult {
 		SELECT route_index, hop_index,
 			system_name, station_name, dest_system_name, dest_station_name,
 			type_name, type_id, buy_price, sell_price, units, profit, jumps,
-			total_profit, total_jumps, profit_per_jump, hop_count
+			total_profit, total_jumps, profit_per_jump, hop_count,
+			COALESCE(hop_volume_m3, 0), COALESCE(hop_cargo_m3, 0),
+			COALESCE(hop_cargo_trips, 0), COALESCE(hop_execution_minutes, 0),
+			COALESCE(hop_profit_per_hour, 0),
+			COALESCE(route_cargo_m3, 0), COALESCE(route_cargo_trips, 0),
+			COALESCE(route_execution_minutes, 0), COALESCE(route_profit_per_hour, 0),
+			COALESCE(hop_daily_volume, 0), COALESCE(hop_fill_time_days, 0),
+			COALESCE(hop_liquidity_score, 0), COALESCE(hop_liquidity_label, ''),
+			COALESCE(route_fill_time_days, 0), COALESCE(route_liquidity_score, 0),
+			COALESCE(route_liquidity_label, ''), COALESCE(hauling_risk_known, 0),
+			COALESCE(hauling_danger, ''), COALESCE(hauling_kills, 0),
+			COALESCE(hauling_isk, 0), COALESCE(hauling_risk_score, 0),
+			COALESCE(hauling_safety_multiplier, 0),
+			COALESCE(route_cargo_value_isk, 0), COALESCE(courier_collateral_isk, 0),
+			COALESCE(courier_reward_floor_isk, 0), COALESCE(courier_reward_per_jump_isk, 0),
+			COALESCE(courier_profit_after_reward_isk, 0), COALESCE(courier_risk_premium_percent, 0),
+			COALESCE(courier_viable, 0)
 		FROM route_results WHERE scan_id = ? ORDER BY route_index, hop_index
 	`, scanID)
 	if err != nil {
@@ -421,21 +471,55 @@ func (d *DB) GetRouteResults(scanID int64) []engine.RouteResult {
 		var hop engine.RouteHop
 		var totalProfit, profitPerJump float64
 		var totalJumps, hopCount int
+		var routeFillTimeDays, routeLiquidityScore, haulingISK, haulingRiskScore, haulingSafetyMultiplier float64
+		var cargoValueISK, courierCollateralISK, courierRewardFloorISK, courierRewardPerJumpISK float64
+		var courierProfitAfterRewardISK, courierRiskPremiumPercent float64
+		var routeCargoM3, routeExecutionMinutes, routeProfitPerHour float64
+		var routeCargoTrips int
+		var routeLiquidityLabel, haulingDanger string
+		var haulingRiskKnown, haulingKills, courierViable int
 		if err := rows.Scan(
 			&ri, &hi,
 			&hop.SystemName, &hop.StationName, &hop.DestSystemName, &hop.DestStationName,
 			&hop.TypeName, &hop.TypeID, &hop.BuyPrice, &hop.SellPrice, &hop.Units, &hop.Profit, &hop.Jumps,
 			&totalProfit, &totalJumps, &profitPerJump, &hopCount,
+			&hop.VolumeM3, &hop.CargoM3, &hop.CargoTrips, &hop.ExecutionMinutes, &hop.ProfitPerHour,
+			&routeCargoM3, &routeCargoTrips, &routeExecutionMinutes, &routeProfitPerHour,
+			&hop.DailyVolume, &hop.FillTimeDays, &hop.LiquidityScore, &hop.LiquidityLabel,
+			&routeFillTimeDays, &routeLiquidityScore, &routeLiquidityLabel,
+			&haulingRiskKnown, &haulingDanger, &haulingKills, &haulingISK, &haulingRiskScore, &haulingSafetyMultiplier,
+			&cargoValueISK, &courierCollateralISK, &courierRewardFloorISK, &courierRewardPerJumpISK,
+			&courierProfitAfterRewardISK, &courierRiskPremiumPercent, &courierViable,
 		); err != nil {
 			log.Printf("[DB] GetRouteResults scan row: %v", err)
 			continue
 		}
 		if _, ok := routeMap[ri]; !ok {
 			routeMap[ri] = &engine.RouteResult{
-				TotalProfit:   totalProfit,
-				TotalJumps:    totalJumps,
-				ProfitPerJump: profitPerJump,
-				HopCount:      hopCount,
+				TotalProfit:                 totalProfit,
+				TotalJumps:                  totalJumps,
+				ProfitPerJump:               profitPerJump,
+				HopCount:                    hopCount,
+				CargoM3:                     routeCargoM3,
+				CargoTrips:                  routeCargoTrips,
+				ExecutionMinutes:            routeExecutionMinutes,
+				ProfitPerHour:               routeProfitPerHour,
+				FillTimeDays:                routeFillTimeDays,
+				LiquidityScore:              routeLiquidityScore,
+				LiquidityLabel:              routeLiquidityLabel,
+				HaulingRiskKnown:            haulingRiskKnown != 0,
+				HaulingDanger:               haulingDanger,
+				HaulingKills:                haulingKills,
+				HaulingISK:                  haulingISK,
+				HaulingRiskScore:            haulingRiskScore,
+				HaulingSafetyMultiplier:     haulingSafetyMultiplier,
+				CargoValueISK:               cargoValueISK,
+				CourierCollateralISK:        courierCollateralISK,
+				CourierRewardFloorISK:       courierRewardFloorISK,
+				CourierRewardPerJumpISK:     courierRewardPerJumpISK,
+				CourierProfitAfterRewardISK: courierProfitAfterRewardISK,
+				CourierRiskPremiumPercent:   courierRiskPremiumPercent,
+				CourierViable:               courierViable != 0,
 			}
 		}
 		routeMap[ri].Hops = append(routeMap[ri].Hops, hop)

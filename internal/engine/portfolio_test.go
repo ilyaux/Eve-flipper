@@ -344,7 +344,8 @@ func TestComputePortfolioPnL_LookbackFilter(t *testing.T) {
 	// Transactions from 60 days ago should be excluded with lookback of 30.
 	txns := []esi.WalletTransaction{
 		txn(-60, 34, "Trit", 1, "Jita", false, 1000, 1), // outside lookback
-		txn(-1, 34, "Trit", 1, "Jita", false, 500, 1),   // inside lookback
+		txn(-2, 34, "Trit", 1, "Jita", true, 100, 1),    // inside lookback
+		txn(-1, 34, "Trit", 1, "Jita", false, 600, 1),   // inside lookback
 	}
 	result := ComputePortfolioPnL(txns, 30)
 	if len(result.DailyPnL) != 1 {

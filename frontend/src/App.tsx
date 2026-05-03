@@ -336,6 +336,12 @@ function App() {
     route_target_system_name: "",
     route_min_isk_per_jump: 0,
     route_allow_empty_hops: false,
+    route_mode: "balanced",
+    route_ship_profile: "custom",
+    route_cargo_capacity: 5000,
+    route_minutes_per_jump: 2,
+    route_dock_minutes: 4,
+    route_safety_delay_percent: 0,
     sell_order_mode: false,
   });
   const configLoadedRef = useRef(false);
@@ -984,7 +990,7 @@ function App() {
         const radiusParams =
           (params.restrict_to_target_market ?? true)
             ? params
-            : { ...params, target_market_system: "" };
+            : { ...params, target_market_system: "", target_market_location_id: 0 };
         const results = await scan(
           radiusParams,
           setProgress,
@@ -2071,6 +2077,12 @@ function App() {
                 "route_target_system_name",
                 "route_min_isk_per_jump",
                 "route_allow_empty_hops",
+                "route_mode",
+                "route_ship_profile",
+                "route_cargo_capacity",
+                "route_minutes_per_jump",
+                "route_dock_minutes",
+                "route_safety_delay_percent",
               ];
               const filtered: Record<string, unknown> = {};
               for (const k of safeKeys) {

@@ -78,6 +78,7 @@ type RegionalDayTradeHub struct {
 
 type RegionalInventorySnapshot struct {
 	AssetsByType     map[int32]int64
+	ActiveBuyByType  map[int32]int64
 	ActiveSellByType map[int32]int64
 }
 

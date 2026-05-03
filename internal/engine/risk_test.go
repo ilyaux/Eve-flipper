@@ -321,7 +321,7 @@ func TestComputePortfolioRiskFromTransactions_Var99ReliableFlag(t *testing.T) {
 }
 
 func TestComputePortfolioRiskFromTransactions_UnmatchedSells(t *testing.T) {
-	// Test that sells without matching buys (items acquired before lookback) are treated as revenue.
+	// Sells without matching buys have unknown cost basis and must not be treated as profit.
 	base := time.Now().UTC().AddDate(0, 0, -10)
 	var txns []esi.WalletTransaction
 
@@ -338,16 +338,7 @@ func TestComputePortfolioRiskFromTransactions_UnmatchedSells(t *testing.T) {
 	}
 
 	out := ComputePortfolioRiskFromTransactions(txns)
-	if out == nil {
-		t.Fatal("ComputePortfolioRiskFromTransactions: expected non-nil for unmatched sells")
-	}
-	// All PnLs are positive (pure revenue). The smallest sell is 100 ISK.
-	// WorstDayLoss = -min(pnls) = -100 (negative means the "worst day" was still a gain).
-	wantWorst := -100.0
-	if math.Abs(out.WorstDayLoss-wantWorst) > 1e-6 {
-		t.Errorf("WorstDayLoss = %v, want %v", out.WorstDayLoss, wantWorst)
-	}
-	if out.SampleDays != 6 {
-		t.Errorf("SampleDays = %d, want 6", out.SampleDays)
+	if out != nil {
+		t.Fatalf("ComputePortfolioRiskFromTransactions: expected nil when only unmatched sells are present, got %+v", out)
 	}
 }

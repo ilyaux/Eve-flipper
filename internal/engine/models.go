@@ -53,14 +53,27 @@ type FlipResult struct {
 	// True when market history for this type/region was fetched successfully.
 	HistoryAvailable bool `json:"HistoryAvailable"`
 	// Execution-plan derived (expected fill prices from order book depth)
-	ExpectedBuyPrice  float64 `json:"ExpectedBuyPrice,omitempty"`
-	ExpectedSellPrice float64 `json:"ExpectedSellPrice,omitempty"`
-	ExpectedProfit    float64 `json:"ExpectedProfit,omitempty"`
-	RealProfit        float64 `json:"RealProfit,omitempty"` // primary KPI: expected net ISK with depth/slippage
-	FilledQty         int32   `json:"FilledQty,omitempty"`  // executable profitable quantity from execution simulation
-	CanFill           bool    `json:"CanFill"`              // true when requested quantity is executable profitably
-	SlippageBuyPct    float64 `json:"SlippageBuyPct,omitempty"`
-	SlippageSellPct   float64 `json:"SlippageSellPct,omitempty"`
+	ExpectedBuyPrice      float64 `json:"ExpectedBuyPrice,omitempty"`
+	ExpectedSellPrice     float64 `json:"ExpectedSellPrice,omitempty"`
+	ExpectedProfit        float64 `json:"ExpectedProfit,omitempty"`
+	RealProfit            float64 `json:"RealProfit,omitempty"` // primary KPI: expected net ISK with depth/slippage
+	FilledQty             int32   `json:"FilledQty,omitempty"`  // executable profitable quantity from execution simulation
+	CanFill               bool    `json:"CanFill"`              // true when requested quantity is executable profitably
+	SlippageBuyPct        float64 `json:"SlippageBuyPct,omitempty"`
+	SlippageSellPct       float64 `json:"SlippageSellPct,omitempty"`
+	FillTimeDays          float64 `json:"FillTimeDays,omitempty"`          // estimated days to complete the full cycle
+	LiquidityScore        float64 `json:"LiquidityScore,omitempty"`        // 0-100 score from fill time and history confidence
+	LiquidityLabel        string  `json:"LiquidityLabel,omitempty"`        // high | medium | low | thin | unknown
+	BacktestDays          int     `json:"BacktestDays,omitempty"`          // number of history days used for fill viability
+	BacktestFillRate      float64 `json:"BacktestFillRate,omitempty"`      // % of history days with enough target volume
+	BacktestMedianVol     int64   `json:"BacktestMedianVol,omitempty"`     // median daily volume in the backtest window
+	CharacterAssets       int64   `json:"CharacterAssets,omitempty"`       // owned asset units for this type in selected scope
+	CharacterBuyOrders    int64   `json:"CharacterBuyOrders,omitempty"`    // active buy-order units for this type in selected scope
+	CharacterSellOrders   int64   `json:"CharacterSellOrders,omitempty"`   // active sell-order units for this type in selected scope
+	RouteSafetyMultiplier float64 `json:"RouteSafetyMultiplier,omitempty"` // backtest route-time safety multiplier from gank risk
+	RouteSafetyDanger     string  `json:"RouteSafetyDanger,omitempty"`     // green | yellow | red
+	RouteSafetyKills      int     `json:"RouteSafetyKills,omitempty"`
+	RouteSafetyISK        float64 `json:"RouteSafetyISK,omitempty"`
 
 	// Regional day-trader enrichments (EVE Guru-style grouped region view).
 	DaySecurity           float64   `json:"DaySecurity,omitempty"`
@@ -116,34 +129,63 @@ type ContractResult struct {
 
 // RouteHop represents a single buy-haul-sell leg within a multi-hop trade route.
 type RouteHop struct {
-	SystemName      string
-	StationName     string
-	SystemID        int32
-	RegionID        int32 `json:"RegionID"` // Market region for execution plan / slippage
-	LocationID      int64 `json:"-"`
-	EmptyJumps      int   `json:"EmptyJumps,omitempty"` // optional deadhead jumps before this trade hop
-	DestSystemID    int32
-	DestSystemName  string
-	DestStationName string `json:"DestStationName,omitempty"`
-	DestLocationID  int64  `json:"-"`
-	TypeName        string
-	TypeID          int32
-	BuyPrice        float64
-	SellPrice       float64
-	Units           int32
-	Profit          float64
-	Jumps           int // jumps to destination
+	SystemName       string
+	StationName      string
+	SystemID         int32
+	RegionID         int32 `json:"RegionID"` // Market region for execution plan / slippage
+	LocationID       int64 `json:"-"`
+	EmptyJumps       int   `json:"EmptyJumps,omitempty"` // optional deadhead jumps before this trade hop
+	DestSystemID     int32
+	DestSystemName   string
+	DestStationName  string `json:"DestStationName,omitempty"`
+	DestLocationID   int64  `json:"-"`
+	TypeName         string
+	TypeID           int32
+	BuyPrice         float64
+	SellPrice        float64
+	Units            int32
+	Profit           float64
+	Jumps            int     // jumps to destination
+	VolumeM3         float64 `json:"VolumeM3,omitempty"`
+	CargoM3          float64 `json:"CargoM3,omitempty"`
+	CargoTrips       int     `json:"CargoTrips,omitempty"`
+	ExecutionMinutes float64 `json:"ExecutionMinutes,omitempty"`
+	ProfitPerHour    float64 `json:"ProfitPerHour,omitempty"`
+	DailyVolume      int64   `json:"DailyVolume,omitempty"`
+	FillTimeDays     float64 `json:"FillTimeDays,omitempty"`
+	LiquidityScore   float64 `json:"LiquidityScore,omitempty"`
+	LiquidityLabel   string  `json:"LiquidityLabel,omitempty"`
 }
 
 // RouteResult represents a complete multi-hop trade route with aggregated profit.
 type RouteResult struct {
-	Hops             []RouteHop
-	TotalProfit      float64
-	TotalJumps       int
-	ProfitPerJump    float64
-	HopCount         int
-	TargetSystemName string `json:"TargetSystemName,omitempty"` // optional trip destination constraint
-	TargetJumps      int    `json:"TargetJumps,omitempty"`      // deadhead jumps from final trade to target
+	Hops                        []RouteHop
+	TotalProfit                 float64
+	TotalJumps                  int
+	ProfitPerJump               float64
+	HopCount                    int
+	TargetSystemName            string  `json:"TargetSystemName,omitempty"` // optional trip destination constraint
+	TargetJumps                 int     `json:"TargetJumps,omitempty"`      // deadhead jumps from final trade to target
+	CargoM3                     float64 `json:"CargoM3,omitempty"`
+	CargoTrips                  int     `json:"CargoTrips,omitempty"`
+	ExecutionMinutes            float64 `json:"ExecutionMinutes,omitempty"`
+	ProfitPerHour               float64 `json:"ProfitPerHour,omitempty"`
+	FillTimeDays                float64 `json:"FillTimeDays,omitempty"`
+	LiquidityScore              float64 `json:"LiquidityScore,omitempty"`
+	LiquidityLabel              string  `json:"LiquidityLabel,omitempty"`
+	HaulingRiskKnown            bool    `json:"HaulingRiskKnown,omitempty"`
+	HaulingDanger               string  `json:"HaulingDanger,omitempty"`
+	HaulingKills                int     `json:"HaulingKills,omitempty"`
+	HaulingISK                  float64 `json:"HaulingISK,omitempty"`
+	HaulingRiskScore            float64 `json:"HaulingRiskScore,omitempty"`
+	HaulingSafetyMultiplier     float64 `json:"HaulingSafetyMultiplier,omitempty"`
+	CargoValueISK               float64 `json:"CargoValueISK,omitempty"`
+	CourierCollateralISK        float64 `json:"CourierCollateralISK,omitempty"`
+	CourierRewardFloorISK       float64 `json:"CourierRewardFloorISK,omitempty"`
+	CourierRewardPerJumpISK     float64 `json:"CourierRewardPerJumpISK,omitempty"`
+	CourierProfitAfterRewardISK float64 `json:"CourierProfitAfterRewardISK,omitempty"`
+	CourierRiskPremiumPercent   float64 `json:"CourierRiskPremiumPercent,omitempty"`
+	CourierViable               bool    `json:"CourierViable,omitempty"`
 }
 
 // RouteParams holds the input parameters for multi-hop route search.
@@ -152,10 +194,18 @@ type RouteParams struct {
 	IgnoredSystemIDs []int32
 	TargetSystemName string
 	CargoCapacity    float64
-	MinMargin        float64
-	MinISKPerJump    float64
-	SalesTaxPercent  float64
-	BrokerFeePercent float64
+	// RouteCargoCapacity overrides CargoCapacity for route hauling. This keeps
+	// route ship planning independent from other scanner tabs.
+	RouteCargoCapacity      float64
+	RouteShipProfile        string
+	RouteMinutesPerJump     float64
+	RouteDockMinutes        float64
+	RouteSafetyDelayPercent float64
+	RouteMode               string
+	MinMargin               float64
+	MinISKPerJump           float64
+	SalesTaxPercent         float64
+	BrokerFeePercent        float64
 	// SplitTradeFees enables side-specific fee model.
 	// When false, legacy fields above are used.
 	SplitTradeFees       bool

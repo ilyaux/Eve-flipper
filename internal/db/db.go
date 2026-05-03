@@ -1212,6 +1212,226 @@ func (d *DB) migrate() error {
 		logger.Info("DB", "Applied migration v27 (regional day-trader history rows)")
 	}
 
+	if version < 28 {
+		flipCols := []struct {
+			name string
+			def  string
+		}{
+			{name: "fill_time_days", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "liquidity_score", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "liquidity_label", def: "TEXT NOT NULL DEFAULT ''"},
+			{name: "backtest_days", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "backtest_fill_rate", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "backtest_median_vol", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "character_assets", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "character_buy_orders", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "character_sell_orders", def: "INTEGER NOT NULL DEFAULT 0"},
+		}
+		flipResultsExists, err := d.tableExists("flip_results")
+		if err != nil {
+			return fmt.Errorf("migration v28 check flip_results exists: %w", err)
+		}
+		if flipResultsExists {
+			for _, c := range flipCols {
+				if err := d.ensureTableColumn("flip_results", c.name, c.def); err != nil {
+					return fmt.Errorf("migration v28 add flip_results.%s: %w", c.name, err)
+				}
+			}
+		}
+
+		routeCols := []struct {
+			name string
+			def  string
+		}{
+			{name: "hop_daily_volume", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "hop_fill_time_days", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hop_liquidity_score", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hop_liquidity_label", def: "TEXT NOT NULL DEFAULT ''"},
+			{name: "route_fill_time_days", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "route_liquidity_score", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "route_liquidity_label", def: "TEXT NOT NULL DEFAULT ''"},
+			{name: "hauling_risk_known", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "hauling_danger", def: "TEXT NOT NULL DEFAULT ''"},
+			{name: "hauling_kills", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "hauling_isk", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hauling_risk_score", def: "REAL NOT NULL DEFAULT 0"},
+		}
+		routeResultsExists, err := d.tableExists("route_results")
+		if err != nil {
+			return fmt.Errorf("migration v28 check route_results exists: %w", err)
+		}
+		if routeResultsExists {
+			for _, c := range routeCols {
+				if err := d.ensureTableColumn("route_results", c.name, c.def); err != nil {
+					return fmt.Errorf("migration v28 add route_results.%s: %w", c.name, err)
+				}
+			}
+		}
+
+		if _, err := d.sql.Exec(`INSERT OR IGNORE INTO schema_version (version) VALUES (28);`); err != nil {
+			return fmt.Errorf("migration v28: %w", err)
+		}
+		logger.Info("DB", "Applied migration v28 (liquidity, backtest, hauling risk fields)")
+	}
+
+	if version < 29 {
+		_, err := d.sql.Exec(`
+			CREATE TABLE IF NOT EXISTS paper_trades (
+				id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id             TEXT NOT NULL,
+				status              TEXT NOT NULL DEFAULT 'planned',
+				type_id             INTEGER NOT NULL,
+				type_name           TEXT NOT NULL DEFAULT '',
+				planned_quantity    INTEGER NOT NULL DEFAULT 0,
+				actual_quantity     INTEGER NOT NULL DEFAULT 0,
+				planned_buy_price   REAL NOT NULL DEFAULT 0,
+				planned_sell_price  REAL NOT NULL DEFAULT 0,
+				actual_buy_price    REAL NOT NULL DEFAULT 0,
+				actual_sell_price   REAL NOT NULL DEFAULT 0,
+				planned_profit_isk  REAL NOT NULL DEFAULT 0,
+				planned_roi_percent REAL NOT NULL DEFAULT 0,
+				fees_isk            REAL NOT NULL DEFAULT 0,
+				hauling_cost_isk    REAL NOT NULL DEFAULT 0,
+				buy_station         TEXT NOT NULL DEFAULT '',
+				sell_station        TEXT NOT NULL DEFAULT '',
+				buy_system_name     TEXT NOT NULL DEFAULT '',
+				sell_system_name    TEXT NOT NULL DEFAULT '',
+				buy_system_id       INTEGER NOT NULL DEFAULT 0,
+				sell_system_id      INTEGER NOT NULL DEFAULT 0,
+				buy_region_id       INTEGER NOT NULL DEFAULT 0,
+				sell_region_id      INTEGER NOT NULL DEFAULT 0,
+				buy_location_id     INTEGER NOT NULL DEFAULT 0,
+				sell_location_id    INTEGER NOT NULL DEFAULT 0,
+				volume_m3           REAL NOT NULL DEFAULT 0,
+				notes               TEXT NOT NULL DEFAULT '',
+				source              TEXT NOT NULL DEFAULT '',
+				created_at          TEXT NOT NULL,
+				updated_at          TEXT NOT NULL,
+				closed_at           TEXT NOT NULL DEFAULT ''
+			);
+			CREATE INDEX IF NOT EXISTS idx_paper_trades_user_status_updated ON paper_trades(user_id, status, updated_at);
+			CREATE INDEX IF NOT EXISTS idx_paper_trades_user_type ON paper_trades(user_id, type_id);
+			INSERT OR IGNORE INTO schema_version (version) VALUES (29);
+		`)
+		if err != nil {
+			return fmt.Errorf("migration v29: %w", err)
+		}
+		logger.Info("DB", "Applied migration v29 (paper trade journal)")
+	}
+
+	if version < 30 {
+		_, err := d.sql.Exec(`
+			CREATE TABLE IF NOT EXISTS orderbook_snapshots (
+				id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+				source                TEXT NOT NULL DEFAULT 'region',
+				region_id             INTEGER NOT NULL DEFAULT 0,
+				order_type            TEXT NOT NULL DEFAULT 'all',
+				type_id               INTEGER NOT NULL DEFAULT 0,
+				location_id           INTEGER NOT NULL DEFAULT 0,
+				etag                  TEXT NOT NULL DEFAULT '',
+				snapshot_hash         TEXT NOT NULL,
+				captured_at           TEXT NOT NULL,
+				last_seen_at          TEXT NOT NULL,
+				expires_at            TEXT NOT NULL DEFAULT '',
+				order_count           INTEGER NOT NULL DEFAULT 0,
+				level_count           INTEGER NOT NULL DEFAULT 0,
+				unique_type_count     INTEGER NOT NULL DEFAULT 0,
+				unique_location_count INTEGER NOT NULL DEFAULT 0,
+				UNIQUE(source, region_id, order_type, type_id, location_id, snapshot_hash)
+			);
+			CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_scope_time
+				ON orderbook_snapshots(source, region_id, type_id, location_id, captured_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_type_time
+				ON orderbook_snapshots(type_id, captured_at DESC);
+
+			CREATE TABLE IF NOT EXISTS orderbook_levels (
+				snapshot_id    INTEGER NOT NULL REFERENCES orderbook_snapshots(id) ON DELETE CASCADE,
+				region_id      INTEGER NOT NULL DEFAULT 0,
+				type_id        INTEGER NOT NULL,
+				location_id    INTEGER NOT NULL DEFAULT 0,
+				system_id      INTEGER NOT NULL DEFAULT 0,
+				side           TEXT NOT NULL,
+				price          REAL NOT NULL,
+				volume_remain  INTEGER NOT NULL,
+				order_count    INTEGER NOT NULL,
+				PRIMARY KEY(snapshot_id, type_id, location_id, system_id, side, price)
+			);
+			CREATE INDEX IF NOT EXISTS idx_orderbook_levels_replay
+				ON orderbook_levels(type_id, location_id, side, snapshot_id, price);
+			CREATE INDEX IF NOT EXISTS idx_orderbook_levels_snapshot
+				ON orderbook_levels(snapshot_id, type_id, side);
+
+			INSERT OR IGNORE INTO schema_version (version) VALUES (30);
+		`)
+		if err != nil {
+			return fmt.Errorf("migration v30: %w", err)
+		}
+		logger.Info("DB", "Applied migration v30 (historical orderbook snapshots)")
+	}
+
+	if version < 31 {
+		routeCols := []struct {
+			name string
+			def  string
+		}{
+			{name: "hop_volume_m3", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hop_cargo_m3", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hop_cargo_trips", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "hop_execution_minutes", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hop_profit_per_hour", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "route_cargo_m3", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "route_cargo_trips", def: "INTEGER NOT NULL DEFAULT 0"},
+			{name: "route_execution_minutes", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "route_profit_per_hour", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "hauling_safety_multiplier", def: "REAL NOT NULL DEFAULT 0"},
+		}
+		routeResultsExists, err := d.tableExists("route_results")
+		if err != nil {
+			return fmt.Errorf("migration v31 check route_results exists: %w", err)
+		}
+		if routeResultsExists {
+			for _, c := range routeCols {
+				if err := d.ensureTableColumn("route_results", c.name, c.def); err != nil {
+					return fmt.Errorf("migration v31 add route_results.%s: %w", c.name, err)
+				}
+			}
+		}
+		if _, err := d.sql.Exec(`INSERT OR IGNORE INTO schema_version (version) VALUES (31);`); err != nil {
+			return fmt.Errorf("migration v31: %w", err)
+		}
+		logger.Info("DB", "Applied migration v31 (route execution timing fields)")
+	}
+
+	if version < 32 {
+		routeCols := []struct {
+			name string
+			def  string
+		}{
+			{name: "route_cargo_value_isk", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "courier_collateral_isk", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "courier_reward_floor_isk", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "courier_reward_per_jump_isk", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "courier_profit_after_reward_isk", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "courier_risk_premium_percent", def: "REAL NOT NULL DEFAULT 0"},
+			{name: "courier_viable", def: "INTEGER NOT NULL DEFAULT 0"},
+		}
+		routeResultsExists, err := d.tableExists("route_results")
+		if err != nil {
+			return fmt.Errorf("migration v32 check route_results exists: %w", err)
+		}
+		if routeResultsExists {
+			for _, c := range routeCols {
+				if err := d.ensureTableColumn("route_results", c.name, c.def); err != nil {
+					return fmt.Errorf("migration v32 add route_results.%s: %w", c.name, err)
+				}
+			}
+		}
+		if _, err := d.sql.Exec(`INSERT OR IGNORE INTO schema_version (version) VALUES (32);`); err != nil {
+			return fmt.Errorf("migration v32: %w", err)
+		}
+		logger.Info("DB", "Applied migration v32 (route courier collateral fields)")
+	}
+
 	return nil
 }
 

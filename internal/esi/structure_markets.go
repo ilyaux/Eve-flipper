@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // FetchStructureOrders fetches all market orders for a specific Upwell structure.
@@ -33,6 +34,12 @@ func (c *Client) FetchStructureOrders(structureID int64, accessToken string) ([]
 		}
 		orders = append(orders, o)
 	}
+	c.recordMarketOrderSnapshot(MarketOrderSnapshot{
+		OrderType:  "all",
+		Source:     "structure",
+		LocationID: structureID,
+		CapturedAt: time.Now().UTC(),
+		Orders:     orders,
+	})
 	return orders, nil
 }
-

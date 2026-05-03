@@ -73,6 +73,9 @@ func TestDB_FlipResultsRoundTrip(t *testing.T) {
 			FilledQty: 11, CanFill: true,
 			ExpectedProfit: 110, ExpectedBuyPrice: 91, ExpectedSellPrice: 101,
 			SlippageBuyPct: 0.15, SlippageSellPct: 0.12,
+			FillTimeDays: 2.5, LiquidityScore: 80, LiquidityLabel: "high",
+			BacktestDays: 30, BacktestFillRate: 76.7, BacktestMedianVol: 900,
+			CharacterAssets: 5, CharacterBuyOrders: 2, CharacterSellOrders: 3,
 			HistoryAvailable: true,
 			BuyStation:       "A", SellStation: "B",
 			BuySystemName: "Sys1", SellSystemName: "Sys2",
@@ -111,6 +114,103 @@ func TestDB_FlipResultsRoundTrip(t *testing.T) {
 	}
 	if r.S2BPerDay <= 0 || r.BfSPerDay <= 0 || r.S2BBfSRatio <= 0 {
 		t.Errorf("S2B/BfS fields = %v/%v/%v, want >0", r.S2BPerDay, r.BfSPerDay, r.S2BBfSRatio)
+	}
+	if r.FillTimeDays != 2.5 || r.LiquidityScore != 80 || r.LiquidityLabel != "high" {
+		t.Errorf("liquidity fields = %v/%v/%q", r.FillTimeDays, r.LiquidityScore, r.LiquidityLabel)
+	}
+	if r.BacktestDays != 30 || r.BacktestFillRate != 76.7 || r.BacktestMedianVol != 900 {
+		t.Errorf("backtest fields = %d/%v/%d", r.BacktestDays, r.BacktestFillRate, r.BacktestMedianVol)
+	}
+	if r.CharacterAssets != 5 || r.CharacterBuyOrders != 2 || r.CharacterSellOrders != 3 {
+		t.Errorf("character fields = %d/%d/%d", r.CharacterAssets, r.CharacterBuyOrders, r.CharacterSellOrders)
+	}
+}
+
+func TestDB_RouteResultsRoundTrip_WithLiquidityAndRiskFields(t *testing.T) {
+	d := openTestDB(t)
+	defer d.Close()
+
+	id := d.InsertHistory("route", "Jita", 1, 100)
+	if id <= 0 {
+		t.Fatal("InsertHistory failed")
+	}
+
+	in := []engine.RouteResult{
+		{
+			Hops: []engine.RouteHop{
+				{
+					SystemName:       "Jita",
+					StationName:      "Jita IV",
+					DestSystemName:   "Amarr",
+					TypeName:         "Test Item",
+					TypeID:           34,
+					BuyPrice:         5,
+					SellPrice:        7,
+					Units:            100,
+					Profit:           180,
+					Jumps:            9,
+					VolumeM3:         2,
+					CargoM3:          200,
+					CargoTrips:       2,
+					ExecutionMinutes: 52,
+					ProfitPerHour:    207.69,
+					DailyVolume:      1000,
+					FillTimeDays:     0.1,
+					LiquidityScore:   100,
+					LiquidityLabel:   "high",
+				},
+			},
+			TotalProfit:                 180,
+			TotalJumps:                  9,
+			ProfitPerJump:               20,
+			HopCount:                    1,
+			CargoM3:                     200,
+			CargoTrips:                  2,
+			ExecutionMinutes:            52,
+			ProfitPerHour:               207.69,
+			FillTimeDays:                0.1,
+			LiquidityScore:              100,
+			LiquidityLabel:              "high",
+			HaulingRiskKnown:            true,
+			HaulingDanger:               "yellow",
+			HaulingKills:                2,
+			HaulingISK:                  500_000_000,
+			HaulingRiskScore:            26,
+			HaulingSafetyMultiplier:     1.25,
+			CargoValueISK:               500_000_000,
+			CourierCollateralISK:        550_000_000,
+			CourierRewardFloorISK:       15_000_000,
+			CourierRewardPerJumpISK:     1_666_666.6666666667,
+			CourierProfitAfterRewardISK: 165_000_000,
+			CourierRiskPremiumPercent:   3,
+			CourierViable:               true,
+		},
+	}
+	d.InsertRouteResults(id, in)
+
+	got := d.GetRouteResults(id)
+	if len(got) != 1 || len(got[0].Hops) != 1 {
+		t.Fatalf("GetRouteResults len = %d hops=%d, want 1/1", len(got), len(got[0].Hops))
+	}
+	r := got[0]
+	if r.FillTimeDays != 0.1 || r.LiquidityScore != 100 || r.LiquidityLabel != "high" {
+		t.Errorf("route liquidity = %v/%v/%q", r.FillTimeDays, r.LiquidityScore, r.LiquidityLabel)
+	}
+	if !r.HaulingRiskKnown || r.HaulingDanger != "yellow" || r.HaulingKills != 2 || r.HaulingRiskScore != 26 {
+		t.Errorf("route risk = known %v danger %q kills %d score %v", r.HaulingRiskKnown, r.HaulingDanger, r.HaulingKills, r.HaulingRiskScore)
+	}
+	if r.CargoM3 != 200 || r.CargoTrips != 2 || r.ExecutionMinutes != 52 || r.ProfitPerHour != 207.69 || r.HaulingSafetyMultiplier != 1.25 {
+		t.Errorf("route execution = cargo %v trips %d min %v isk/h %v safety %v", r.CargoM3, r.CargoTrips, r.ExecutionMinutes, r.ProfitPerHour, r.HaulingSafetyMultiplier)
+	}
+	if r.CargoValueISK != 500_000_000 || r.CourierCollateralISK != 550_000_000 || r.CourierRewardFloorISK != 15_000_000 || !r.CourierViable {
+		t.Errorf("route courier = cargo %v collateral %v reward %v viable %v", r.CargoValueISK, r.CourierCollateralISK, r.CourierRewardFloorISK, r.CourierViable)
+	}
+	hop := r.Hops[0]
+	if hop.DailyVolume != 1000 || hop.FillTimeDays != 0.1 || hop.LiquidityScore != 100 || hop.LiquidityLabel != "high" {
+		t.Errorf("hop liquidity = %d/%v/%v/%q", hop.DailyVolume, hop.FillTimeDays, hop.LiquidityScore, hop.LiquidityLabel)
+	}
+	if hop.VolumeM3 != 2 || hop.CargoM3 != 200 || hop.CargoTrips != 2 || hop.ExecutionMinutes != 52 || hop.ProfitPerHour != 207.69 {
+		t.Errorf("hop execution = volume %v cargo %v trips %d min %v isk/h %v", hop.VolumeM3, hop.CargoM3, hop.CargoTrips, hop.ExecutionMinutes, hop.ProfitPerHour)
 	}
 }
 

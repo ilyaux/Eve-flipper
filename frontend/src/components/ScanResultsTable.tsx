@@ -14,6 +14,7 @@ import { useI18n, type TranslationKey } from "@/lib/i18n";
 import {
   addToWatchlist,
   clearStationTradeStates,
+  createPaperTrade,
   deleteStationTradeStates,
   getStationTradeStates,
   getGankCheck,
@@ -31,6 +32,8 @@ import { ExecutionPlannerPopup } from "./ExecutionPlannerPopup";
 import { handleEveUIError } from "@/lib/handleEveUIError";
 import { BatchBuilderPopup } from "./BatchBuilderPopup";
 import { RouteSafetyModal } from "./RouteSafetyModal";
+import { BacktestPopup } from "./BacktestPopup";
+import { PaperTradeJournalPopup } from "./PaperTradeJournalPopup";
 
 const PAGE_SIZE = 100;
 const GROUP_PAGE_SIZE = 50; // rows shown per group before "Show all" button
@@ -257,6 +260,48 @@ const baseColumnDefs: ColumnDef[] = [
     labelKey: "colDailyProfit",
     width: "min-w-[110px]",
     numeric: true,
+  },
+  {
+    key: "FillTimeDays",
+    labelKey: "colFillTimeDays" as TranslationKey,
+    width: "min-w-[90px]",
+    numeric: true,
+    tooltipKey: "colFillTimeDaysHint" as TranslationKey,
+  },
+  {
+    key: "LiquidityScore",
+    labelKey: "colLiquidityScore" as TranslationKey,
+    width: "min-w-[80px]",
+    numeric: true,
+    tooltipKey: "colLiquidityScoreHint" as TranslationKey,
+  },
+  {
+    key: "BacktestFillRate",
+    labelKey: "colBacktestFillRate" as TranslationKey,
+    width: "min-w-[90px]",
+    numeric: true,
+    tooltipKey: "colBacktestFillRateHint" as TranslationKey,
+  },
+  {
+    key: "CharacterAssets",
+    labelKey: "colCharacterAssets" as TranslationKey,
+    width: "min-w-[90px]",
+    numeric: true,
+    tooltipKey: "colCharacterAssetsHint" as TranslationKey,
+  },
+  {
+    key: "CharacterSellOrders",
+    labelKey: "colCharacterSellOrders" as TranslationKey,
+    width: "min-w-[90px]",
+    numeric: true,
+    tooltipKey: "colCharacterSellOrdersHint" as TranslationKey,
+  },
+  {
+    key: "CharacterBuyOrders",
+    labelKey: "colCharacterBuyOrders" as TranslationKey,
+    width: "min-w-[90px]",
+    numeric: true,
+    tooltipKey: "colCharacterBuyOrdersHint" as TranslationKey,
   },
   {
     key: "PriceTrend",
@@ -867,6 +912,21 @@ function fmtCell(col: ColumnDef, row: FlipResult): string {
     if (!Number.isFinite(v)) return "—";
     return v.toFixed(0);
   }
+  if (col.key === "FillTimeDays") {
+    const v = Number(val ?? 0);
+    if (!v || !Number.isFinite(v)) return "\u2014";
+    return v < 10 ? v.toFixed(1) + "d" : v.toFixed(0) + "d";
+  }
+  if (col.key === "LiquidityScore") {
+    const v = Number(val ?? 0);
+    if (!Number.isFinite(v) || v <= 0) return "\u2014";
+    return v.toFixed(0);
+  }
+  if (col.key === "BacktestFillRate") {
+    const v = Number(val ?? 0);
+    if (!Number.isFinite(v) || v <= 0) return "\u2014";
+    return v.toFixed(0) + "%";
+  }
   if (col.key === "DayTargetDOS") {
     const dos = Number(val);
     return Number.isFinite(dos) ? dos.toFixed(2) : "\u2014";
@@ -882,6 +942,44 @@ function fmtCell(col: ColumnDef, row: FlipResult): string {
   }
   if (typeof val === "number") return val.toLocaleString();
   return String(val ?? "");
+}
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function paperQuantityForRow(row: FlipResult): number {
+  const filled = Math.floor(finiteNumber(row.FilledQty));
+  if (filled > 0) return filled;
+  const planned = Math.floor(finiteNumber(row.UnitsToBuy));
+  if (planned > 0) return planned;
+  const buyRemain = Math.floor(finiteNumber(row.BuyOrderRemain));
+  const sellRemain = Math.floor(finiteNumber(row.SellOrderRemain));
+  if (buyRemain > 0 && sellRemain > 0) return Math.min(buyRemain, sellRemain);
+  return Math.max(1, buyRemain, sellRemain);
+}
+
+function paperBuyPriceForRow(row: FlipResult): number {
+  const expected = finiteNumber(row.ExpectedBuyPrice);
+  return expected > 0 ? expected : finiteNumber(row.BuyPrice);
+}
+
+function paperSellPriceForRow(row: FlipResult): number {
+  const expected = finiteNumber(row.ExpectedSellPrice);
+  return expected > 0 ? expected : finiteNumber(row.SellPrice);
+}
+
+function paperProfitForRow(row: FlipResult, qty: number, buy: number, sell: number): number {
+  const filledQty = Math.floor(finiteNumber(row.FilledQty));
+  const real = finiteNumber(row.RealProfit);
+  if (real !== 0 && filledQty === qty) return real;
+  const expected = finiteNumber(row.ExpectedProfit);
+  if (expected !== 0 && filledQty === qty) return expected;
+  const plannedQty = Math.floor(finiteNumber(row.UnitsToBuy));
+  const total = finiteNumber(row.TotalProfit);
+  if (total !== 0 && plannedQty === qty) return total;
+  return (sell - buy) * qty;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1100,6 +1198,9 @@ export function ScanResultsTable({
   const [execPlanRow, setExecPlanRow] = useState<FlipResult | null>(null);
   const [batchPlanRow, setBatchPlanRow] = useState<FlipResult | null>(null);
   const [dayDetailRow, setDayDetailRow] = useState<FlipResult | null>(null);
+  const [backtestOpen, setBacktestOpen] = useState(false);
+  const [paperJournalOpen, setPaperJournalOpen] = useState(false);
+  const [paperCreating, setPaperCreating] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [filterSearch, setFilterSearch] = useState("");
   const filterPanelRef = useRef<HTMLDivElement>(null);
@@ -1588,6 +1689,61 @@ export function ScanResultsTable({
     );
     return { pageRows, totalPages, safePage };
   }, [displaySorted, isItemGrouped, isRegionGrouped, page, visibleRows]);
+
+  const backtestRows = useMemo(() => {
+    const rows =
+      selectedIds.size > 0
+        ? visibleRows.filter((ir) => selectedIds.has(ir.id))
+        : visibleRows;
+    return rows.map((ir) => ir.row);
+  }, [selectedIds, visibleRows]);
+
+  const createPaperTradeFromRow = useCallback(
+    async (row: FlipResult) => {
+      if (paperCreating) return;
+      if (!row.TypeID || row.TypeID <= 0) {
+        addToast("Cannot create paper trade without type_id", "error", 2400);
+        return;
+      }
+      const qty = paperQuantityForRow(row);
+      const buy = paperBuyPriceForRow(row);
+      const sell = paperSellPriceForRow(row);
+      const plannedProfit = paperProfitForRow(row, qty, buy, sell);
+      const capital = buy * qty;
+      setPaperCreating(true);
+      try {
+        await createPaperTrade({
+          status: "planned",
+          type_id: row.TypeID,
+          type_name: row.TypeName,
+          planned_quantity: qty,
+          planned_buy_price: buy,
+          planned_sell_price: sell,
+          planned_profit_isk: plannedProfit,
+          planned_roi_percent: capital > 0 ? (plannedProfit / capital) * 100 : finiteNumber(row.MarginPercent),
+          buy_station: row.BuyStation,
+          sell_station: row.SellStation,
+          buy_system_name: row.BuySystemName,
+          sell_system_name: row.SellSystemName,
+          buy_system_id: row.BuySystemID,
+          sell_system_id: row.SellSystemID,
+          buy_region_id: row.BuyRegionID ?? 0,
+          sell_region_id: row.SellRegionID ?? 0,
+          buy_location_id: row.BuyLocationID ?? 0,
+          sell_location_id: row.SellLocationID ?? 0,
+          volume_m3: finiteNumber(row.Volume),
+          source: "scanner",
+        });
+        addToast("Paper trade created", "success", 2000);
+        setPaperJournalOpen(true);
+      } catch (e) {
+        addToast(e instanceof Error ? e.message : "Paper trade create failed", "error", 3000);
+      } finally {
+        setPaperCreating(false);
+      }
+    },
+    [addToast, paperCreating],
+  );
 
   // Reset page when data/filters/sort change
   useEffect(() => {
@@ -2338,6 +2494,18 @@ export function ScanResultsTable({
               onClick={() => setCompactMode((v) => !v)}
             />
             <ToolbarBtn
+              label="BT"
+              title="Paper backtest selected or visible rows"
+              onClick={() => setBacktestOpen(true)}
+              disabled={backtestRows.length === 0}
+            />
+            <ToolbarBtn
+              label="PJ"
+              title="Paper trade journal"
+              active={paperJournalOpen}
+              onClick={() => setPaperJournalOpen(true)}
+            />
+            <ToolbarBtn
               label="CSV"
               title={t("exportCSV")}
               onClick={exportCSV}
@@ -2927,6 +3095,13 @@ export function ScanResultsTable({
               }}
             />
             <ContextItem
+              label={paperCreating ? "Creating paper trade..." : "Add paper trade"}
+              onClick={() => {
+                void createPaperTradeFromRow(contextMenu.row);
+                setContextMenu(null);
+              }}
+            />
+            <ContextItem
               label={t("copySystemAutopilot")}
               onClick={() => copyText(contextMenu.row.BuySystemName)}
             />
@@ -3308,6 +3483,25 @@ export function ScanResultsTable({
         anchorRow={batchPlanRow}
         rows={results}
         defaultCargoM3={cargoLimit}
+      />
+
+      <BacktestPopup
+        open={backtestOpen}
+        onClose={() => setBacktestOpen(false)}
+        rows={backtestRows}
+        salesTaxPercent={salesTaxPercent}
+        brokerFeePercent={brokerFeePercent}
+        splitTradeFees={splitTradeFees}
+        buyBrokerFeePercent={buyBrokerFeePercent}
+        sellBrokerFeePercent={sellBrokerFeePercent}
+        buySalesTaxPercent={buySalesTaxPercent}
+        sellSalesTaxPercent={sellSalesTaxPercent}
+        cargoCapacity={cargoLimit}
+      />
+
+      <PaperTradeJournalPopup
+        open={paperJournalOpen}
+        onClose={() => setPaperJournalOpen(false)}
       />
 
       {routeSafetyModal && (
@@ -3809,21 +4003,26 @@ function ToolbarBtn({
   label,
   title,
   active,
+  disabled,
   onClick,
 }: {
   label: string;
   title: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
-      className={`px-2 py-0.5 rounded-sm text-xs font-medium transition-colors cursor-pointer ${
-        active
-          ? "bg-eve-accent/20 text-eve-accent border border-eve-accent/30"
-          : "text-eve-dim hover:text-eve-text border border-eve-border hover:border-eve-border-light"
+      disabled={disabled}
+      className={`px-2 py-0.5 rounded-sm text-xs font-medium transition-colors ${
+        disabled
+          ? "text-eve-dim/50 border border-eve-border/40 cursor-not-allowed opacity-60"
+          : active
+            ? "bg-eve-accent/20 text-eve-accent border border-eve-accent/30 cursor-pointer"
+            : "text-eve-dim hover:text-eve-text border border-eve-border hover:border-eve-border-light cursor-pointer"
       }`}
     >
       {label}

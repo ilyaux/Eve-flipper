@@ -40,6 +40,7 @@ type Client struct {
 	stationStore  StationStore // L2 persistent cache (SQLite)
 	typeNameCache sync.Map     // int32 -> string (L1 in-memory)
 	orderCache    *OrderCache  // region order cache with ETag/Expires
+	orderRecorder MarketOrderRecorder
 
 	// EVERef structure name fallback (loaded at startup)
 	everefNames sync.Map // int64 -> string
@@ -71,13 +72,53 @@ func NewClient(store StationStore) *Client {
 		MaxConnsPerHost:     0,   // unlimited
 		IdleConnTimeout:     120 * time.Second,
 	}
-	return &Client{
+	c := &Client{
 		http:         &http.Client{Timeout: 30 * time.Second, Transport: transport},
 		sem:          make(chan struct{}, 50), // for GetJSON (history, stations, auth)
 		scanSem:      make(chan struct{}, 50), // for GetPaginatedDirect (market order pages)
 		stationStore: store,
 		orderCache:   NewOrderCache(),
 	}
+	if recorder, ok := store.(MarketOrderRecorder); ok {
+		c.orderRecorder = recorder
+	}
+	return c
+}
+
+// SetMarketOrderRecorder configures persistence for live market order snapshots.
+func (c *Client) SetMarketOrderRecorder(recorder MarketOrderRecorder) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.orderRecorder = recorder
+	c.mu.Unlock()
+}
+
+func (c *Client) marketOrderRecorder() MarketOrderRecorder {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	recorder := c.orderRecorder
+	c.mu.Unlock()
+	return recorder
+}
+
+func (c *Client) recordMarketOrderSnapshot(snapshot MarketOrderSnapshot) {
+	recorder := c.marketOrderRecorder()
+	if recorder == nil || len(snapshot.Orders) == 0 {
+		return
+	}
+	if snapshot.CapturedAt.IsZero() {
+		snapshot.CapturedAt = time.Now().UTC()
+	}
+	go func() {
+		if err := recorder.RecordMarketOrderSnapshot(snapshot); err != nil {
+			log.Printf("[ESI] orderbook snapshot record failed source=%s region=%d type=%s orders=%d: %v",
+				snapshot.Source, snapshot.RegionID, snapshot.OrderType, len(snapshot.Orders), err)
+		}
+	}()
 }
 
 const everefStructuresURL = "https://data.everef.net/structures/structures-latest.v2.json"
@@ -694,7 +735,13 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 		respEtag = resp.Header.Get("Etag")
 		respExpires = parseExpires(resp)
 
-		json.NewDecoder(resp.Body).Decode(&page1)
+		if err := json.NewDecoder(resp.Body).Decode(&page1); err != nil {
+			resp.Body.Close()
+			<-c.scanSem
+			lastErr = fmt.Errorf("decode page 1: %w", err)
+			log.Printf("[ESI] Page 1 decode failed (attempt %d/%d): %v", attempt+1, maxRetries+1, err)
+			continue
+		}
 		resp.Body.Close()
 		<-c.scanSem
 		lastErr = nil
@@ -760,7 +807,17 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 					continue
 				}
 
-				json.NewDecoder(pageResp.Body).Decode(&data)
+				if err := json.NewDecoder(pageResp.Body).Decode(&data); err != nil {
+					pageResp.Body.Close()
+					<-c.scanSem
+					if attempt == maxRetries {
+						log.Printf("[ESI] Page %d decode failed after %d attempts: %v", pageNum, maxRetries+1, err)
+						results <- pageResult{err: fmt.Errorf("decode page %d: %w", pageNum, err)}
+						return
+					}
+					log.Printf("[ESI] Page %d decode retry (attempt %d/%d): %v", pageNum, attempt+1, maxRetries+1, err)
+					continue
+				}
 				pageResp.Body.Close()
 				<-c.scanSem
 				for i := range data {
@@ -776,13 +833,20 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 
 	all := make([]MarketOrder, 0, len(page1)*totalPages)
 	all = append(all, page1...)
+	var firstPageErr error
 	for i := 0; i < totalPages-1; i++ {
 		r := <-results
 		if r.err != nil {
-			log.Printf("[ESI] Skipping failed page: %v", r.err)
+			log.Printf("[ESI] Failed page: %v", r.err)
+			if firstPageErr == nil {
+				firstPageErr = r.err
+			}
 			continue
 		}
 		all = append(all, r.data...)
+	}
+	if firstPageErr != nil {
+		return nil, "", time.Time{}, firstPageErr
 	}
 	return all, respEtag, respExpires, nil
 }

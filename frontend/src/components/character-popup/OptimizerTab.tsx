@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getPortfolioOptimization, type CharacterScope, type OptimizerResult } from "../../lib/api";
 import { type TranslationKey } from "../../lib/i18n";
-import type { AllocationSuggestion, AssetStats } from "../../lib/types";
+import type { AllocationSuggestion, AssetStats, OptimizerDiagnostic, PortfolioCapital, PortfolioPositionRisk } from "../../lib/types";
 import { StatCard } from "./shared";
 type OptPeriod = 30 | 90 | 180;
 
@@ -120,6 +120,8 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
   }
 
   const data = result.data;
+  const optimizerReady = data.optimizer_ready !== false && data.assets.length > 0;
+  const positionRisks = data.position_risks ?? [];
 
   return (
     <div className="space-y-4">
@@ -146,8 +148,24 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
         </div>
       </div>
 
+      {data.capital && <CapitalRiskPanel capital={data.capital} formatIsk={formatIsk} />}
+
+      {!data.capital && data.warnings && data.warnings.length > 0 && (
+        <div className="bg-amber-500/5 border border-amber-500/25 rounded-sm px-3 py-2 text-[10px] text-amber-300">
+          {data.warnings.slice(0, 3).join(" | ")}
+        </div>
+      )}
+
+      {data.optimizer_ready === false && (
+        <OptimizerDiagnosticNotice diagnostic={data.diagnostic ?? null} />
+      )}
+
+      {positionRisks.length > 0 && (
+        <PositionRiskTable risks={positionRisks} formatIsk={formatIsk} />
+      )}
+
       {/* Portfolio comparison cards */}
-      <div className="grid grid-cols-3 gap-3">
+      {optimizerReady && <div className="grid grid-cols-3 gap-3">
         <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
           <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optCurrentPortfolio")}</div>
           <div className="text-lg font-bold text-eve-text">{data.current_sharpe.toFixed(2)}</div>
@@ -163,10 +181,10 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
           <div className="text-lg font-bold text-eve-text">{data.min_var_sharpe.toFixed(2)}</div>
           <div className="text-xs text-eve-dim">{t("optSharpe")}</div>
         </div>
-      </div>
+      </div>}
 
       {/* Diversification metrics */}
-      <div className="grid grid-cols-2 gap-3">
+      {optimizerReady && <div className="grid grid-cols-2 gap-3">
         <StatCard
           label={t("optHHI")}
           value={data.hhi.toFixed(3)}
@@ -179,10 +197,10 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
           subvalue={t("optDivRatioHint")}
           color={data.diversification_ratio > 1.2 ? "text-eve-profit" : "text-eve-accent"}
         />
-      </div>
+      </div>}
 
       {/* Efficient Frontier */}
-      {data.efficient_frontier && data.efficient_frontier.length > 0 && (
+      {optimizerReady && data.efficient_frontier && data.efficient_frontier.length > 0 && (
         <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
           <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optFrontier")}</div>
           <div className="text-[9px] text-eve-dim mb-2">{t("optFrontierHint")}</div>
@@ -200,7 +218,7 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
       )}
 
       {/* Correlation Matrix */}
-      {data.correlation_matrix && data.assets.length > 1 && (
+      {optimizerReady && data.correlation_matrix && data.assets.length > 1 && (
         <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
           <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-1">{t("optCorrelation")}</div>
           <div className="text-[9px] text-eve-dim mb-2">{t("optCorrelationHint")}</div>
@@ -209,13 +227,13 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
       )}
 
       {/* Asset Table */}
-      <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+      {optimizerReady && <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
         <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("optAssets")}</div>
         <AssetTable assets={data.assets} currentWeights={data.current_weights} optimalWeights={data.optimal_weights} formatIsk={formatIsk} t={t} />
-      </div>
+      </div>}
 
       {/* Suggestions */}
-      {data.suggestions && data.suggestions.filter((s) => s.action !== "hold").length > 0 && (
+      {optimizerReady && data.suggestions && data.suggestions.filter((s) => s.action !== "hold").length > 0 && (
         <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
           <div className="text-[10px] text-eve-dim uppercase tracking-wider mb-2">{t("optSuggestions")}</div>
           <SuggestionsPanel suggestions={data.suggestions} t={t} />
@@ -223,6 +241,255 @@ export function OptimizerTab({ formatIsk, characterScope, t }: OptimizerTabProps
       )}
     </div>
   );
+}
+
+// --- Capital risk model ---
+
+function CapitalRiskPanel({ capital, formatIsk }: { capital: PortfolioCapital; formatIsk: (v: number) => string }) {
+  const riskColor = riskTextClass(capital.risk_level, capital.risk_score);
+  const freeWidth = pctWidth(capital.free_capital_pct);
+  const buyWidth = pctWidth(capital.locked_buy_pct);
+  const inventoryWidth = pctWidth(capital.inventory_pct);
+
+  return (
+    <div className="bg-eve-panel border border-eve-border rounded-sm p-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider">Capital / Risk</div>
+          <div className="text-[9px] text-eve-dim mt-0.5">wallet, open inventory, active orders, liquidity and concentration</div>
+        </div>
+        <div className={`text-xs font-bold uppercase tracking-wider ${riskColor}`}>
+          {capital.risk_level || "low"} {formatPct(capital.risk_score)}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        <StatCard label="Estimated equity" value={formatIsk(capital.estimated_equity_isk)} subvalue={`wallet ${formatIsk(capital.wallet_isk)}`} color="text-eve-text" />
+        <StatCard label="Used capital" value={formatIsk(capital.used_capital_isk)} subvalue={`${formatPct(capital.inventory_pct)} inventory`} color="text-eve-accent" />
+        <StatCard label="Buy orders" value={formatIsk(capital.active_buy_order_isk)} subvalue={`${formatPct(capital.locked_buy_pct)} locked`} color={capital.locked_buy_pct > 50 ? "text-eve-error" : "text-eve-text"} />
+        <StatCard label="Sell backlog" value={formatIsk(capital.active_sell_order_isk)} subvalue={`${formatPct(capital.sell_backlog_pct)} of inventory mark`} color={capital.sell_backlog_pct > 80 ? "text-eve-error" : "text-eve-profit"} />
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="h-2 bg-eve-dark rounded-sm overflow-hidden flex">
+          <div className="bg-eve-profit/70" style={{ width: `${freeWidth}%` }} />
+          <div className="bg-eve-accent/80" style={{ width: `${buyWidth}%` }} />
+          <div className="bg-sky-500/70" style={{ width: `${inventoryWidth}%` }} />
+        </div>
+        <div className="grid grid-cols-4 gap-2 text-[10px] text-eve-dim">
+          <span>free {formatPct(capital.free_capital_pct)}</span>
+          <span>buy lock {formatPct(capital.locked_buy_pct)}</span>
+          <span>inventory {formatPct(capital.inventory_pct)}</span>
+          <span className={capital.top_exposure_pct > 45 ? "text-eve-error" : ""}>top item {formatPct(capital.top_exposure_pct)}</span>
+        </div>
+      </div>
+
+      {capital.warnings && capital.warnings.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {capital.warnings.slice(0, 5).map((warning) => (
+            <span key={warning} className="px-2 py-0.5 rounded-sm border border-amber-500/25 bg-amber-500/5 text-[10px] text-amber-300">
+              {warningLabel(warning)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OptimizerDiagnosticNotice({ diagnostic }: { diagnostic: OptimizerDiagnostic | null }) {
+  return (
+    <div className="bg-amber-500/5 border border-amber-500/25 rounded-sm p-3 text-xs">
+      <div className="text-[10px] text-amber-300 uppercase tracking-wider mb-1">Markowitz model not ready</div>
+      {diagnostic ? (
+        <div className="grid grid-cols-4 gap-3 text-[10px] text-eve-dim">
+          <span>txns <b className="text-eve-text">{diagnostic.total_transactions}</b></span>
+          <span>lookback <b className="text-eve-text">{diagnostic.within_lookback}</b></span>
+          <span>days <b className="text-eve-text">{diagnostic.unique_days}</b> / {diagnostic.min_days_required}</span>
+          <span>items <b className="text-eve-text">{diagnostic.qualified_items}</b> / 2 qualified</span>
+        </div>
+      ) : (
+        <div className="text-[10px] text-eve-dim">Capital risk is available, but the optimizer needs more closed trading history.</div>
+      )}
+    </div>
+  );
+}
+
+function PositionRiskTable({ risks, formatIsk }: { risks: PortfolioPositionRisk[]; formatIsk: (v: number) => string }) {
+  const rows = [...risks].sort((a, b) => b.risk_score - a.risk_score).slice(0, 20);
+
+  return (
+    <div className="bg-eve-panel border border-eve-border rounded-sm p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <div className="text-[10px] text-eve-dim uppercase tracking-wider">Position risk</div>
+          <div className="text-[9px] text-eve-dim mt-0.5">inventory exposure, active orders, liquidation speed and target allocation</div>
+        </div>
+        <div className="text-[10px] text-eve-dim">{rows.length} rows</div>
+      </div>
+      <div className="border border-eve-border rounded-sm overflow-x-auto">
+        <table className="w-full text-xs min-w-[980px]">
+          <thead className="bg-eve-panel">
+            <tr className="text-eve-dim">
+              <th className="px-3 py-2 text-left">Action</th>
+              <th className="px-3 py-2 text-left">Item</th>
+              <th className="px-3 py-2 text-right">Exposure</th>
+              <th className="px-3 py-2 text-right">Target</th>
+              <th className="px-3 py-2 text-right">Risk</th>
+              <th className="px-3 py-2 text-right">DTL</th>
+              <th className="px-3 py-2 text-right">Buy ord</th>
+              <th className="px-3 py-2 text-right">Sell ord</th>
+              <th className="px-3 py-2 text-right">Unrealized</th>
+              <th className="px-3 py-2 text-right">Suggested</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const riskColor = riskTextClass(row.risk_level, row.risk_score);
+              return (
+                <tr key={row.type_id} className="border-t border-eve-border/50 hover:bg-eve-dark/40">
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-0.5 rounded-sm border text-[10px] font-bold uppercase ${actionBadgeClass(row.action)}`}>
+                      {actionLabel(row.action)}
+                    </span>
+                    <div className="text-[9px] text-eve-dim mt-1">{reasonLabel(row.reason)}</div>
+                  </td>
+                  <td className="px-3 py-2 text-eve-text">
+                    <div className="flex items-center gap-2">
+                      <img src={`https://images.evetech.net/types/${row.type_id}/icon?size=32`} alt="" className="w-5 h-5" />
+                      <div className="min-w-0">
+                        <div className="truncate max-w-[180px]">{row.type_name || `#${row.type_id}`}</div>
+                        <div className="text-[9px] text-eve-dim">
+                          {row.inventory_qty.toLocaleString()} inv / {row.active_sell_qty.toLocaleString()} sell
+                          {row.inventory_source ? ` / ${inventorySourceLabel(row.inventory_source)}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="text-eve-text">{formatIsk(row.exposure_isk)}</div>
+                    <div className="text-[9px] text-eve-dim">{formatPct(row.exposure_pct)}</div>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="text-eve-accent">{formatPct(row.target_pct)}</div>
+                    <div className={`text-[9px] ${row.delta_pct >= 0 ? "text-eve-profit" : "text-eve-error"}`}>{formatSignedPct(row.delta_pct)}</div>
+                  </td>
+                  <td className={`px-3 py-2 text-right font-bold ${riskColor}`}>{formatPct(row.risk_score)}</td>
+                  <td className="px-3 py-2 text-right text-eve-dim">{formatDays(row.days_to_liquidate)}</td>
+                  <td className="px-3 py-2 text-right text-eve-dim">{formatIsk(row.active_buy_isk)}</td>
+                  <td className="px-3 py-2 text-right text-eve-dim">{formatIsk(row.active_sell_isk)}</td>
+                  <td className={`px-3 py-2 text-right ${row.unrealized_pnl >= 0 ? "text-eve-profit" : "text-eve-error"}`}>
+                    <div>{row.unrealized_pnl >= 0 ? "+" : ""}{formatIsk(row.unrealized_pnl)}</div>
+                    <div className="text-[9px]">{formatSignedPct(row.unrealized_roi_pct)}</div>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {row.suggested_buy_isk > 0 ? (
+                      <span className="text-eve-profit">buy {formatIsk(row.suggested_buy_isk)}</span>
+                    ) : row.suggested_sell_isk > 0 ? (
+                      <span className="text-eve-error">sell {formatIsk(row.suggested_sell_isk)}</span>
+                    ) : (
+                      <span className="text-eve-dim">hold</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function pctWidth(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
+function formatPct(value: number) {
+  if (!Number.isFinite(value)) return "0.0%";
+  return `${value.toFixed(1)}%`;
+}
+
+function formatSignedPct(value: number) {
+  if (!Number.isFinite(value)) return "0.0%";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatDays(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  if (value >= 365) return ">365d";
+  return `${value.toFixed(value >= 10 ? 0 : 1)}d`;
+}
+
+function riskTextClass(level: string, score: number) {
+  if (level === "high" || score >= 70) return "text-eve-error";
+  if (level === "medium" || score >= 35) return "text-eve-accent";
+  return "text-eve-profit";
+}
+
+function actionBadgeClass(action: string) {
+  switch (action) {
+    case "increase":
+      return "bg-emerald-500/10 border-emerald-500/25 text-emerald-300";
+    case "reduce":
+    case "liquidate":
+      return "bg-red-500/10 border-red-500/25 text-red-300";
+    case "pause_buy":
+      return "bg-amber-500/10 border-amber-500/25 text-amber-300";
+    default:
+      return "bg-eve-dark border-eve-border text-eve-dim";
+  }
+}
+
+function actionLabel(action: string) {
+  const labels: Record<string, string> = {
+    increase: "increase",
+    reduce: "reduce",
+    liquidate: "liquidate",
+    pause_buy: "pause buy",
+    hold: "hold",
+  };
+  return labels[action] ?? action;
+}
+
+function reasonLabel(reason: string) {
+  const labels: Record<string, string> = {
+    balanced: "balanced",
+    negative_slow_inventory: "negative and slow",
+    over_concentrated: "over concentrated",
+    sell_backlog: "sell backlog",
+    above_target: "above target",
+    below_target_good_risk: "below target, good risk",
+    slow_liquidation: "slow liquidation",
+    negative_pnl: "negative PnL",
+  };
+  return labels[reason] ?? reason;
+}
+
+function warningLabel(warning: string) {
+  const labels: Record<string, string> = {
+    single_item_concentration: "single item concentration",
+    buy_orders_lock_most_capital: "buy orders lock most capital",
+    large_sell_backlog: "large sell backlog",
+    asset_inventory_reconciled: "inventory reconciled from assets",
+    stale_txn_inventory_absent_from_assets: "stale transaction inventory absent from assets",
+    asset_cost_basis_estimated: "asset cost basis estimated",
+  };
+  return labels[warning] ?? warning;
+}
+
+function inventorySourceLabel(source: string) {
+  const labels: Record<string, string> = {
+    transactions: "txn",
+    active_sell: "sell order",
+    active_buy: "buy order",
+    assets: "assets",
+    assets_match: "assets ok",
+    assets_zero: "assets 0",
+    assets_estimated_cost: "assets est cost",
+  };
+  return labels[source] ?? source;
 }
 
 // --- Efficient Frontier Chart (CSS-based scatter plot) ---

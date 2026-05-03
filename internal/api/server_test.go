@@ -165,6 +165,46 @@ func TestWalletTxnCache_ExpiresByTTL(t *testing.T) {
 	}
 }
 
+func TestHandleAuthPortfolio_AllowsEmptyTransactions(t *testing.T) {
+	store := newSessionStoreForAPITest(t)
+	userID := "u-empty-portfolio"
+	characterID := int64(1001)
+
+	err := store.SaveAndActivateForUser(userID, &auth.Session{
+		CharacterID:   characterID,
+		CharacterName: "Empty Trader",
+		AccessToken:   "cached-token",
+		RefreshToken:  "cached-refresh",
+		ExpiresAt:     time.Now().Add(15 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("SaveAndActivateForUser: %v", err)
+	}
+
+	srv := NewServer(config.Default(), &esi.Client{}, nil, nil, store)
+	srv.setWalletTxnCache(characterID, []esi.WalletTransaction{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/portfolio?character_id=1001", nil)
+	req.Header.Set(userIDHeaderName, userID)
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/auth/portfolio status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var out struct {
+		DailyPnL []any `json:"daily_pnl"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.DailyPnL == nil || len(out.DailyPnL) != 0 {
+		t.Fatalf("daily_pnl = %#v, want empty array", out.DailyPnL)
+	}
+}
+
 func TestEnsureRequestUserID_SignedCookieRoundTrip(t *testing.T) {
 	srv := NewServer(config.Default(), &esi.Client{}, nil, nil, nil)
 

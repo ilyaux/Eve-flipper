@@ -204,6 +204,144 @@ func TestSolveLongOnlyMaxSharpe(t *testing.T) {
 	}
 }
 
+func TestComputePortfolioOptimizationWithContext_ReturnsCapitalRiskWhenMarkowitzNotReady(t *testing.T) {
+	txns := []esi.WalletTransaction{
+		txn(-2, 1001, "Compact Power Core", 60003760, "Jita", true, 1_000_000, 10),
+		txn(-1, 1001, "Compact Power Core", 60003760, "Jita", false, 1_200_000, 2),
+	}
+	orders := []esi.CharacterOrder{
+		{TypeID: 1001, TypeName: "Compact Power Core", Price: 900_000, VolumeRemain: 3, IsBuyOrder: true},
+		{TypeID: 1001, TypeName: "Compact Power Core", Price: 1_300_000, VolumeRemain: 4, IsBuyOrder: false},
+	}
+
+	got := ComputePortfolioOptimizationWithContext(txns, orders, 5_000_000, 90)
+	if got == nil {
+		t.Fatal("expected non-nil optimization context")
+	}
+	if got.OptimizerReady {
+		t.Fatalf("expected Markowitz optimizer to be not ready for one short item, got ready")
+	}
+	if got.Diagnostic == nil {
+		t.Fatal("expected diagnostic when Markowitz optimizer is not ready")
+	}
+	if got.Capital.WalletISK != 5_000_000 {
+		t.Fatalf("wallet isk = %v, want 5000000", got.Capital.WalletISK)
+	}
+	if got.Capital.ActiveBuyOrderISK != 2_700_000 {
+		t.Fatalf("active buy isk = %v, want 2700000", got.Capital.ActiveBuyOrderISK)
+	}
+	if got.Capital.ActiveSellOrderISK != 5_200_000 {
+		t.Fatalf("active sell isk = %v, want 5200000", got.Capital.ActiveSellOrderISK)
+	}
+	if len(got.PositionRisks) != 1 {
+		t.Fatalf("position risks len = %d, want 1", len(got.PositionRisks))
+	}
+
+	row := got.PositionRisks[0]
+	if row.InventoryQty != 8 {
+		t.Fatalf("inventory qty = %d, want 8", row.InventoryQty)
+	}
+	if row.ActiveBuyQty != 3 || row.ActiveSellQty != 4 {
+		t.Fatalf("active qty buy/sell = %d/%d, want 3/4", row.ActiveBuyQty, row.ActiveSellQty)
+	}
+	if row.InventoryMarkISK != 10_400_000 {
+		t.Fatalf("inventory mark = %v, want 10400000", row.InventoryMarkISK)
+	}
+	if row.MarkPriceSource != "active_sell" {
+		t.Fatalf("mark price source = %q, want active_sell", row.MarkPriceSource)
+	}
+}
+
+func TestComputePortfolioOptimizationWithRuntime_ReconcilesInventoryFromAssets(t *testing.T) {
+	txns := []esi.WalletTransaction{
+		txn(-2, 1001, "Compact Power Core", 60003760, "Jita", true, 1_000_000, 10),
+		txn(-1, 1001, "Compact Power Core", 60003760, "Jita", false, 1_200_000, 2),
+	}
+	orders := []esi.CharacterOrder{
+		{TypeID: 1001, TypeName: "Compact Power Core", Price: 900_000, VolumeRemain: 3, IsBuyOrder: true},
+		{TypeID: 1001, TypeName: "Compact Power Core", Price: 1_300_000, VolumeRemain: 4, IsBuyOrder: false},
+	}
+	assets := []esi.CharacterAsset{
+		{TypeID: 1001, Quantity: 12, LocationFlag: "Hangar"},
+	}
+
+	got := ComputePortfolioOptimizationWithRuntime(txns, orders, assets, 5_000_000, 90, true)
+	if got == nil {
+		t.Fatal("expected non-nil optimization context")
+	}
+	if len(got.PositionRisks) != 1 {
+		t.Fatalf("position risks len = %d, want 1", len(got.PositionRisks))
+	}
+
+	row := got.PositionRisks[0]
+	if row.InventoryQty != 12 {
+		t.Fatalf("inventory qty = %d, want asset-backed 12", row.InventoryQty)
+	}
+	if row.AssetQty != 12 || !row.AssetBacked {
+		t.Fatalf("asset context qty/backed = %d/%v, want 12/true", row.AssetQty, row.AssetBacked)
+	}
+	if row.InventorySource != "assets" {
+		t.Fatalf("inventory source = %q, want assets", row.InventorySource)
+	}
+	if row.InventoryCostISK != 12_000_000 {
+		t.Fatalf("inventory cost = %v, want scaled 12000000", row.InventoryCostISK)
+	}
+	if row.InventoryMarkISK != 15_600_000 {
+		t.Fatalf("inventory mark = %v, want 15600000", row.InventoryMarkISK)
+	}
+	if !hasString(got.Warnings, "asset_inventory_reconciled") {
+		t.Fatalf("warnings = %v, want asset_inventory_reconciled", got.Warnings)
+	}
+}
+
+func TestComputePortfolioOptimizationWithContext_SellBacklogPausesBuyOrders(t *testing.T) {
+	txns := []esi.WalletTransaction{
+		txn(-3, 2001, "Slow Module", 60003760, "Jita", true, 100, 100),
+		txn(-3, 2002, "Buffer A", 60003760, "Jita", true, 100, 1_000),
+		txn(-3, 2003, "Buffer B", 60003760, "Jita", true, 100, 1_000),
+		txn(-3, 2004, "Buffer C", 60003760, "Jita", true, 100, 1_000),
+		txn(-3, 2005, "Buffer D", 60003760, "Jita", true, 100, 1_000),
+	}
+	orders := []esi.CharacterOrder{
+		{TypeID: 2001, TypeName: "Slow Module", Price: 95, VolumeRemain: 50, IsBuyOrder: true},
+		{TypeID: 2001, TypeName: "Slow Module", Price: 110, VolumeRemain: 100, IsBuyOrder: false},
+	}
+
+	got := ComputePortfolioOptimizationWithContext(txns, orders, 1_000_000, 90)
+	if got == nil {
+		t.Fatal("expected non-nil optimization context")
+	}
+
+	var row *PortfolioPositionRisk
+	for i := range got.PositionRisks {
+		if got.PositionRisks[i].TypeID == 2001 {
+			row = &got.PositionRisks[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("expected Slow Module risk row")
+	}
+	if row.BacklogRisk < 70 {
+		t.Fatalf("backlog risk = %v, want >= 70", row.BacklogRisk)
+	}
+	if row.Action != "pause_buy" {
+		t.Fatalf("action = %q, want pause_buy", row.Action)
+	}
+	if row.SuggestedSellISK <= 0 {
+		t.Fatalf("suggested sell isk = %v, want positive", row.SuggestedSellISK)
+	}
+}
+
+func hasString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Portfolio calculation tests ---
 
 func TestPortfolioVariance(t *testing.T) {
@@ -507,8 +645,8 @@ func TestComputePortfolioOptimization_TooFewDaysPerItem(t *testing.T) {
 	if diag == nil {
 		t.Fatal("expected diagnostic")
 	}
-	if diag.UniqueDays != 2 {
-		t.Errorf("diag.UniqueDays = %d, want 2", diag.UniqueDays)
+	if diag.UniqueDays != 0 {
+		t.Errorf("diag.UniqueDays = %d, want 0 realized PnL days", diag.UniqueDays)
 	}
 	// All items have 2 days < 3 minimum, so 0 qualified.
 	if diag.QualifiedItems != 0 {
@@ -638,15 +776,23 @@ func TestComputePortfolioOptimization_WeightsAreByCapital(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		d := base.AddDate(0, 0, -i-1)
 		ds := d.Format(time.RFC3339)
-		// Tritanium: buy 300 ISK per day
+		// Tritanium: deploy 300 ISK per day and realize a same-day sale.
 		txns = append(txns, esi.WalletTransaction{
 			Date: ds, TypeID: 34, TypeName: "Tritanium",
 			UnitPrice: 300, Quantity: 1, IsBuy: true,
 		})
-		// Pyerite: buy 100 ISK per day
+		txns = append(txns, esi.WalletTransaction{
+			Date: ds, TypeID: 34, TypeName: "Tritanium",
+			UnitPrice: 330, Quantity: 1, IsBuy: false,
+		})
+		// Pyerite: deploy 100 ISK per day and realize a same-day sale.
 		txns = append(txns, esi.WalletTransaction{
 			Date: ds, TypeID: 35, TypeName: "Pyerite",
 			UnitPrice: 100, Quantity: 1, IsBuy: true,
+		})
+		txns = append(txns, esi.WalletTransaction{
+			Date: ds, TypeID: 35, TypeName: "Pyerite",
+			UnitPrice: 110, Quantity: 1, IsBuy: false,
 		})
 	}
 	got, _ := ComputePortfolioOptimization(txns, 90)
@@ -749,8 +895,8 @@ func TestComputePortfolioOptimization_LookbackFilter(t *testing.T) {
 	if diag.WithinLookback != 4 {
 		t.Errorf("diag.WithinLookback = %d, want 4", diag.WithinLookback)
 	}
-	if diag.UniqueDays != 2 {
-		t.Errorf("diag.UniqueDays = %d, want 2", diag.UniqueDays)
+	if diag.UniqueDays != 0 {
+		t.Errorf("diag.UniqueDays = %d, want 0 realized PnL days", diag.UniqueDays)
 	}
 }
 
@@ -758,27 +904,35 @@ func TestComputePortfolioOptimization_InvariantToNotionalScaling(t *testing.T) {
 	base := time.Now().UTC()
 
 	buildTxns := func(scaleType35 float64) []esi.WalletTransaction {
-		cashflows34 := []float64{-100, 125, -90, 120, -95, 130}
-		cashflows35 := []float64{-80, 95, -70, 90, -75, 100}
-		txns := make([]esi.WalletTransaction, 0, 12)
+		buy34 := []float64{100, 90, 95, 105, 98, 102}
+		sell34 := []float64{125, 120, 130, 128, 122, 132}
+		buy35 := []float64{80, 70, 75, 85, 78, 82}
+		sell35 := []float64{95, 90, 100, 98, 92, 102}
+		txns := make([]esi.WalletTransaction, 0, 24)
 
-		appendTxn := func(day time.Time, typeID int32, typeName string, cashflow float64) {
-			amount := math.Abs(cashflow)
-			isBuy := cashflow < 0
+		appendPair := func(day time.Time, typeID int32, typeName string, buyPrice, sellPrice float64) {
 			txns = append(txns, esi.WalletTransaction{
 				Date:      day.Format(time.RFC3339),
 				TypeID:    typeID,
 				TypeName:  typeName,
-				UnitPrice: amount,
+				UnitPrice: buyPrice,
 				Quantity:  1,
-				IsBuy:     isBuy,
+				IsBuy:     true,
+			})
+			txns = append(txns, esi.WalletTransaction{
+				Date:      day.Format(time.RFC3339),
+				TypeID:    typeID,
+				TypeName:  typeName,
+				UnitPrice: sellPrice,
+				Quantity:  1,
+				IsBuy:     false,
 			})
 		}
 
-		for i := 0; i < len(cashflows34); i++ {
+		for i := 0; i < len(buy34); i++ {
 			day := base.AddDate(0, 0, -i-1)
-			appendTxn(day, 34, "Tritanium", cashflows34[i])
-			appendTxn(day, 35, "Pyerite", cashflows35[i]*scaleType35)
+			appendPair(day, 34, "Tritanium", buy34[i], sell34[i])
+			appendPair(day, 35, "Pyerite", buy35[i]*scaleType35, sell35[i]*scaleType35)
 		}
 		return txns
 	}

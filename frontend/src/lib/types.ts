@@ -51,6 +51,19 @@ export interface FlipResult {
   CanFill?: boolean;
   SlippageBuyPct?: number;
   SlippageSellPct?: number;
+  FillTimeDays?: number;
+  LiquidityScore?: number;
+  LiquidityLabel?: string;
+  BacktestDays?: number;
+  BacktestFillRate?: number;
+  BacktestMedianVol?: number;
+  CharacterAssets?: number;
+  CharacterBuyOrders?: number;
+  CharacterSellOrders?: number;
+  RouteSafetyMultiplier?: number;
+  RouteSafetyDanger?: "green" | "yellow" | "red" | string;
+  RouteSafetyKills?: number;
+  RouteSafetyISK?: number;
   // Regional day-trader enrichments (for EveGuru-style regional view in ScanResultsTable)
   DaySecurity?: number;
   DaySourceUnits?: number;
@@ -79,6 +92,306 @@ export interface FlipResult {
   DayPriceHistory?: number[];
   /** Lowest sell order price at the destination — populated in sell-order mode */
   DayTargetLowestSell?: number;
+}
+
+export interface FlipBacktestTrade {
+  type_id: number;
+  type_name: string;
+  entry_date: string;
+  exit_date: string;
+  status: "closed" | "open" | string;
+  quantity: number;
+  buy_price: number;
+  sell_price: number;
+  buy_cost: number;
+  sell_revenue: number;
+  pnl: number;
+  roi_percent: number;
+  fillable: boolean;
+  target_volume: number;
+  route_time_minutes?: number;
+  route_jumps?: number;
+  cargo_trips?: number;
+  route_safety_multiplier?: number;
+  route_danger?: "green" | "yellow" | "red" | string;
+  route_kills?: number;
+}
+
+export interface FlipBacktestItemSummary {
+  type_id: number;
+  type_name: string;
+  trades: number;
+  closed_trades: number;
+  open_trades: number;
+  total_pnl: number;
+  realized_pnl: number;
+  mtm_pnl: number;
+  win_rate: number;
+  avg_roi: number;
+  fill_rate: number;
+}
+
+export interface FlipBacktestEquityPoint {
+  date: string;
+  equity: number;
+  realized: number;
+  drawdown: number;
+  day_pnl: number;
+  day_trades: number;
+  total_trades: number;
+}
+
+export interface FlipBacktestSummary {
+  rows_tested: number;
+  trades: number;
+  closed_trades: number;
+  open_trades: number;
+  total_pnl: number;
+  realized_pnl: number;
+  mtm_pnl: number;
+  win_rate: number;
+  avg_roi: number;
+  max_drawdown_isk: number;
+  max_drawdown_pct: number;
+  best_trade_pnl: number;
+  worst_trade_pnl: number;
+  backtest_days: number;
+  hold_days: number;
+  strategy_mode?: "hold" | "instant_flip" | string;
+  travel_cooldown_days?: number;
+  cooldown_minutes?: number;
+  cooldown_mode?: "manual" | "route_time" | string;
+  data_source?: "recorded_orderbook" | string;
+  orderbook_max_age_minutes?: number;
+  avg_route_time_minutes?: number;
+  max_route_time_minutes?: number;
+  route_safety_mode?: "manual" | "auto" | string;
+  avg_route_safety_multiplier?: number;
+  max_route_safety_multiplier?: number;
+}
+
+export interface FlipBacktestResult {
+  summary: FlipBacktestSummary;
+  items: FlipBacktestItemSummary[];
+  ledger: FlipBacktestTrade[];
+  equity: FlipBacktestEquityPoint[];
+  warnings?: string[];
+}
+
+export interface OrderBookCoverageRow {
+  type_id: number;
+  type_name: string;
+  status: "ready" | "missing_source" | "missing_target" | "no_pairs" | "invalid_scope" | "query_error" | string;
+  reason: string;
+  source_books: number;
+  target_books: number;
+  paired_books: number;
+  source_depth: number;
+  target_depth: number;
+  source_levels: number;
+  target_levels: number;
+  oldest_capture: string;
+  newest_capture: string;
+}
+
+export interface OrderBookCoverageSummary {
+  rows_tested: number;
+  rows_ready: number;
+  rows_missing_source: number;
+  rows_missing_target: number;
+  rows_no_pairs: number;
+  rows_invalid_scope: number;
+  source_books: number;
+  target_books: number;
+  paired_books: number;
+  source_depth: number;
+  target_depth: number;
+  ready_percent: number;
+  oldest_capture: string;
+  newest_capture: string;
+  backtest_days: number;
+  max_age_minutes: number;
+}
+
+export interface OrderBookCoverageResult {
+  summary: OrderBookCoverageSummary;
+  rows: OrderBookCoverageRow[];
+  warnings?: string[];
+}
+
+export interface OrderBookStatsType {
+  type_id: number;
+  snapshot_count: number;
+  level_count: number;
+  volume_remain: number;
+}
+
+export interface OrderBookStatsLocation {
+  location_id: number;
+  snapshot_count: number;
+  level_count: number;
+  volume_remain: number;
+}
+
+export interface OrderBookStats {
+  snapshot_count: number;
+  level_count: number;
+  unique_type_count: number;
+  unique_location_count: number;
+  total_volume_remain: number;
+  approx_bytes: number;
+  oldest_captured_at: string;
+  newest_captured_at: string;
+  top_types: OrderBookStatsType[];
+  top_locations: OrderBookStatsLocation[];
+}
+
+export interface OrderBookCleanupPlan {
+  keep_days: number;
+  cutoff: string;
+  dry_run: boolean;
+  vacuum: boolean;
+  snapshots_deleted: number;
+  levels_deleted: number;
+  oldest_remaining: string;
+  newest_remaining: string;
+}
+
+export type PaperTradeStatus = "planned" | "bought" | "hauled" | "sold" | "cancelled";
+
+export interface PaperTrade {
+  id: number;
+  user_id: string;
+  status: PaperTradeStatus | string;
+  type_id: number;
+  type_name: string;
+  planned_quantity: number;
+  actual_quantity: number;
+  planned_buy_price: number;
+  planned_sell_price: number;
+  actual_buy_price: number;
+  actual_sell_price: number;
+  planned_profit_isk: number;
+  planned_roi_percent: number;
+  fees_isk: number;
+  hauling_cost_isk: number;
+  buy_station: string;
+  sell_station: string;
+  buy_system_name: string;
+  sell_system_name: string;
+  buy_system_id: number;
+  sell_system_id: number;
+  buy_region_id: number;
+  sell_region_id: number;
+  buy_location_id: number;
+  sell_location_id: number;
+  volume_m3: number;
+  notes: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string;
+  expected_profit_isk: number;
+  realized_profit_isk: number;
+  capital_isk: number;
+  roi_percent: number;
+}
+
+export type PaperTradeCreatePayload = Partial<
+  Pick<
+    PaperTrade,
+    | "status"
+    | "type_id"
+    | "type_name"
+    | "planned_quantity"
+    | "actual_quantity"
+    | "planned_buy_price"
+    | "planned_sell_price"
+    | "actual_buy_price"
+    | "actual_sell_price"
+    | "planned_profit_isk"
+    | "planned_roi_percent"
+    | "fees_isk"
+    | "hauling_cost_isk"
+    | "buy_station"
+    | "sell_station"
+    | "buy_system_name"
+    | "sell_system_name"
+    | "buy_system_id"
+    | "sell_system_id"
+    | "buy_region_id"
+    | "sell_region_id"
+    | "buy_location_id"
+    | "sell_location_id"
+    | "volume_m3"
+    | "notes"
+    | "source"
+  >
+> & {
+  type_id: number;
+  type_name: string;
+  planned_quantity: number;
+};
+
+export type PaperTradePatch = Partial<
+  Pick<
+    PaperTrade,
+    | "status"
+    | "planned_quantity"
+    | "actual_quantity"
+    | "planned_buy_price"
+    | "planned_sell_price"
+    | "actual_buy_price"
+    | "actual_sell_price"
+    | "planned_profit_isk"
+    | "planned_roi_percent"
+    | "fees_isk"
+    | "hauling_cost_isk"
+    | "notes"
+  >
+>;
+
+export interface PaperTradeReconcilePatch {
+  status?: PaperTradeStatus | string;
+  actual_quantity?: number;
+  actual_buy_price?: number;
+  actual_sell_price?: number;
+}
+
+export interface PaperTradeReconcileRow {
+  trade_id: number;
+  suggested_status: PaperTradeStatus | string;
+  confidence: "high" | "medium" | "low" | "none" | string;
+  reason: string;
+  matched_buy_qty: number;
+  matched_sell_qty: number;
+  avg_buy_price: number;
+  avg_sell_price: number;
+  open_buy_qty: number;
+  open_sell_qty: number;
+  asset_qty: number;
+  buy_location_asset_qty: number;
+  sell_location_asset_qty: number;
+  suggested_patch?: PaperTradeReconcilePatch | null;
+}
+
+export interface PaperTradeReconcileSummary {
+  trades_checked: number;
+  matched: number;
+  high_confidence: number;
+  medium_confidence: number;
+  low_confidence: number;
+  characters: number;
+  transactions: number;
+  orders: number;
+  assets: number;
+}
+
+export interface PaperTradeReconcileResponse {
+  ok: boolean;
+  summary: PaperTradeReconcileSummary;
+  rows: PaperTradeReconcileRow[];
+  warnings?: string[];
 }
 
 export interface RegionalDayTradeItem {
@@ -217,6 +530,15 @@ export interface RouteHop {
   Profit: number;
   Jumps: number;
   RegionID?: number;
+  VolumeM3?: number;
+  CargoM3?: number;
+  CargoTrips?: number;
+  ExecutionMinutes?: number;
+  ProfitPerHour?: number;
+  DailyVolume?: number;
+  FillTimeDays?: number;
+  LiquidityScore?: number;
+  LiquidityLabel?: string;
 }
 
 export interface RouteResult {
@@ -227,6 +549,26 @@ export interface RouteResult {
   HopCount: number;
   TargetSystemName?: string;
   TargetJumps?: number;
+  CargoM3?: number;
+  CargoTrips?: number;
+  ExecutionMinutes?: number;
+  ProfitPerHour?: number;
+  FillTimeDays?: number;
+  LiquidityScore?: number;
+  LiquidityLabel?: string;
+  HaulingRiskKnown?: boolean;
+  HaulingDanger?: "green" | "yellow" | "red" | string;
+  HaulingKills?: number;
+  HaulingISK?: number;
+  HaulingRiskScore?: number;
+  HaulingSafetyMultiplier?: number;
+  CargoValueISK?: number;
+  CourierCollateralISK?: number;
+  CourierRewardFloorISK?: number;
+  CourierRewardPerJumpISK?: number;
+  CourierProfitAfterRewardISK?: number;
+  CourierRiskPremiumPercent?: number;
+  CourierViable?: boolean;
 }
 
 export type NdjsonRouteMessage =
@@ -296,6 +638,9 @@ export interface StationTrade {
   StationID: number;
   SystemID?: number;
   RegionID?: number;
+  CharacterAssets?: number;
+  CharacterBuyOrders?: number;
+  CharacterSellOrders?: number;
   // EVE Guru style metrics
   CapitalRequired: number;
   NowROI: number;
@@ -450,6 +795,12 @@ export interface ScanParams {
   route_target_system_name?: string;
   route_min_isk_per_jump?: number;
   route_allow_empty_hops?: boolean;
+  route_mode?: "balanced" | "fastest" | "safest" | string;
+  route_ship_profile?: string;
+  route_cargo_capacity?: number;
+  route_minutes_per_jump?: number;
+  route_dock_minutes?: number;
+  route_safety_delay_percent?: number;
   // Player structures
   include_structures?: boolean;
   /** Category filter for regional day trader. Empty = all. */
@@ -494,6 +845,17 @@ export interface AppConfig {
   target_market_location_id?: number;
   category_ids?: number[];
   sell_order_mode?: boolean;
+  route_min_hops?: number;
+  route_max_hops?: number;
+  route_target_system_name?: string;
+  route_min_isk_per_jump?: number;
+  route_allow_empty_hops?: boolean;
+  route_mode?: "balanced" | "fastest" | "safest" | string;
+  route_ship_profile?: string;
+  route_cargo_capacity?: number;
+  route_minutes_per_jump?: number;
+  route_dock_minutes?: number;
+  route_safety_delay_percent?: number;
   alert_telegram: boolean;
   alert_discord: boolean;
   alert_desktop: boolean;
@@ -541,6 +903,8 @@ export interface CharacterInfo {
   orders: CharacterOrder[];
   order_history: HistoricalOrder[];
   transactions: WalletTransaction[];
+  assets: CharacterAsset[];
+  industry_jobs: CharacterIndustryJob[];
   skills: SkillSheet | null;
   risk?: CharacterRiskSummary | null;
 }
@@ -585,6 +949,47 @@ export interface WalletTransaction {
   is_buy: boolean;
   type_name?: string;
   location_name?: string;
+}
+
+export interface CharacterAsset {
+  item_id: number;
+  type_id: number;
+  location_id: number;
+  location_type: string;
+  location_flag: string;
+  quantity: number;
+  is_singleton: boolean;
+  is_blueprint_copy: boolean;
+  type_name?: string;
+  location_name?: string;
+}
+
+export interface CharacterIndustryJob {
+  job_id: number;
+  installer_id: number;
+  facility_id: number;
+  station_id?: number;
+  activity_id: number;
+  blueprint_id: number;
+  blueprint_type_id: number;
+  blueprint_location_id: number;
+  output_location_id: number;
+  runs: number;
+  cost: number;
+  licensed_runs?: number;
+  probability?: number;
+  product_type_id?: number;
+  status: string;
+  duration: number;
+  start_date: string;
+  end_date: string;
+  pause_date?: string;
+  completed_date?: string;
+  completed_character_id?: number;
+  successful_runs?: number;
+  product_type_name?: string;
+  blueprint_type_name?: string;
+  facility_name?: string;
 }
 
 export interface SkillSheet {
@@ -926,6 +1331,7 @@ export type StationAIStreamMessage =
 export interface IndustryParams {
   type_id: number;
   runs: number;
+  activity_mode?: "auto" | "manufacturing" | "reaction" | "invention";
   me: number; // Material Efficiency 0-10
   te: number; // Time Efficiency 0-20
   system_name: string;
@@ -938,6 +1344,9 @@ export interface IndustryParams {
   own_blueprint?: boolean;
   blueprint_cost?: number;
   blueprint_is_bpo?: boolean;
+  invention_chance?: number;
+  decryptor_cost?: number;
+  invention_output_runs?: number;
 }
 
 export interface BlueprintInfo {
@@ -946,14 +1355,19 @@ export interface BlueprintInfo {
   me: number;
   te: number;
   time: number;
+  activity?: string;
+  probability?: number;
 }
 
 export interface MaterialNode {
   type_id: number;
   type_name: string;
   quantity: number;
+  activity?: string;
+  runs?: number;
   is_base: boolean;
   buy_price: number;
+  material_cost?: number;
   build_cost: number;
   should_build: boolean;
   job_cost: number;
@@ -971,6 +1385,23 @@ export interface FlatMaterial {
   volume: number;
 }
 
+export interface IndustryActivityStep {
+  activity: "manufacturing" | "reaction" | "invention" | string;
+  blueprint_type_id: number;
+  blueprint_name: string;
+  product_type_id: number;
+  product_name: string;
+  runs: number;
+  output_quantity: number;
+  material_cost: number;
+  job_cost: number;
+  total_cost: number;
+  time_seconds: number;
+  probability?: number;
+  expected_attempts?: number;
+  reason?: string;
+}
+
 export interface IndustryAnalysis {
   target_type_id: number;
   target_type_name: string;
@@ -984,9 +1415,23 @@ export interface IndustryAnalysis {
   sell_revenue: number;
   profit: number;
   profit_percent: number;
+  maker_sell_revenue?: number;
+  maker_sell_profit?: number;
+  instant_sell_revenue?: number;
+  instant_sell_profit?: number;
+  instant_sell_available?: boolean;
   isk_per_hour: number;
   manufacturing_time: number;
+  total_activity_time?: number;
   total_job_cost: number;
+  manufacturing_cost?: number;
+  reaction_cost?: number;
+  invention_cost?: number;
+  invention_job_cost?: number;
+  invention_attempts?: number;
+  invention_probability?: number;
+  activity_mode?: "auto" | "manufacturing" | "reaction" | "invention" | string;
+  activity_plan?: IndustryActivityStep[];
   material_tree: MaterialNode;
   flat_materials: FlatMaterial[];
   system_cost_index: number;
@@ -1281,6 +1726,81 @@ export interface IndustryProjectSnapshot {
   material_diff: IndustryMaterialDiff[];
 }
 
+export interface IndustryCoverageMaterialNeed {
+  type_id: number;
+  type_name?: string;
+  required_qty: number;
+}
+
+export interface IndustryCoverageBlueprintNeed {
+  blueprint_type_id: number;
+  blueprint_name?: string;
+  activity?: string;
+  required_runs?: number;
+}
+
+export interface IndustryCoverageMaterialRow {
+  type_id: number;
+  type_name: string;
+  required_qty: number;
+  available_qty: number;
+  missing_qty: number;
+  coverage_pct: number;
+  status: "covered" | "partial" | "missing" | string;
+}
+
+export interface IndustryCoverageBlueprintRow {
+  blueprint_type_id: number;
+  blueprint_name: string;
+  activity: string;
+  required_runs: number;
+  owned_qty: number;
+  bpo_qty: number;
+  bpc_qty: number;
+  available_runs: number;
+  best_me: number;
+  best_te: number;
+  coverage_pct: number;
+  status: "ready" | "partial" | "missing" | string;
+}
+
+export interface IndustryCoverageAction {
+  step: number;
+  action: "use_stock" | "buy_missing" | "use_blueprint" | "acquire_blueprint" | "start_jobs" | "resolve_blockers" | string;
+  status: "ready" | "needed" | "partial" | "missing" | "blocked" | string;
+  label: string;
+  detail?: string;
+  type_id?: number;
+  type_name?: string;
+  quantity?: number;
+  required_qty?: number;
+  available_qty?: number;
+  missing_qty?: number;
+  blocking: boolean;
+}
+
+export interface IndustryCoverageSummary {
+  materials: number;
+  materials_covered: number;
+  materials_missing: number;
+  required_units: number;
+  available_units: number;
+  missing_units: number;
+  material_coverage_pct: number;
+  blueprints: number;
+  blueprints_ready: number;
+  blueprints_missing: number;
+  can_start_now: boolean;
+}
+
+export interface IndustryCoverageResult {
+  summary: IndustryCoverageSummary;
+  materials: IndustryCoverageMaterialRow[];
+  blueprints: IndustryCoverageBlueprintRow[];
+  actions: IndustryCoverageAction[];
+  warnings?: string[];
+}
+
 // --- Portfolio P&L Types ---
 
 export interface DailyPnLEntry {
@@ -1445,6 +1965,68 @@ export interface AllocationSuggestion {
   reason: string;
 }
 
+export interface PortfolioCapital {
+  wallet_isk: number;
+  inventory_cost_isk: number;
+  inventory_mark_isk: number;
+  active_buy_order_isk: number;
+  active_sell_order_isk: number;
+  used_capital_isk: number;
+  total_exposure_isk: number;
+  estimated_equity_isk: number;
+  free_capital_pct: number;
+  locked_buy_pct: number;
+  inventory_pct: number;
+  sell_backlog_pct: number;
+  concentration_hhi: number;
+  top_exposure_pct: number;
+  risk_score: number;
+  risk_level: string;
+  warnings?: string[];
+}
+
+export interface PortfolioPositionRisk {
+  type_id: number;
+  type_name: string;
+  inventory_qty: number;
+  asset_qty?: number;
+  asset_backed?: boolean;
+  inventory_cost_isk: number;
+  inventory_mark_isk: number;
+  inventory_source?: string;
+  unrealized_pnl: number;
+  unrealized_roi_pct: number;
+  active_buy_qty: number;
+  active_buy_isk: number;
+  active_sell_qty: number;
+  active_sell_isk: number;
+  recent_sell_qty: number;
+  avg_daily_sell_qty: number;
+  days_to_liquidate: number;
+  realized_pnl: number;
+  avg_daily_pnl: number;
+  trading_days: number;
+  exposure_isk: number;
+  exposure_pct: number;
+  target_pct: number;
+  delta_pct: number;
+  concentration_risk: number;
+  liquidity_risk: number;
+  backlog_risk: number;
+  loss_risk: number;
+  stale_risk: number;
+  risk_score: number;
+  risk_level: string;
+  action: "increase" | "hold" | "reduce" | "liquidate" | "pause_buy" | string;
+  reason: string;
+  max_capital_isk: number;
+  suggested_buy_isk: number;
+  suggested_sell_isk: number;
+  mark_price: number;
+  mark_price_source: string;
+  oldest_inventory_date: string;
+}
+
 export interface PortfolioOptimization {
   assets: AssetStats[];
   correlation_matrix: number[][];
@@ -1458,6 +2040,11 @@ export interface PortfolioOptimization {
   min_var_sharpe: number;
   hhi: number;
   suggestions: AllocationSuggestion[];
+  optimizer_ready?: boolean;
+  diagnostic?: OptimizerDiagnostic | null;
+  capital?: PortfolioCapital;
+  position_risks?: PortfolioPositionRisk[];
+  warnings?: string[];
 }
 
 export interface DiagnosticItem {

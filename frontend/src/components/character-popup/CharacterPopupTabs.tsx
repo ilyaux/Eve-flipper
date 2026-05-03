@@ -5,3 +5,5 @@ export { OptimizerTab } from "./OptimizerTab";
 export { RiskTab } from "./RiskTab";
 export { CombinedOrdersTab } from "./CombinedOrdersTab";
 export { TransactionsTab } from "./TransactionsTab";
+export { WalletDashboardTab } from "./WalletDashboardTab";
+export { IndustryJobsTab } from "./IndustryJobsTab";

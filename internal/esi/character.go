@@ -66,6 +66,8 @@ type CharacterAsset struct {
 	Quantity        int64  `json:"quantity"`
 	IsSingleton     bool   `json:"is_singleton"`
 	IsBlueprintCopy bool   `json:"is_blueprint_copy"`
+	TypeName        string `json:"type_name,omitempty"`
+	LocationName    string `json:"location_name,omitempty"`
 }
 
 // CharacterBlueprint represents a blueprint owned by character.
@@ -78,6 +80,35 @@ type CharacterBlueprint struct {
 	TimeEfficiency     int32  `json:"time_efficiency"`
 	MaterialEfficiency int32  `json:"material_efficiency"`
 	Runs               int64  `json:"runs"`
+}
+
+// CharacterIndustryJob represents an active or recently completed character industry job.
+type CharacterIndustryJob struct {
+	JobID                int64   `json:"job_id"`
+	InstallerID          int64   `json:"installer_id"`
+	FacilityID           int64   `json:"facility_id"`
+	StationID            int64   `json:"station_id,omitempty"`
+	ActivityID           int32   `json:"activity_id"`
+	BlueprintID          int64   `json:"blueprint_id"`
+	BlueprintTypeID      int32   `json:"blueprint_type_id"`
+	BlueprintLocationID  int64   `json:"blueprint_location_id"`
+	OutputLocationID     int64   `json:"output_location_id"`
+	Runs                 int32   `json:"runs"`
+	Cost                 float64 `json:"cost"`
+	LicensedRuns         int32   `json:"licensed_runs,omitempty"`
+	Probability          float64 `json:"probability,omitempty"`
+	ProductTypeID        int32   `json:"product_type_id,omitempty"`
+	Status               string  `json:"status"`
+	Duration             int64   `json:"duration"`
+	StartDate            string  `json:"start_date"`
+	EndDate              string  `json:"end_date"`
+	PauseDate            string  `json:"pause_date,omitempty"`
+	CompletedDate        string  `json:"completed_date,omitempty"`
+	CompletedCharacterID int64   `json:"completed_character_id,omitempty"`
+	SuccessfulRuns       int32   `json:"successful_runs,omitempty"`
+	ProductTypeName      string  `json:"product_type_name,omitempty"`
+	BlueprintTypeName    string  `json:"blueprint_type_name,omitempty"`
+	FacilityName         string  `json:"facility_name,omitempty"`
 }
 
 // SkillEntry represents a single trained skill.
@@ -414,6 +445,16 @@ func (c *Client) GetCharacterBlueprints(characterID int64, accessToken string) (
 		all = append(all, r.data...)
 	}
 	return all, nil
+}
+
+// GetCharacterIndustryJobs fetches a character's industry jobs.
+func (c *Client) GetCharacterIndustryJobs(characterID int64, accessToken string, includeCompleted bool) ([]CharacterIndustryJob, error) {
+	url := fmt.Sprintf("%s/characters/%d/industry/jobs/?datasource=tranquility&include_completed=%t", baseURL, characterID, includeCompleted)
+	var jobs []CharacterIndustryJob
+	if err := c.AuthGetJSON(url, accessToken, &jobs); err != nil {
+		return nil, fmt.Errorf("character industry jobs: %w", err)
+	}
+	return jobs, nil
 }
 
 // GetCharacterLocation fetches a character's current location (system/station).
