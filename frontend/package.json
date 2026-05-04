@@ -33,6 +33,7 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.14",
     "@tauri-apps/cli": "^2.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
