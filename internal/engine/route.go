@@ -864,8 +864,8 @@ func dangerMultiplier(level string) float64 {
 func totalCargoM3FromHops(hops []RouteHop, sde *sde.Data) float64 {
 	total := 0.0
 	for _, h := range hops {
-		if itemGroup, ok := sde.Items[h.TypeID]; ok {
-			total += itemGroup.Volume * float64(h.Units)
+		if itemType, ok := sde.Types[h.TypeID]; ok {
+			total += itemType.Volume * float64(h.Units)
 		}
 	}
 	return total
