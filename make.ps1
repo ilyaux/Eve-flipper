@@ -287,7 +287,8 @@ ESI SSO Configuration:
 
   Register ESI application at: https://developers.eveonline.com/applications
 
-  The application will read credentials at runtime from environment or .env file.
+  Local builds read credentials from environment variables or the repo-root .env file.
+  Official/release builds may also include build-time defaults depending on the build workflow.
 "@ -ForegroundColor Yellow
 }
 
