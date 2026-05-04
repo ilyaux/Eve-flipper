@@ -58,6 +58,7 @@ function Build {
 
     Write-Host "Building $AppName ($Version)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
+
     go build -ldflags $LdFlags -o "$BuildDir/$AppName.exe" .
     if ($LASTEXITCODE -eq 0) { Write-Host "OK: $BuildDir/$AppName.exe" -ForegroundColor Green }
 }
@@ -98,6 +99,7 @@ function BuildWails {
     Write-Host "Building $AppName Wails desktop binary ($Version)..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
     $wailsLdFlags = "-s -w -H=windowsgui -X main.version=$Version"
+
     go build -tags "wails,production" -ldflags $wailsLdFlags -o "$BuildDir/$AppName-wails.exe" .
     if ($LASTEXITCODE -eq 0) { Write-Host "OK: $BuildDir/$AppName-wails.exe" -ForegroundColor Green }
 }
@@ -168,6 +170,7 @@ function BuildTauri {
     Write-Host ""
     Write-Host "=== Step 2/3: Building Go sidecar ===" -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $sidecarDir -Force | Out-Null
+
     $env:CGO_ENABLED = "0"
     go build -ldflags $LdFlags -o "$sidecarDir/$sidecarName" .
     Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
@@ -238,6 +241,7 @@ function BuildTauriDev {
     if ($feExit -ne 0) { Write-Host "Frontend build failed!" -ForegroundColor Red; return }
 
     New-Item -ItemType Directory -Path $sidecarDir -Force | Out-Null
+
     $env:CGO_ENABLED = "0"
     go build -ldflags $LdFlags -o "$sidecarDir/$sidecarName" .
     Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
@@ -274,6 +278,16 @@ Commands:
   clean        Remove build artifacts (including Tauri target/)
   all          Test + frontend + cross-compile
   help         Show this help
+
+ESI SSO Configuration:
+  To use ESI features, set environment variables or create a .env file in repo root:
+    ESI_CLIENT_ID=your-client-id
+    ESI_CLIENT_SECRET=your-client-secret
+    ESI_CALLBACK_URL=http://localhost:13370/api/auth/callback
+
+  Register ESI application at: https://developers.eveonline.com/applications
+
+  The application will read credentials at runtime from environment or .env file.
 "@ -ForegroundColor Yellow
 }
 
