@@ -3015,7 +3015,7 @@ func (s *Server) handleBatchOptimize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifest := engine.BatchOptimize(req.Results, req.CargoM3, req.Budget, s.SDE)
+	manifest := engine.BatchOptimize(req.Results, req.CargoM3, req.Budget, s.sdeData)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(manifest)
