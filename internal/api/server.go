@@ -719,12 +719,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/scan/multi-region", s.handleScanMultiRegion)
 	mux.HandleFunc("POST /api/scan/regional-day", s.handleScanRegionalDay)
 	mux.HandleFunc("POST /api/scan/contracts", s.handleScanContracts)
-	mux.HandleFunc("POST /api/backtest/flips", s.handleBacktestFlips)
-	mux.HandleFunc("POST /api/orderbook/coverage", s.handleOrderBookCoverage)
-	mux.HandleFunc("GET /api/orderbook/stats", s.handleOrderBookStats)
-	mux.HandleFunc("POST /api/orderbook/cleanup", s.handleOrderBookCleanup)
-	mux.HandleFunc("GET /api/orderbook/snapshots", s.handleOrderBookSnapshots)
-	mux.HandleFunc("GET /api/orderbook/snapshots/{snapshotID}/levels", s.handleOrderBookLevels)
+	mux.HandleFunc("POST /api/scan/batch-optimize", s.handleBatchOptimize)
 	mux.HandleFunc("POST /api/route/find", s.handleRouteFind)
 	mux.HandleFunc("GET /api/watchlist", s.handleGetWatchlist)
 	mux.HandleFunc("POST /api/watchlist", s.handleAddWatchlist)
@@ -754,14 +749,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/station/trade-states/delete", s.handleAuthDeleteStationTradeStates)
 	mux.HandleFunc("POST /api/auth/station/trade-states/clear", s.handleAuthClearStationTradeStates)
 	mux.HandleFunc("POST /api/auth/station/cache/reboot", s.handleAuthRebootStationCache)
-	mux.HandleFunc("GET /api/auth/paper-trades", s.handleAuthListPaperTrades)
-	mux.HandleFunc("POST /api/auth/paper-trades", s.handleAuthCreatePaperTrade)
-	mux.HandleFunc("POST /api/auth/paper-trades/reconcile", s.handleAuthReconcilePaperTrades)
-	mux.HandleFunc("PATCH /api/auth/paper-trades/{tradeID}", s.handleAuthUpdatePaperTrade)
-	mux.HandleFunc("DELETE /api/auth/paper-trades/{tradeID}", s.handleAuthDeletePaperTrade)
 	mux.HandleFunc("GET /api/auth/industry/projects", s.handleAuthListIndustryProjects)
 	mux.HandleFunc("POST /api/auth/industry/projects", s.handleAuthCreateIndustryProject)
-	mux.HandleFunc("POST /api/auth/industry/coverage", s.handleAuthIndustryCoverage)
 	mux.HandleFunc("GET /api/auth/industry/projects/{projectID}/snapshot", s.handleAuthIndustryProjectSnapshot)
 	mux.HandleFunc("POST /api/auth/industry/projects/{projectID}/plan/preview", s.handleAuthPreviewIndustryProjectPlan)
 	mux.HandleFunc("POST /api/auth/industry/projects/{projectID}/plan", s.handleAuthPlanIndustryProject)
@@ -2117,7 +2106,6 @@ type scanRequest struct {
 	TargetRegion           string   `json:"target_region"`             // Empty = search all by radius; region name = search only in that region
 	TargetMarketSystem     string   `json:"target_market_system"`      // Optional destination marketplace system.
 	TargetMarketLocationID int64    `json:"target_market_location_id"` // Optional destination marketplace location_id.
-	RestrictToTargetMarket *bool    `json:"restrict_to_target_market"` // false = ignore target_market_system/location for radius scans
 	// Contract-specific filters
 	MinContractPrice           float64 `json:"min_contract_price"`
 	MaxContractMargin          float64 `json:"max_contract_margin"`
@@ -2147,7 +2135,6 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 	// Parse target region if specified.
 	var targetRegionID int32
 	var targetMarketSystemID int32
-	var targetMarketLocationID int64
 	sourceRegionIDs := make([]int32, 0, len(req.SourceRegions))
 	sourceRegionSeen := make(map[int32]bool, len(req.SourceRegions))
 	for _, sourceRegionName := range req.SourceRegions {
@@ -2175,11 +2162,7 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 			return engine.ScanParams{}, fmt.Errorf("region not found: %s", req.TargetRegion)
 		}
 	}
-	restrictToTargetMarket := req.RestrictToTargetMarket == nil || *req.RestrictToTargetMarket
-	if restrictToTargetMarket {
-		targetMarketLocationID = req.TargetMarketLocationID
-	}
-	if restrictToTargetMarket && strings.TrimSpace(req.TargetMarketSystem) != "" {
+	if strings.TrimSpace(req.TargetMarketSystem) != "" {
 		sid, systemOK := s.sdeData.SystemByName[strings.ToLower(strings.TrimSpace(req.TargetMarketSystem))]
 		if !systemOK {
 			s.mu.RUnlock()
@@ -2227,7 +2210,7 @@ func (s *Server) parseScanParams(req scanRequest) (engine.ScanParams, error) {
 		ShippingCostPerM3Jump:      req.ShippingCostPerM3Jump,
 		SourceRegionIDs:            sourceRegionIDs,
 		TargetMarketSystemID:       targetMarketSystemID,
-		TargetMarketLocationID:     targetMarketLocationID,
+		TargetMarketLocationID:     req.TargetMarketLocationID,
 		MinRouteSecurity:           req.MinRouteSecurity,
 		TargetRegionID:             targetRegionID,
 		MinContractPrice:           req.MinContractPrice,
@@ -2396,11 +2379,6 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "streaming not supported")
 		return
 	}
-	sendProgress := func(msg string) {
-		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
-		fmt.Fprintf(w, "%s\n", line)
-		flusher.Flush()
-	}
 
 	s.mu.RLock()
 	scanner := s.scanner
@@ -2411,7 +2389,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	startTime := time.Now()
 
-	results, err := scanner.Scan(params, sendProgress)
+	results, err := scanner.Scan(params, func(msg string) {
+		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
+		fmt.Fprintf(w, "%s\n", line)
+		flusher.Flush()
+	})
 	if err != nil {
 		log.Printf("[API] Scan error: %v", err)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
@@ -2430,15 +2412,6 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		results = filterFlipResultsExcludeStructures(results)
 	}
 	results = filterFlipResultsMarketDisabled(results)
-	if inventory := s.loadRegionalInventorySnapshot(
-		userID,
-		params.TargetRegionID,
-		params.TargetMarketSystemID,
-		params.TargetMarketLocationID,
-		sendProgress,
-	); inventory != nil {
-		engine.EnrichFlipResultsWithInventory(results, inventory)
-	}
 	cacheMeta := s.stationCacheMetaForFlipScan(
 		params,
 		false,
@@ -2508,11 +2481,6 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "streaming not supported")
 		return
 	}
-	sendProgress := func(msg string) {
-		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
-		fmt.Fprintf(w, "%s\n", line)
-		flusher.Flush()
-	}
 
 	s.mu.RLock()
 	scanner := s.scanner
@@ -2529,7 +2497,11 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 
 	startTime := time.Now()
 
-	results, err := scanner.ScanMultiRegion(params, sendProgress)
+	results, err := scanner.ScanMultiRegion(params, func(msg string) {
+		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
+		fmt.Fprintf(w, "%s\n", line)
+		flusher.Flush()
+	})
 	if err != nil {
 		log.Printf("[API] ScanMultiRegion error: %v", err)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
@@ -2548,15 +2520,6 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 		results = filterFlipResultsExcludeStructures(results)
 	}
 	results = filterFlipResultsMarketDisabled(results)
-	if inventory := s.loadRegionalInventorySnapshot(
-		userID,
-		params.TargetRegionID,
-		params.TargetMarketSystemID,
-		params.TargetMarketLocationID,
-		sendProgress,
-	); inventory != nil {
-		engine.EnrichFlipResultsWithInventory(results, inventory)
-	}
 	cacheMeta := s.stationCacheMetaForFlipScan(
 		params,
 		true,
@@ -2772,7 +2735,6 @@ func (s *Server) loadRegionalInventorySnapshot(
 
 	snapshot := &engine.RegionalInventorySnapshot{
 		AssetsByType:     make(map[int32]int64),
-		ActiveBuyByType:  make(map[int32]int64),
 		ActiveSellByType: make(map[int32]int64),
 	}
 	charactersUsed := 0
@@ -2788,7 +2750,7 @@ func (s *Server) loadRegionalInventorySnapshot(
 		orders, orderErr := s.esi.GetCharacterOrders(sess.CharacterID, token)
 		if orderErr == nil {
 			for _, o := range orders {
-				if o.TypeID <= 0 || o.VolumeRemain <= 0 {
+				if o.TypeID <= 0 || o.IsBuyOrder || o.VolumeRemain <= 0 {
 					continue
 				}
 				if targetMarketLocationID > 0 && o.LocationID != targetMarketLocationID {
@@ -2802,11 +2764,7 @@ func (s *Server) loadRegionalInventorySnapshot(
 						continue
 					}
 				}
-				if o.IsBuyOrder {
-					snapshot.ActiveBuyByType[o.TypeID] += int64(o.VolumeRemain)
-				} else {
-					snapshot.ActiveSellByType[o.TypeID] += int64(o.VolumeRemain)
-				}
+				snapshot.ActiveSellByType[o.TypeID] += int64(o.VolumeRemain)
 			}
 			gotAny = true
 		}
@@ -2850,15 +2808,14 @@ func (s *Server) loadRegionalInventorySnapshot(
 		}
 	}
 
-	if len(snapshot.AssetsByType) == 0 && len(snapshot.ActiveBuyByType) == 0 && len(snapshot.ActiveSellByType) == 0 {
+	if len(snapshot.AssetsByType) == 0 && len(snapshot.ActiveSellByType) == 0 {
 		return nil
 	}
 	if progress != nil {
 		progress(fmt.Sprintf(
-			"Inventory synced: %d characters, %d asset types, %d active buy types, %d active sell types",
+			"Inventory synced: %d characters, %d asset types, %d active sell types",
 			charactersUsed,
 			len(snapshot.AssetsByType),
-			len(snapshot.ActiveBuyByType),
 			len(snapshot.ActiveSellByType),
 		))
 	}
@@ -2969,6 +2926,7 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "streaming not supported")
 		return
 	}
+
 	s.mu.RLock()
 	scanner := s.scanner
 	s.mu.RUnlock()
@@ -3045,6 +3003,24 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 }
 
+func (s *Server) handleBatchOptimize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Results []engine.FlipResult `json:"results"`
+		CargoM3 float64             `json:"cargo_m3"`
+		Budget  float64             `json:"budget"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	manifest := engine.BatchOptimize(req.Results, req.CargoM3, req.Budget, s.sdeData)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(manifest)
+}
+
 func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromRequest(r)
 
@@ -3053,12 +3029,6 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		IgnoredSystemIDs     []int32 `json:"ignored_system_ids"`
 		TargetSystemName     string  `json:"target_system_name"`
 		CargoCapacity        float64 `json:"cargo_capacity"`
-		RouteCargoCapacity   float64 `json:"route_cargo_capacity"`
-		RouteShipProfile     string  `json:"route_ship_profile"`
-		RouteMinutesPerJump  float64 `json:"route_minutes_per_jump"`
-		RouteDockMinutes     float64 `json:"route_dock_minutes"`
-		RouteSafetyDelayPct  float64 `json:"route_safety_delay_percent"`
-		RouteMode            string  `json:"route_mode"`
 		MinMargin            float64 `json:"min_margin"`
 		MinISKPerJump        float64 `json:"min_isk_per_jump"`
 		SalesTaxPercent      float64 `json:"sales_tax_percent"`
@@ -3084,8 +3054,6 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	}
 	req.SystemName = strings.TrimSpace(req.SystemName)
 	req.TargetSystemName = strings.TrimSpace(req.TargetSystemName)
-	req.RouteShipProfile = strings.TrimSpace(req.RouteShipProfile)
-	req.RouteMode = engine.NormalizeRouteMode(req.RouteMode)
 	if req.MinISKPerJump < 0 {
 		req.MinISKPerJump = 0
 	}
@@ -3106,11 +3074,6 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "streaming not supported")
 		return
 	}
-	sendProgress := func(msg string) {
-		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
-		fmt.Fprintf(w, "%s\n", line)
-		flusher.Flush()
-	}
 
 	s.mu.RLock()
 	scanner := s.scanner
@@ -3122,37 +3085,30 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	params := engine.RouteParams{
-		SystemName:              req.SystemName,
-		IgnoredSystemIDs:        ignoredSystemIDs,
-		TargetSystemName:        req.TargetSystemName,
-		CargoCapacity:           req.CargoCapacity,
-		RouteCargoCapacity:      req.RouteCargoCapacity,
-		RouteShipProfile:        req.RouteShipProfile,
-		RouteMinutesPerJump:     req.RouteMinutesPerJump,
-		RouteDockMinutes:        req.RouteDockMinutes,
-		RouteSafetyDelayPercent: req.RouteSafetyDelayPct,
-		RouteMode:               req.RouteMode,
-		MinMargin:               req.MinMargin,
-		MinISKPerJump:           req.MinISKPerJump,
-		SalesTaxPercent:         req.SalesTaxPercent,
-		BrokerFeePercent:        req.BrokerFeePercent,
-		SplitTradeFees:          req.SplitTradeFees,
-		BuyBrokerFeePercent:     req.BuyBrokerFeePercent,
-		SellBrokerFeePercent:    req.SellBrokerFeePercent,
-		BuySalesTaxPercent:      req.BuySalesTaxPercent,
-		SellSalesTaxPercent:     req.SellSalesTaxPercent,
-		MinHops:                 req.MinHops,
-		MaxHops:                 req.MaxHops,
-		MinRouteSecurity:        req.MinRouteSecurity,
-		AllowEmptyHops:          req.AllowEmptyHops,
-		IncludeStructures:       req.IncludeStructures,
+		SystemName:           req.SystemName,
+		IgnoredSystemIDs:     ignoredSystemIDs,
+		TargetSystemName:     req.TargetSystemName,
+		CargoCapacity:        req.CargoCapacity,
+		MinMargin:            req.MinMargin,
+		MinISKPerJump:        req.MinISKPerJump,
+		SalesTaxPercent:      req.SalesTaxPercent,
+		BrokerFeePercent:     req.BrokerFeePercent,
+		SplitTradeFees:       req.SplitTradeFees,
+		BuyBrokerFeePercent:  req.BuyBrokerFeePercent,
+		SellBrokerFeePercent: req.SellBrokerFeePercent,
+		BuySalesTaxPercent:   req.BuySalesTaxPercent,
+		SellSalesTaxPercent:  req.SellSalesTaxPercent,
+		MinHops:              req.MinHops,
+		MaxHops:              req.MaxHops,
+		MinRouteSecurity:     req.MinRouteSecurity,
+		AllowEmptyHops:       req.AllowEmptyHops,
+		IncludeStructures:    req.IncludeStructures,
 	}
 
 	log.Printf(
-		"[API] RouteFind: system=%s target=%s mode=%s cargo=%.0f margin=%.1f minISK/jump=%.1f empty=%t hops=%d-%d",
+		"[API] RouteFind: system=%s target=%s cargo=%.0f margin=%.1f minISK/jump=%.1f empty=%t hops=%d-%d",
 		req.SystemName,
 		req.TargetSystemName,
-		req.RouteMode,
 		req.CargoCapacity,
 		req.MinMargin,
 		req.MinISKPerJump,
@@ -3162,7 +3118,11 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 	)
 
 	startTime := time.Now()
-	results, err := scanner.FindRoutes(params, sendProgress)
+	results, err := scanner.FindRoutes(params, func(msg string) {
+		line, _ := json.Marshal(map[string]string{"type": "progress", "message": msg})
+		fmt.Fprintf(w, "%s\n", line)
+		flusher.Flush()
+	})
 	if err != nil {
 		log.Printf("[API] RouteFind error: %v", err)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
@@ -3183,9 +3143,6 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		results = filterRouteResultsExcludeStructures(results)
 	}
 	results = filterRouteResultsMarketDisabled(results)
-	results = s.enrichRouteHaulingRisk(results, req.SystemName, req.TargetSystemName, req.MinRouteSecurity, sendProgress)
-	engine.EnrichRouteExecutionEstimatesWithProfile(results, engine.RouteExecutionProfileFromParams(params))
-	engine.SortRouteResultsByMode(results, req.RouteMode)
 	if len(results) != rawCount {
 		log.Printf("[API] RouteFind post-filter: raw=%d final=%d (include_structures=%t)", rawCount, len(results), req.IncludeStructures)
 		line, _ := json.Marshal(map[string]string{
@@ -3514,8 +3471,6 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 	radiusMode := req.Radius > 0 && req.SystemName != ""
 	singleStationMode := !radiusMode && req.StationID > 0
 	allStationsMode := !radiusMode && !singleStationMode
-	var runtimeMarketSystemID int32
-	var runtimeMarketLocationID int64
 
 	if radiusMode {
 		// Radius-based scan: find all systems within radius, collect their stations
@@ -3524,7 +3479,6 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "unknown system")
 			return
 		}
-		runtimeMarketSystemID = systemID
 		systems := sdeData.Universe.SystemsWithinRadius(systemID, req.Radius)
 		for ignoredID := range ignoredSystems {
 			delete(systems, ignoredID)
@@ -3551,7 +3505,6 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		if st, ok := sdeData.Stations[req.StationID]; !(ok && ignoredSystems[st.SystemID]) {
 			stationIDs[req.StationID] = true
 		}
-		runtimeMarketLocationID = req.StationID
 		regionIDs[req.RegionID] = true
 		historyLabel = fmt.Sprintf("Station %d", req.StationID)
 	} else {
@@ -3652,15 +3605,6 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		allResults = filterStationTradesExcludeStructures(allResults)
 	}
 	allResults = filterStationTradesMarketDisabled(allResults)
-	if inventory := s.loadRegionalInventorySnapshot(
-		userID,
-		req.RegionID,
-		runtimeMarketSystemID,
-		runtimeMarketLocationID,
-		progressFn,
-	); inventory != nil {
-		engine.EnrichStationTradesWithInventory(allResults, inventory)
-	}
 
 	// Calculate totals
 	topProfit := 0.0
@@ -4481,8 +4425,6 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 		Orders        []esi.CharacterOrder         `json:"orders"`
 		OrderHistory  []esi.HistoricalOrder        `json:"order_history"`
 		Transactions  []esi.WalletTransaction      `json:"transactions"`
-		Assets        []esi.CharacterAsset         `json:"assets"`
-		IndustryJobs  []esi.CharacterIndustryJob   `json:"industry_jobs"`
 		Skills        *esi.SkillSheet              `json:"skills"`
 		Risk          *engine.PortfolioRiskSummary `json:"risk,omitempty"`
 	}
@@ -4511,18 +4453,13 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 		result := &charInfo{
 			CharacterID:   sess.CharacterID,
 			CharacterName: sess.CharacterName,
-			Orders:        []esi.CharacterOrder{},
-			OrderHistory:  []esi.HistoricalOrder{},
-			Transactions:  []esi.WalletTransaction{},
-			Assets:        []esi.CharacterAsset{},
-			IndustryJobs:  []esi.CharacterIndustryJob{},
 		}
 
 		// Fetch all character data in parallel for faster popup loading.
 		var wgChar sync.WaitGroup
 		var muChar sync.Mutex
 
-		wgChar.Add(7)
+		wgChar.Add(5)
 
 		go func() {
 			defer wgChar.Done()
@@ -4570,28 +4507,6 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wgChar.Done()
-			if assets, fetchErr := s.esi.GetCharacterAssets(sess.CharacterID, token); fetchErr == nil {
-				muChar.Lock()
-				result.Assets = assets
-				muChar.Unlock()
-			} else {
-				log.Printf("[AUTH] Assets error (%s): %v", sess.CharacterName, fetchErr)
-			}
-		}()
-
-		go func() {
-			defer wgChar.Done()
-			if jobs, fetchErr := s.esi.GetCharacterIndustryJobs(sess.CharacterID, token, false); fetchErr == nil {
-				muChar.Lock()
-				result.IndustryJobs = jobs
-				muChar.Unlock()
-			} else {
-				log.Printf("[AUTH] Industry jobs error (%s): %v", sess.CharacterName, fetchErr)
-			}
-		}()
-
-		go func() {
-			defer wgChar.Done()
 			if skills, fetchErr := s.esi.GetSkills(sess.CharacterID, token); fetchErr == nil {
 				muChar.Lock()
 				result.Skills = skills
@@ -4628,19 +4543,12 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 		result = charInfo{
 			CharacterID:   0,
 			CharacterName: "All Characters",
-			Orders:        []esi.CharacterOrder{},
-			OrderHistory:  []esi.HistoricalOrder{},
-			Transactions:  []esi.WalletTransaction{},
-			Assets:        []esi.CharacterAsset{},
-			IndustryJobs:  []esi.CharacterIndustryJob{},
 		}
 		for _, part := range collected {
 			result.Wallet += part.Wallet
 			result.Orders = append(result.Orders, part.Orders...)
 			result.OrderHistory = append(result.OrderHistory, part.OrderHistory...)
 			result.Transactions = append(result.Transactions, part.Transactions...)
-			result.Assets = append(result.Assets, part.Assets...)
-			result.IndustryJobs = append(result.IndustryJobs, part.IndustryJobs...)
 		}
 	} else {
 		result = *collected[0]
@@ -4662,23 +4570,6 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, t := range result.Transactions {
 			locationIDs[t.LocationID] = true
-		}
-		for _, a := range result.Assets {
-			locationIDs[a.LocationID] = true
-		}
-		for _, j := range result.IndustryJobs {
-			if j.FacilityID > 0 {
-				locationIDs[j.FacilityID] = true
-			}
-			if j.StationID > 0 {
-				locationIDs[j.StationID] = true
-			}
-			if j.BlueprintLocationID > 0 {
-				locationIDs[j.BlueprintLocationID] = true
-			}
-			if j.OutputLocationID > 0 {
-				locationIDs[j.OutputLocationID] = true
-			}
 		}
 		s.esi.PrefetchStationNames(locationIDs)
 
@@ -4705,32 +4596,7 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 			}
 			result.Transactions[i].LocationName = s.esi.StationName(result.Transactions[i].LocationID)
 		}
-
-		for i := range result.Assets {
-			if t, ok := sdeData.Types[result.Assets[i].TypeID]; ok {
-				result.Assets[i].TypeName = t.Name
-			}
-			result.Assets[i].LocationName = s.esi.StationName(result.Assets[i].LocationID)
-		}
-
-		for i := range result.IndustryJobs {
-			if t, ok := sdeData.Types[result.IndustryJobs[i].ProductTypeID]; ok {
-				result.IndustryJobs[i].ProductTypeName = t.Name
-			}
-			if t, ok := sdeData.Types[result.IndustryJobs[i].BlueprintTypeID]; ok {
-				result.IndustryJobs[i].BlueprintTypeName = t.Name
-			}
-			if result.IndustryJobs[i].FacilityID > 0 {
-				result.IndustryJobs[i].FacilityName = s.esi.StationName(result.IndustryJobs[i].FacilityID)
-			} else if result.IndustryJobs[i].StationID > 0 {
-				result.IndustryJobs[i].FacilityName = s.esi.StationName(result.IndustryJobs[i].StationID)
-			}
-		}
 	}
-
-	sort.Slice(result.IndustryJobs, func(i, j int) bool {
-		return result.IndustryJobs[i].EndDate < result.IndustryJobs[j].EndDate
-	})
 
 	// Compute portfolio risk summary from recent wallet transactions.
 	if len(result.Transactions) > 0 {
@@ -5469,331 +5335,6 @@ func (s *Server) handleAuthRebalanceIndustryProjectMaterials(w http.ResponseWrit
 			"location_filter_count": len(locationFilter),
 		},
 	})
-}
-
-func (s *Server) handleAuthIndustryCoverage(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireIndustryAuthUser(w, r)
-	if !ok {
-		return
-	}
-	if s.esi == nil || s.sessions == nil || s.sso == nil {
-		writeError(w, 503, "character ESI unavailable")
-		return
-	}
-
-	var req struct {
-		Scope          string                                 `json:"scope"`
-		CharacterID    int64                                  `json:"character_id"`
-		LocationIDs    []int64                                `json:"location_ids"`
-		DefaultBPCRuns int64                                  `json:"default_bpc_runs"`
-		Materials      []engine.IndustryCoverageMaterialNeed  `json:"materials"`
-		Blueprints     []engine.IndustryCoverageBlueprintNeed `json:"blueprints"`
-	}
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			writeError(w, 400, "invalid json")
-			return
-		}
-	}
-	if len(req.Materials) == 0 && len(req.Blueprints) == 0 {
-		writeError(w, 400, "materials or blueprints are required")
-		return
-	}
-	if len(req.Materials) > 2000 || len(req.Blueprints) > 500 {
-		writeError(w, 400, "coverage request is too large")
-		return
-	}
-
-	scope := strings.ToLower(strings.TrimSpace(req.Scope))
-	if scope == "" {
-		scope = "single"
-	}
-	if scope != "single" && scope != "all" {
-		writeError(w, 400, "scope must be single or all")
-		return
-	}
-	allScope := scope == "all"
-	if allScope && req.CharacterID > 0 {
-		writeError(w, 400, "character_id and scope=all cannot be combined")
-		return
-	}
-	defaultBPCRuns := req.DefaultBPCRuns
-	if defaultBPCRuns <= 0 {
-		defaultBPCRuns = 1
-	}
-	if defaultBPCRuns > 1000 {
-		defaultBPCRuns = 1000
-	}
-
-	selectedSessions, err := s.authSessionsForScope(userID, req.CharacterID, allScope, true)
-	if err != nil {
-		if strings.Contains(err.Error(), "not logged in") {
-			writeError(w, 401, err.Error())
-		} else {
-			writeError(w, 400, err.Error())
-		}
-		return
-	}
-
-	s.mu.RLock()
-	sdeData := s.sdeData
-	s.mu.RUnlock()
-	if sdeData != nil {
-		for i := range req.Materials {
-			if req.Materials[i].TypeName == "" {
-				if t, ok := sdeData.Types[req.Materials[i].TypeID]; ok {
-					req.Materials[i].TypeName = strings.TrimSpace(t.Name)
-				}
-			}
-		}
-		for i := range req.Blueprints {
-			if req.Blueprints[i].BlueprintName == "" {
-				if t, ok := sdeData.Types[req.Blueprints[i].BlueprintTypeID]; ok {
-					req.Blueprints[i].BlueprintName = strings.TrimSpace(t.Name)
-				}
-			}
-		}
-	}
-
-	neededMaterials := make(map[int32]struct{}, len(req.Materials))
-	for _, need := range req.Materials {
-		if need.TypeID > 0 && need.RequiredQty > 0 {
-			neededMaterials[need.TypeID] = struct{}{}
-		}
-	}
-	neededBlueprints := make(map[int32]struct{}, len(req.Blueprints))
-	for _, need := range req.Blueprints {
-		if need.BlueprintTypeID > 0 {
-			neededBlueprints[need.BlueprintTypeID] = struct{}{}
-		}
-	}
-	locationFilter := make(map[int64]struct{}, len(req.LocationIDs))
-	for _, locationID := range req.LocationIDs {
-		if locationID > 0 {
-			locationFilter[locationID] = struct{}{}
-		}
-	}
-	locationAllowed := func(locationID int64) bool {
-		if len(locationFilter) == 0 {
-			return true
-		}
-		_, ok := locationFilter[locationID]
-		return ok
-	}
-
-	assetsByType := make(map[int32]int64, len(neededMaterials))
-	blueprintStock := make([]engine.IndustryCoverageBlueprintStock, 0, len(neededBlueprints))
-	extraWarnings := make([]string, 0, 4)
-	appendWarningOnce := func(msg string) {
-		msg = strings.TrimSpace(msg)
-		if msg == "" {
-			return
-		}
-		for _, existing := range extraWarnings {
-			if existing == msg {
-				return
-			}
-		}
-		extraWarnings = append(extraWarnings, msg)
-	}
-
-	charactersUsed := 0
-	assetsScanned := 0
-	blueprintRowsScanned := 0
-	blueprintsEndpointCharacters := 0
-	assetsFallbackCharacters := 0
-
-	for _, sess := range selectedSessions {
-		token, tokenErr := s.sessions.EnsureValidTokenForUserCharacter(s.sso, userID, sess.CharacterID)
-		if tokenErr != nil {
-			log.Printf("[AUTH] Industry coverage token error (%s): %v", sess.CharacterName, tokenErr)
-			if !allScope {
-				writeError(w, 401, tokenErr.Error())
-				return
-			}
-			continue
-		}
-
-		gotAny := false
-		assets, assetErr := s.esi.GetCharacterAssets(sess.CharacterID, token)
-		assetByItemID := map[int64]esi.CharacterAsset{}
-		if assetErr == nil {
-			gotAny = true
-			assetsScanned += len(assets)
-			assetByItemID = make(map[int64]esi.CharacterAsset, len(assets))
-			for _, asset := range assets {
-				if asset.ItemID > 0 {
-					assetByItemID[asset.ItemID] = asset
-				}
-			}
-			for _, asset := range assets {
-				if asset.TypeID <= 0 {
-					continue
-				}
-				if _, needed := neededMaterials[asset.TypeID]; !needed {
-					continue
-				}
-				if asset.IsBlueprintCopy || asset.Quantity <= -2 {
-					continue
-				}
-				rootLocationID := resolveAssetRootLocationID(asset.LocationID, assetByItemID)
-				if !locationAllowed(rootLocationID) {
-					continue
-				}
-				qty := asset.Quantity
-				if qty <= 0 {
-					if asset.IsSingleton {
-						qty = 1
-					} else {
-						continue
-					}
-				}
-				assetsByType[asset.TypeID] += qty
-			}
-		} else {
-			log.Printf("[AUTH] Industry coverage assets error (%s): %v", sess.CharacterName, assetErr)
-			if len(neededMaterials) > 0 && !allScope {
-				writeError(w, 500, "failed to fetch character assets: "+assetErr.Error())
-				return
-			}
-			appendWarningOnce("assets unavailable for some characters; material coverage may be incomplete")
-		}
-
-		if len(neededBlueprints) > 0 {
-			charBlueprints, bpErr := s.esi.GetCharacterBlueprints(sess.CharacterID, token)
-			if bpErr == nil {
-				gotAny = true
-				blueprintsEndpointCharacters++
-				blueprintRowsScanned += len(charBlueprints)
-				for _, bp := range charBlueprints {
-					if bp.TypeID <= 0 {
-						continue
-					}
-					if _, needed := neededBlueprints[bp.TypeID]; !needed {
-						continue
-					}
-					rootLocationID := resolveAssetRootLocationID(bp.LocationID, assetByItemID)
-					if !locationAllowed(rootLocationID) {
-						continue
-					}
-					qty := bp.Quantity
-					if qty <= 0 {
-						qty = 1
-					}
-					isBPO := bp.Runs < 0
-					availableRuns := int64(0)
-					if !isBPO {
-						runsPerCopy := bp.Runs
-						if runsPerCopy <= 0 {
-							runsPerCopy = defaultBPCRuns
-						}
-						availableRuns = runsPerCopy * qty
-					}
-					blueprintStock = append(blueprintStock, engine.IndustryCoverageBlueprintStock{
-						BlueprintTypeID: bp.TypeID,
-						BlueprintName:   industryCoverageTypeName(sdeData, bp.TypeID),
-						Quantity:        qty,
-						IsBPO:           isBPO,
-						AvailableRuns:   availableRuns,
-						ME:              bp.MaterialEfficiency,
-						TE:              bp.TimeEfficiency,
-					})
-				}
-			} else {
-				log.Printf("[AUTH] Industry coverage blueprints error (%s): %v", sess.CharacterName, bpErr)
-				if assetErr != nil {
-					if !allScope {
-						writeError(w, 500, "failed to fetch blueprints/assets: "+bpErr.Error())
-						return
-					}
-					appendWarningOnce("blueprints unavailable for some characters")
-					if gotAny {
-						charactersUsed++
-					}
-					continue
-				}
-				gotAny = true
-				assetsFallbackCharacters++
-				appendWarningOnce("blueprints endpoint unavailable for some characters; assets fallback used (ME/TE/runs are estimated)")
-				for _, asset := range assets {
-					if asset.TypeID <= 0 {
-						continue
-					}
-					if _, needed := neededBlueprints[asset.TypeID]; !needed {
-						continue
-					}
-					rootLocationID := resolveAssetRootLocationID(asset.LocationID, assetByItemID)
-					if !locationAllowed(rootLocationID) {
-						continue
-					}
-					isBPO := true
-					if asset.IsBlueprintCopy || asset.Quantity <= -2 {
-						isBPO = false
-					}
-					qty := asset.Quantity
-					if qty <= 0 {
-						qty = 1
-					}
-					availableRuns := int64(0)
-					if !isBPO {
-						availableRuns = qty * defaultBPCRuns
-					}
-					blueprintStock = append(blueprintStock, engine.IndustryCoverageBlueprintStock{
-						BlueprintTypeID: asset.TypeID,
-						BlueprintName:   industryCoverageTypeName(sdeData, asset.TypeID),
-						Quantity:        qty,
-						IsBPO:           isBPO,
-						AvailableRuns:   availableRuns,
-					})
-				}
-			}
-		}
-
-		if gotAny {
-			charactersUsed++
-		}
-	}
-
-	if len(selectedSessions) > 0 && charactersUsed == 0 {
-		if allScope {
-			writeError(w, 500, "failed to fetch assets/blueprints for selected characters")
-		} else {
-			writeError(w, 500, "failed to fetch assets/blueprints")
-		}
-		return
-	}
-
-	coverage := engine.ComputeIndustryCoverage(req.Materials, req.Blueprints, assetsByType, blueprintStock)
-	for _, msg := range extraWarnings {
-		coverage.Warnings = append(coverage.Warnings, msg)
-	}
-
-	writeJSON(w, map[string]interface{}{
-		"ok":       true,
-		"coverage": coverage,
-		"summary": map[string]interface{}{
-			"scope":                          scope,
-			"characters":                     len(selectedSessions),
-			"characters_used":                charactersUsed,
-			"assets_scanned":                 assetsScanned,
-			"blueprint_rows_scanned":         blueprintRowsScanned,
-			"blueprints_endpoint_characters": blueprintsEndpointCharacters,
-			"assets_fallback_characters":     assetsFallbackCharacters,
-			"default_bpc_runs":               defaultBPCRuns,
-			"location_filter_count":          len(locationFilter),
-			"warnings":                       coverage.Warnings,
-		},
-	})
-}
-
-func industryCoverageTypeName(sdeData *sde.Data, typeID int32) string {
-	if sdeData == nil || typeID <= 0 {
-		return ""
-	}
-	if t, ok := sdeData.Types[typeID]; ok {
-		return strings.TrimSpace(t.Name)
-	}
-	return ""
 }
 
 func (s *Server) handleAuthSyncIndustryProjectBlueprintPool(w http.ResponseWriter, r *http.Request) {
@@ -9940,7 +9481,6 @@ func (s *Server) handleAuthPortfolio(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var txns []esi.WalletTransaction
-	successfulFetches := 0
 	for _, sess := range selectedSessions {
 		part, fetchErr := fetchTxns(sess)
 		if fetchErr != nil {
@@ -9951,10 +9491,9 @@ func (s *Server) handleAuthPortfolio(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		successfulFetches++
 		txns = append(txns, part...)
 	}
-	if successfulFetches == 0 && len(selectedSessions) > 0 {
+	if len(txns) == 0 && len(selectedSessions) > 0 {
 		if allScope {
 			writeError(w, 500, "failed to fetch transactions for selected characters")
 		} else {
@@ -10028,11 +9567,6 @@ func (s *Server) handleAuthPortfolioOptimize(w http.ResponseWriter, r *http.Requ
 	}
 
 	var txns []esi.WalletTransaction
-	var orders []esi.CharacterOrder
-	var assets []esi.CharacterAsset
-	var walletISK float64
-	var warnings []string
-	assetSnapshotComplete := len(selectedSessions) > 0
 	for _, sess := range selectedSessions {
 		part, fetchErr := fetchTxns(sess)
 		if fetchErr != nil {
@@ -10044,33 +9578,6 @@ func (s *Server) handleAuthPortfolioOptimize(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		txns = append(txns, part...)
-
-		token, tokenErr := s.sessions.EnsureValidTokenForUserCharacter(s.sso, userID, sess.CharacterID)
-		if tokenErr != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: auth token unavailable for wallet/orders", sess.CharacterName))
-			log.Printf("[AUTH] Optimizer token error (%s): %v", sess.CharacterName, tokenErr)
-			assetSnapshotComplete = false
-			continue
-		}
-		if balance, balanceErr := s.esi.GetWalletBalance(sess.CharacterID, token); balanceErr == nil {
-			walletISK += balance
-		} else {
-			warnings = append(warnings, fmt.Sprintf("%s: wallet balance unavailable", sess.CharacterName))
-			log.Printf("[AUTH] Optimizer wallet error (%s): %v", sess.CharacterName, balanceErr)
-		}
-		if charOrders, ordersErr := s.esi.GetCharacterOrders(sess.CharacterID, token); ordersErr == nil {
-			orders = append(orders, charOrders...)
-		} else {
-			warnings = append(warnings, fmt.Sprintf("%s: active orders unavailable", sess.CharacterName))
-			log.Printf("[AUTH] Optimizer orders error (%s): %v", sess.CharacterName, ordersErr)
-		}
-		if charAssets, assetsErr := s.esi.GetCharacterAssets(sess.CharacterID, token); assetsErr == nil {
-			assets = append(assets, charAssets...)
-		} else {
-			assetSnapshotComplete = false
-			warnings = append(warnings, fmt.Sprintf("%s: assets unavailable", sess.CharacterName))
-			log.Printf("[AUTH] Optimizer assets error (%s): %v", sess.CharacterName, assetsErr)
-		}
 	}
 	if len(txns) == 0 && len(selectedSessions) > 0 {
 		if allScope {
@@ -10081,26 +9588,18 @@ func (s *Server) handleAuthPortfolioOptimize(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.mu.RLock()
-	sdeData := s.sdeData
-	s.mu.RUnlock()
-	if sdeData != nil {
-		for i := range orders {
-			if t, ok := sdeData.Types[orders[i].TypeID]; ok {
-				orders[i].TypeName = t.Name
-			}
-			orders[i].LocationName = s.esi.StationName(orders[i].LocationID)
-		}
-	}
-	if !assetSnapshotComplete {
-		assets = nil
+	result, diag := engine.ComputePortfolioOptimization(txns, days)
+	if result == nil {
+		// Return diagnostic info as JSON so the frontend can show details.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":      "not enough trading data for optimization",
+			"diagnostic": diag,
+		})
+		return
 	}
 
-	result := engine.ComputePortfolioOptimizationWithRuntime(txns, orders, assets, walletISK, days, assetSnapshotComplete)
-	if len(warnings) > 0 {
-		result.Warnings = append(result.Warnings, warnings...)
-		result.Capital.Warnings = append(result.Capital.Warnings, warnings...)
-	}
 	writeJSON(w, result)
 }
 
@@ -10138,24 +9637,20 @@ func clampFloat64(value, minValue, maxValue float64) float64 {
 
 func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TypeID              int32   `json:"type_id"`
-		Runs                int32   `json:"runs"`
-		ActivityMode        string  `json:"activity_mode"`
-		MaterialEfficiency  int32   `json:"me"`
-		TimeEfficiency      int32   `json:"te"`
-		SystemName          string  `json:"system_name"`
-		StationID           int64   `json:"station_id"` // Optional: specific station/structure for price lookup
-		FacilityTax         float64 `json:"facility_tax"`
-		StructureBonus      float64 `json:"structure_bonus"`
-		BrokerFee           float64 `json:"broker_fee"`
-		SalesTaxPercent     float64 `json:"sales_tax_percent"`
-		MaxDepth            int     `json:"max_depth"`
-		OwnBlueprint        *bool   `json:"own_blueprint"` // nil → true (default)
-		BlueprintCost       float64 `json:"blueprint_cost"`
-		BlueprintIsBPO      bool    `json:"blueprint_is_bpo"`
-		InventionChance     float64 `json:"invention_chance"`
-		DecryptorCost       float64 `json:"decryptor_cost"`
-		InventionOutputRuns int32   `json:"invention_output_runs"`
+		TypeID             int32   `json:"type_id"`
+		Runs               int32   `json:"runs"`
+		MaterialEfficiency int32   `json:"me"`
+		TimeEfficiency     int32   `json:"te"`
+		SystemName         string  `json:"system_name"`
+		StationID          int64   `json:"station_id"` // Optional: specific station/structure for price lookup
+		FacilityTax        float64 `json:"facility_tax"`
+		StructureBonus     float64 `json:"structure_bonus"`
+		BrokerFee          float64 `json:"broker_fee"`
+		SalesTaxPercent    float64 `json:"sales_tax_percent"`
+		MaxDepth           int     `json:"max_depth"`
+		OwnBlueprint       *bool   `json:"own_blueprint"` // nil → true (default)
+		BlueprintCost      float64 `json:"blueprint_cost"`
+		BlueprintIsBPO     bool    `json:"blueprint_is_bpo"`
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, industryAnalyzeMaxBodyBytes)
@@ -10193,18 +9688,6 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 	if req.BlueprintCost < 0 {
 		req.BlueprintCost = 0
 	}
-	req.ActivityMode = strings.TrimSpace(strings.ToLower(req.ActivityMode))
-	switch req.ActivityMode {
-	case "", "auto", "manufacturing", "reaction", "invention":
-	default:
-		writeError(w, 400, "invalid activity_mode")
-		return
-	}
-	req.InventionChance = clampFloat64(req.InventionChance, 0, 100)
-	if req.DecryptorCost < 0 {
-		req.DecryptorCost = 0
-	}
-	req.InventionOutputRuns = clampInt32(req.InventionOutputRuns, 0, 100000)
 	req.SystemName = strings.TrimSpace(req.SystemName)
 
 	// Resolve system ID
@@ -10216,24 +9699,20 @@ func (s *Server) handleIndustryAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := engine.IndustryParams{
-		TypeID:              req.TypeID,
-		Runs:                req.Runs,
-		ActivityMode:        req.ActivityMode,
-		MaterialEfficiency:  req.MaterialEfficiency,
-		TimeEfficiency:      req.TimeEfficiency,
-		SystemID:            systemID,
-		StationID:           req.StationID,
-		FacilityTax:         req.FacilityTax,
-		StructureBonus:      req.StructureBonus,
-		BrokerFee:           req.BrokerFee,
-		SalesTaxPercent:     req.SalesTaxPercent,
-		MaxDepth:            req.MaxDepth,
-		OwnBlueprint:        req.OwnBlueprint == nil || *req.OwnBlueprint,
-		BlueprintCost:       req.BlueprintCost,
-		BlueprintIsBPO:      req.BlueprintIsBPO,
-		InventionChance:     req.InventionChance,
-		DecryptorCost:       req.DecryptorCost,
-		InventionOutputRuns: req.InventionOutputRuns,
+		TypeID:             req.TypeID,
+		Runs:               req.Runs,
+		MaterialEfficiency: req.MaterialEfficiency,
+		TimeEfficiency:     req.TimeEfficiency,
+		SystemID:           systemID,
+		StationID:          req.StationID,
+		FacilityTax:        req.FacilityTax,
+		StructureBonus:     req.StructureBonus,
+		BrokerFee:          req.BrokerFee,
+		SalesTaxPercent:    req.SalesTaxPercent,
+		MaxDepth:           req.MaxDepth,
+		OwnBlueprint:       req.OwnBlueprint == nil || *req.OwnBlueprint,
+		BlueprintCost:      req.BlueprintCost,
+		BlueprintIsBPO:     req.BlueprintIsBPO,
 	}
 
 	// Use NDJSON streaming for progress
