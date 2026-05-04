@@ -94,16 +94,15 @@ func BatchOptimize(results []FlipResult, cargoM3 float64, budget float64, sde *s
 		allocatedProfit := r.RealProfit * float64(allocated) / float64(r.UnitsToBuy)
 
 		items = append(items, BatchItem{
-			TypeID:         r.TypeID,
-			TypeName:       r.TypeName,
-			AllocatedUnits: allocated,
-			AllocatedM3:    allocatedM3,
-			AllocatedISK:   allocatedISK,
-			ProfitPerUnit:  r.RealProfit / float64(r.UnitsToBuy),
-			TotalProfit:    allocatedProfit,
-			BuyStation:     r.BuyStation,
-			SellStation:    r.SellStation,
-			TotalJumps:     r.TotalJumps,
+			TypeID:    r.TypeID,
+			TypeName:  r.TypeName,
+			Units:     allocated,
+			BuyPrice:  r.BuyPrice,
+			SellPrice: r.SellPrice,
+			Profit:    allocatedProfit,
+			VolumeM3:  cand.volumeM3,
+			TotalM3:   allocatedM3,
+			TotalISK:  allocatedISK,
 		})
 
 		usedM3 += allocatedM3
