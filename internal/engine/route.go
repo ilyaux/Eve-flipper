@@ -29,9 +29,6 @@ type orderIndex struct {
 	cheapestSell map[int32]map[int32]orderEntry
 	// highestBuy[systemID][typeID] = best buy orders sorted by price desc
 	highestBuy map[int32]map[int32][]orderEntry
-	// Full books by concrete system/type/location for slippage-aware route hops.
-	sellOrdersByLocation map[routeBookKey][]esi.MarketOrder
-	buyOrdersByLocation  map[routeBookKey][]esi.MarketOrder
 }
 
 type orderEntry struct {
@@ -39,12 +36,6 @@ type orderEntry struct {
 	VolumeRemain int32
 	MinVolume    int32
 	LocationID   int64
-}
-
-type routeBookKey struct {
-	systemID   int32
-	typeID     int32
-	locationID int64
 }
 
 type regionDistance struct {
@@ -126,10 +117,8 @@ func buildOrderIndex(sellOrders, buyOrders []esi.MarketOrder) *orderIndex {
 // buildOrderIndexWithFilters builds per-system order maps and applies route-level order filters.
 func buildOrderIndexWithFilters(sellOrders, buyOrders []esi.MarketOrder, includeStructures bool) *orderIndex {
 	idx := &orderIndex{
-		cheapestSell:         make(map[int32]map[int32]orderEntry),
-		highestBuy:           make(map[int32]map[int32][]orderEntry),
-		sellOrdersByLocation: make(map[routeBookKey][]esi.MarketOrder),
-		buyOrdersByLocation:  make(map[routeBookKey][]esi.MarketOrder),
+		cheapestSell: make(map[int32]map[int32]orderEntry),
+		highestBuy:   make(map[int32]map[int32][]orderEntry),
 	}
 
 	for _, o := range sellOrders {
@@ -139,9 +128,6 @@ func buildOrderIndexWithFilters(sellOrders, buyOrders []esi.MarketOrder, include
 		if !includeStructures && isPlayerStructureLocationID(o.LocationID) {
 			continue
 		}
-		o.IsBuyOrder = false
-		key := routeBookKey{systemID: o.SystemID, typeID: o.TypeID, locationID: o.LocationID}
-		idx.sellOrdersByLocation[key] = append(idx.sellOrdersByLocation[key], o)
 		byType, ok := idx.cheapestSell[o.SystemID]
 		if !ok {
 			byType = make(map[int32]orderEntry)
@@ -164,9 +150,6 @@ func buildOrderIndexWithFilters(sellOrders, buyOrders []esi.MarketOrder, include
 		if !includeStructures && isPlayerStructureLocationID(o.LocationID) {
 			continue
 		}
-		o.IsBuyOrder = true
-		key := routeBookKey{systemID: o.SystemID, typeID: o.TypeID, locationID: o.LocationID}
-		idx.buyOrdersByLocation[key] = append(idx.buyOrdersByLocation[key], o)
 		byType, ok := idx.highestBuy[o.SystemID]
 		if !ok {
 			byType = make(map[int32][]orderEntry)
@@ -298,25 +281,16 @@ func (s *Scanner) findBestTradesFromSources(
 				continue
 			}
 
-			routeCargoCapacity := params.EffectiveRouteCargoCapacity()
-			units := int32(math.MaxInt32)
-			if routeCargoCapacity > 0 {
-				unitsF := math.Floor(routeCargoCapacity / itemType.Volume)
-				if unitsF > math.MaxInt32 {
-					unitsF = math.MaxInt32
-				}
-				units = int32(unitsF)
-				if units <= 0 {
-					continue
-				}
+			unitsF := math.Floor(params.CargoCapacity / itemType.Volume)
+			if unitsF > math.MaxInt32 {
+				unitsF = math.MaxInt32
 			}
-			askBook := idx.sellOrdersByLocation[routeBookKey{
-				systemID:   source.systemID,
-				typeID:     typeID,
-				locationID: sell.LocationID,
-			}]
-			if len(askBook) == 0 {
+			units := int32(unitsF)
+			if units <= 0 {
 				continue
+			}
+			if sell.VolumeRemain < units {
+				units = sell.VolumeRemain
 			}
 
 			// Find executable buy orders for this type across all destination systems.
@@ -332,47 +306,31 @@ func (s *Scanner) findBestTradesFromSources(
 					continue
 				}
 
-				seenDestLocations := make(map[int64]bool, len(buyEntries))
 				for _, buy := range buyEntries {
-					if seenDestLocations[buy.LocationID] {
+					effectiveBuy := sell.Price * buyCostMult
+					effectiveSell := buy.Price * sellRevenueMult
+					profitPerUnit := effectiveSell - effectiveBuy
+					if profitPerUnit <= 0 {
 						continue
 					}
-					seenDestLocations[buy.LocationID] = true
-
-					bidBook := idx.buyOrdersByLocation[routeBookKey{
-						systemID:   buySystemID,
-						typeID:     typeID,
-						locationID: buy.LocationID,
-					}]
-					if len(bidBook) == 0 {
-						continue
-					}
-
-					safeQty, planBuy, planSell, expectedProfit := findSafeExecutionQuantity(
-						askBook,
-						bidBook,
-						units,
-						buyCostMult,
-						sellRevenueMult,
-					)
-					if safeQty <= 0 || expectedProfit <= 0 {
-						continue
-					}
-					// ESI buy orders may require a minimum fill size.
-					if buy.MinVolume > 0 && safeQty < buy.MinVolume {
-						continue
-					}
-
-					effectiveBuy := planBuy.ExpectedPrice * buyCostMult
-					if effectiveBuy <= 0 {
-						continue
-					}
-					profitPerUnit := expectedProfit / float64(safeQty)
 					margin := profitPerUnit / effectiveBuy * 100
 					if margin < params.MinMargin {
 						continue
 					}
 
+					actualUnits := units
+					if buy.VolumeRemain < actualUnits {
+						actualUnits = buy.VolumeRemain
+					}
+					if actualUnits <= 0 {
+						continue
+					}
+					// ESI buy orders may require a minimum fill size.
+					if buy.MinVolume > 0 && actualUnits < buy.MinVolume {
+						continue
+					}
+
+					profit := profitPerUnit * float64(actualUnits)
 					tradeJumps := s.jumpsBetweenWithSecurity(source.systemID, buySystemID, params.MinRouteSecurity)
 					if tradeJumps <= 0 || tradeJumps > MaxTradeJumps {
 						continue
@@ -381,7 +339,7 @@ func (s *Scanner) findBestTradesFromSources(
 					if totalHopJumps <= 0 {
 						continue
 					}
-					if params.MinISKPerJump > 0 && (expectedProfit/float64(totalHopJumps)) < params.MinISKPerJump {
+					if params.MinISKPerJump > 0 && (profit/float64(totalHopJumps)) < params.MinISKPerJump {
 						continue
 					}
 
@@ -401,21 +359,20 @@ func (s *Scanner) findBestTradesFromSources(
 							DestLocationID: buy.LocationID,
 							TypeName:       itemType.Name,
 							TypeID:         typeID,
-							BuyPrice:       sanitizeFloat(planBuy.ExpectedPrice),
-							SellPrice:      sanitizeFloat(planSell.ExpectedPrice),
-							Units:          safeQty,
-							Profit:         sanitizeFloat(expectedProfit),
+							BuyPrice:       sell.Price,
+							SellPrice:      buy.Price,
+							Units:          actualUnits,
+							Profit:         profit,
 							Jumps:          tradeJumps,
-							VolumeM3:       sanitizeFloat(itemType.Volume),
 						},
-						score: routeSearchScore(expectedProfit, totalHopJumps, params.RouteMode),
+						score: profit,
 					})
 				}
 			}
 		}
 	}
 
-	// Sort by route-mode search score, tie-break by ISK/jump.
+	// Sort by total profit, tie-break by ISK/jump.
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].score == candidates[j].score {
 			leftJumps := candidates[i].hop.Jumps + candidates[i].hop.EmptyJumps
@@ -571,10 +528,9 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 	progress("Building order index...")
 	idx := buildOrderIndexWithFilters(sellOrders, buyOrders, params.IncludeStructures)
 	log.Printf(
-		"[Route] Search params: start=%s target=%s mode=%s hops=%d-%d minMargin=%.2f minISK/jump=%.2f allowEmpty=%t",
+		"[Route] Search params: start=%s target=%s hops=%d-%d minMargin=%.2f minISK/jump=%.2f allowEmpty=%t",
 		startName,
 		targetSystemName,
-		NormalizeRouteMode(params.RouteMode),
 		params.MinHops,
 		params.MaxHops,
 		params.MinMargin,
@@ -663,12 +619,10 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 			}
 		}
 		sort.Slice(raw, func(i, j int) bool {
-			leftJumps := max(1, raw[i].hop.Jumps+raw[i].hop.EmptyJumps)
-			rightJumps := max(1, raw[j].hop.Jumps+raw[j].hop.EmptyJumps)
-			leftScore := routeSearchScore(raw[i].hop.Profit, leftJumps, params.RouteMode)
-			rightScore := routeSearchScore(raw[j].hop.Profit, rightJumps, params.RouteMode)
-			if !floatNearlyEqual(leftScore, rightScore) {
-				return leftScore > rightScore
+			if raw[i].hop.Profit == raw[j].hop.Profit {
+				leftJumps := max(1, raw[i].hop.Jumps+raw[i].hop.EmptyJumps)
+				rightJumps := max(1, raw[j].hop.Jumps+raw[j].hop.EmptyJumps)
+				return (raw[i].hop.Profit / float64(leftJumps)) > (raw[j].hop.Profit / float64(rightJumps))
 			}
 			return raw[i].hop.Profit > raw[j].hop.Profit
 		})
@@ -784,11 +738,6 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 
 		// Prune to beamWidth
 		sort.Slice(nextBeam, func(i, j int) bool {
-			leftScore := routeSearchScore(nextBeam[i].totalProfit, nextBeam[i].totalJumps, params.RouteMode)
-			rightScore := routeSearchScore(nextBeam[j].totalProfit, nextBeam[j].totalJumps, params.RouteMode)
-			if !floatNearlyEqual(leftScore, rightScore) {
-				return leftScore > rightScore
-			}
 			return nextBeam[i].totalProfit > nextBeam[j].totalProfit
 		})
 		if len(nextBeam) > beamWidth {
@@ -830,10 +779,6 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 		completedRoutes = completedRoutes[:MaxUnlimitedResults]
 	}
 
-	s.enrichRoutesWithLiquidity(completedRoutes, progress)
-	EnrichRouteExecutionEstimatesWithProfile(completedRoutes, RouteExecutionProfileFromParams(params))
-	SortRouteResultsByMode(completedRoutes, params.RouteMode)
-
 	// Prefetch station names for all hops (buy and sell stations)
 	if len(completedRoutes) > 0 {
 		progress("Fetching station names...")
@@ -857,6 +802,18 @@ func (s *Scanner) FindRoutes(params RouteParams, progress func(string)) ([]Route
 		}
 	}
 
+	// Enrich routes with danger levels and cargo metrics
+	for i := range completedRoutes {
+		route := &completedRoutes[i]
+		route.MaxDangerLevel = maxDangerFromHops(route.Hops)
+		route.HotZoneWarning = route.MaxDangerLevel == "red"
+		route.CargoM3 = totalCargoM3FromHops(route.Hops, s.SDE)
+		if route.CargoM3 > 0 {
+			dangerFactor := dangerMultiplier(route.MaxDangerLevel)
+			route.CargoRiskRatio = route.TotalProfit / (route.CargoM3 * dangerFactor)
+		}
+	}
+
 	progress(fmt.Sprintf("Found %d routes", len(completedRoutes)))
 	log.Printf("[Route] Found %d routes, explored %d candidates", len(completedRoutes), explored)
 	return completedRoutes, nil
@@ -875,6 +832,43 @@ func routeVisitsSystem(hops []RouteHop, systemID int32) bool {
 		}
 	}
 	return false
+}
+
+// maxDangerFromHops returns the worst danger level across all hops.
+func maxDangerFromHops(hops []RouteHop) string {
+	dangerOrder := map[string]int{"red": 3, "yellow": 2, "green": 1, "": 0}
+	maxDanger := ""
+	maxPriority := 0
+	for _, h := range hops {
+		if dangerOrder[h.DangerLevel] > maxPriority {
+			maxDanger = h.DangerLevel
+			maxPriority = dangerOrder[h.DangerLevel]
+		}
+	}
+	return maxDanger
+}
+
+// dangerMultiplier returns a profit risk factor based on danger level.
+func dangerMultiplier(level string) float64 {
+	switch level {
+	case "red":
+		return 4.0
+	case "yellow":
+		return 2.0
+	default:
+		return 1.0
+	}
+}
+
+// totalCargoM3FromHops sums cargo volume across all hops in a route.
+func totalCargoM3FromHops(hops []RouteHop, sde *sde.Data) float64 {
+	total := 0.0
+	for _, h := range hops {
+		if itemType, ok := sde.Types[h.TypeID]; ok {
+			total += itemType.Volume * float64(h.Units)
+		}
+	}
+	return total
 }
 
 // routeKey generates a unique string key for a route based on the sequence of systems and items.
