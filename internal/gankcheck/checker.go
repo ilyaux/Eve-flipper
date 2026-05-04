@@ -394,9 +394,24 @@ func (c *Checker) GetCamperProfile(systemID int32) CamperProfile {
 
 	// Count corporations appearing in recent kills
 	corpCounts := make(map[string]int)
-	for _, k := range kills {
-		for _, corp := range k.Corporations {
-			corpCounts[corp]++
+	for _, km := range kills {
+		attackers, ok := km["attackers"].([]interface{})
+		if !ok {
+			continue
+		}
+		corpSeen := make(map[int32]bool)
+		for _, a := range attackers {
+			atk, ok := a.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if corpID, ok := atk["corporation_id"].(float64); ok {
+				corpIDInt := int32(corpID)
+				if !corpSeen[corpIDInt] {
+					corpSeen[corpIDInt] = true
+					corpCounts[fmt.Sprintf("%d", corpIDInt)]++
+				}
+			}
 		}
 	}
 
