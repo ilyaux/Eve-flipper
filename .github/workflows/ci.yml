@@ -43,38 +43,14 @@ jobs:
       - name: Go unit tests
         run: go test ./...
 
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          install-mode: none
+
       - name: Engine coverage gate (>= 70%)
         run: |
           go test ./internal/engine -coverprofile=engine.cover.out
           COVERAGE="$(go tool cover -func engine.cover.out | awk '/^total:/{gsub(/%/,"",$3); print $3}')"
           echo "internal/engine coverage: ${COVERAGE}%"
           awk -v coverage="${COVERAGE}" 'BEGIN { exit (coverage + 0 >= 70 ? 0 : 1) }'
-
-  golangci-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        run: npm -C frontend ci
-
-      - name: Build frontend assets for Go embed
-        run: npm -C frontend run build
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.12.1
