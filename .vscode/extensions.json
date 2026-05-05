@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "ms-vscode.vscode-typescript-next",
+    "streetsidesoftware.code-spell-checker-cspell-bundled-dictionaries",
+    "yoavbls.pretty-ts-errors",
+    "bradlc.vscode-tailwindcss",
+    "hverlin.mise-vscode"
+  ]
+}
