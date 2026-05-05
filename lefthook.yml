@@ -1,0 +1,23 @@
+pre-commit:
+  parallel: true
+  commands:
+    biome-format (frontend):
+      glob: "frontend/**/*.{js,jsx,ts,tsx,css,json}"
+      run: mise run format:check:frontend
+
+    biome-lint (frontend):
+      glob: "frontend/**/*.{js,jsx,ts,tsx,css,json}"
+      run: mise run lint:frontend
+
+    gofmt (backend):
+      glob: "**/*.go"
+      run: mise run format:check:backend
+
+    go vet & golangci-lint (backend):
+      glob: "**/*.go"
+      run: mise run lint:backend
+
+commit-msg:
+  commands:
+    git-sumi:
+      run: git-sumi --file {1}
