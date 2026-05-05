@@ -62,7 +62,6 @@ frontend/tsconfig.tsbuildinfo
 .claude/
 
 # IDE / editor
-.vscode/
 .idea/
 *.swp
 *.swo
