@@ -8,6 +8,10 @@
     "dev:wails": "vite --mode wails",
     "build": "tsc -b && vite build",
     "build:wails": "tsc -b && vite build --mode wails",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome check --linter-enabled=false --assist-enabled=false .",
+    "check": "biome check .",
     "preview": "vite preview",
     "tauri": "tauri"
   },
