@@ -17,23 +17,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
         with:
-          go-version-file: go.mod
+          install: true
+          cache: true
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Biome
+        uses: biomejs/setup-biome@v2
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          working-dir: frontend
+
+      - name: Frontend format check
+        run: biome check --linter-enabled=false --assist-enabled=false frontend
+
+      - name: Frontend lint
+        run: biome lint frontend
+
+      - name: Install frontend dependencies
+        run: npm -C frontend ci
 
       - name: Frontend build gate
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm -C frontend run build
 
       - name: Go unit tests
         run: go test ./...
@@ -44,3 +49,32 @@ jobs:
           COVERAGE="$(go tool cover -func engine.cover.out | awk '/^total:/{gsub(/%/,"",$3); print $3}')"
           echo "internal/engine coverage: ${COVERAGE}%"
           awk -v coverage="${COVERAGE}" 'BEGIN { exit (coverage + 0 >= 70 ? 0 : 1) }'
+
+  golangci-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm -C frontend ci
+
+      - name: Build frontend assets for Go embed
+        run: npm -C frontend run build
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.1
