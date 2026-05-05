@@ -32,6 +32,7 @@ Thanks for your interest in contributing! This project is maintained by **[@ilya
    mise run check
    mise run test
    ```
+   Run `mise run check` before opening a PR or pushing a larger change set.
 4. Commit with a clear message:
    ```bash
    git commit -m "Add: short description of what changed"

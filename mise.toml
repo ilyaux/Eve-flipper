@@ -2,8 +2,8 @@
 go = "1.25.4"
 golangci-lint = "2.12.1"
 node = "22.22.2"
-lefthook = "latest"
-"github:welpo/git-sumi" = "latest"
+lefthook = "2.1.6"
+"github:welpo/git-sumi" = "0.3.0"
 
 [env]
 APP_NAME = "eve-flipper"
@@ -104,18 +104,25 @@ raw = true
 [tasks.frontend]
 description = "Install frontend dependencies and build the web frontend"
 run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+
 cd frontend
-npm install
-npm run build
+npm ci
+VITE_APP_VERSION="$VERSION" npm run build
 """
 run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+
 Set-Location frontend
 try {
-  npm install
+  npm ci
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $env:VITE_APP_VERSION = $Version
   npm run build
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
+  Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
   Set-Location ..
 }
 """
@@ -123,18 +130,25 @@ try {
 [tasks."frontend-wails"]
 description = "Install frontend dependencies and build the Wails frontend"
 run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+
 cd frontend
-npm install
-npm run build:wails
+npm ci
+VITE_APP_VERSION="$VERSION" npm run build:wails
 """
 run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+
 Set-Location frontend
 try {
-  npm install
+  npm ci
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $env:VITE_APP_VERSION = $Version
   npm run build:wails
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
+  Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
   Set-Location ..
 }
 """
@@ -176,7 +190,7 @@ if (Test-Path .env) {
   }
 }
 
-go build -ldflags $LdFlags -o "$env:BUILD_DIR/$env:APP_NAME" .
+go build -ldflags $LdFlags -o "$env:BUILD_DIR/$env:APP_NAME.exe" .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 """
 
@@ -184,7 +198,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 description = "Build and run the production web/server binary"
 depends = ["build"]
 run = "\"$BUILD_DIR/$APP_NAME\""
-run_windows = "& \"$env:BUILD_DIR/$env:APP_NAME\""
+run_windows = "& \"$env:BUILD_DIR/$env:APP_NAME.exe\""
 
 [tasks.test]
 description = "Run the Go test suite (No tests for frontend yet)"
@@ -199,16 +213,40 @@ LDFLAGS="-s -w -X main.version=$VERSION"
 
 mkdir -p "$BUILD_DIR"
 
+set -a
+if [ -f .env ]; then
+  tr -d '\r' < .env > .env.__tmp
+  . ./.env.__tmp
+  rm -f .env.__tmp
+fi
+set +a
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  export MACOSX_DEPLOYMENT_TARGET=11.0
+  export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-framework UniformTypeIdentifiers"
+fi
+
 go build -tags "wails,production" -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-wails" .
 """
 run_windows = """
 $Version = git describe --tags --always --dirty 2>$null
 if (-not $Version) { $Version = "dev" }
-$LdFlags = "-s -w -X main.version=$Version"
+$LdFlags = "-s -w -H=windowsgui -X main.version=$Version"
 
 New-Item -ItemType Directory -Path $env:BUILD_DIR -Force | Out-Null
 
-go build -tags "wails,production" -ldflags $LdFlags -o "$env:BUILD_DIR/$env:APP_NAME-wails" .
+if (Test-Path .env) {
+  Get-Content .env | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or $line -notmatch "=") { return }
+    $parts = $line.Split("=", 2)
+    if ($parts[0].Trim()) {
+      Set-Item -Path "Env:$($parts[0].Trim())" -Value $parts[1].Trim()
+    }
+  }
+}
+
+go build -tags "wails,production" -ldflags $LdFlags -o "$env:BUILD_DIR/$env:APP_NAME-wails.exe" .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 """
 
@@ -216,7 +254,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 description = "Build and run the Wails desktop binary"
 depends = ["wails"]
 run = "\"$BUILD_DIR/$APP_NAME-wails\""
-run_windows = "& \"$env:BUILD_DIR/$env:APP_NAME-wails\""
+run_windows = "& \"$env:BUILD_DIR/$env:APP_NAME-wails.exe\""
 
 [tasks.cross]
 description = "Cross-compile release binaries for supported targets"
@@ -235,11 +273,11 @@ if [ -f .env ]; then
 fi
 set +a
 
-GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS -H windowsgui" -o "$BUILD_DIR/$APP_NAME-windows-amd64.exe" .
-GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-linux-amd64" .
-GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-linux-arm64" .
-GOOS=darwin  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-darwin-amd64" .
-GOOS=darwin  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-darwin-arm64" .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS -H windowsgui" -o "$BUILD_DIR/$APP_NAME-windows-amd64.exe" .
+CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-linux-amd64" .
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-linux-arm64" .
+CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-darwin-amd64" .
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-darwin-arm64" .
 
 echo "Binaries in $BUILD_DIR/"
 """
@@ -269,23 +307,35 @@ $targets = @(
   @{ GOOS = "darwin"; GOARCH = "arm64"; Out = "$env:BUILD_DIR/$env:APP_NAME-darwin-arm64"; ExtraLdFlags = "" }
 )
 
-foreach ($target in $targets) {
-  $env:GOOS = $target.GOOS
-  $env:GOARCH = $target.GOARCH
-  go build -ldflags ($LdFlags + $target.ExtraLdFlags) -o $target.Out .
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+try {
+  foreach ($target in $targets) {
+    $env:GOOS = $target.GOOS
+    $env:GOARCH = $target.GOARCH
+    $env:CGO_ENABLED = "0"
+    go build -ldflags ($LdFlags + $target.ExtraLdFlags) -o $target.Out .
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
+} finally {
+  Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
+  Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+  Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
 }
-
-Remove-Item Env:GOOS -ErrorAction SilentlyContinue
-Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
 
 Write-Output "Binaries in $env:BUILD_DIR/"
 """
 
 [tasks.clean]
 description = "Remove build artifacts"
-run = "rm -rf \"$BUILD_DIR\""
-run_windows = "if (Test-Path $env:BUILD_DIR) { Remove-Item -Recurse -Force $env:BUILD_DIR }"
+run = """
+rm -rf "$BUILD_DIR"
+rm -rf frontend/src-tauri/binaries
+rm -rf frontend/src-tauri/target
+"""
+run_windows = """
+if (Test-Path $env:BUILD_DIR) { Remove-Item -Recurse -Force $env:BUILD_DIR }
+if (Test-Path "frontend/src-tauri/binaries") { Remove-Item -Recurse -Force "frontend/src-tauri/binaries" }
+if (Test-Path "frontend/src-tauri/target") { Remove-Item -Recurse -Force "frontend/src-tauri/target" }
+"""
 
 [tasks.all]
 description = "Run tests and cross-compile release binaries"

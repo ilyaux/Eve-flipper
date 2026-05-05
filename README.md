@@ -269,8 +269,6 @@ Notes:
 
 - The backend has a standard colocated Go test suite under `internal/**` using `*_test.go` files.
 - The frontend currently has no dedicated test suite. The main frontend quality gates today are build, formatting, and lint checks.
-npm -C frontend run build:wails
-```
 
 ## Documentation and Community
 
