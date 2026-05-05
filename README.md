@@ -150,6 +150,7 @@ cd Eve-flipper
 mise install
 mise run setup
 mise run build
+mise run run
 ```
 
 ## Developer Commands
