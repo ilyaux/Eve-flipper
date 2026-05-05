@@ -142,64 +142,68 @@ http://127.0.0.1:13370
 
 Prerequisites:
 
-- Go `1.25+`
-- Node.js `20+`
-- npm
+- [mise](https://mise.jdx.dev/)
 
 ```bash
 git clone https://github.com/ilyaux/Eve-flipper.git
 cd Eve-flipper
-npm -C frontend ci
-npm -C frontend run build
-go run .
+mise install
+mise run setup
+mise run build
+mise run run
 ```
 
 ## Developer Commands
 
-Backend:
+Help:
 
 ```bash
-go run .
+mise run help
 ```
 
-Frontend dev server:
+Start backend and frontend together:
 
 ```bash
-npm -C frontend ci
-npm -C frontend run dev
+mise run dev
 ```
 
-Production web build:
+Start only the backend:
 
 ```bash
-npm -C frontend run build
-go build -o build/eve-flipper .
+mise run dev:backend
 ```
 
-Wails desktop build:
+Start only the frontend:
 
 ```bash
-npm -C frontend run build:wails
-go build -tags "wails,production" -ldflags "-s -w -X main.version=dev" -o build/eve-flipper-desktop .
+mise run dev:frontend
 ```
 
-PowerShell helpers:
-
-```powershell
-.\make.ps1 build
-.\make.ps1 run
-.\make.ps1 test
-.\make.ps1 wails
-.\make.ps1 wails-run
-```
-
-Unix Make targets:
+Frontend builds:
 
 ```bash
-make build
-make run
-make test
-make wails
+mise run frontend
+mise run frontend-wails
+```
+
+Production builds:
+
+```bash
+mise run build
+mise run run
+mise run wails
+mise run wails-run
+mise run cross
+```
+
+Formatting, linting, and verification:
+
+```bash
+mise run format
+mise run format:check
+mise run vet
+mise run lint
+mise run check
 ```
 
 ## Runtime Configuration
@@ -255,11 +259,16 @@ Useful scopes include market orders, wallet, assets, skills, blueprints, industr
 ## Tests
 
 ```bash
-go test ./...
-go test -tags wails ./...
-npm -C frontend run build
-npm -C frontend run build:wails
+mise run test
+mise run test:wails
+mise run frontend
+mise run frontend-wails
 ```
+
+Notes:
+
+- The backend has a standard colocated Go test suite under `internal/**` using `*_test.go` files.
+- The frontend currently has no dedicated test suite. The main frontend quality gates today are build, formatting, and lint checks.
 
 ## Documentation and Community
 

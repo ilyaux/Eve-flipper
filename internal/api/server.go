@@ -846,6 +846,10 @@ func isAllowedCORSOrigin(origin, requestHost string) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
+	if strings.EqualFold(u.Scheme, "wails") && strings.EqualFold(strings.TrimSpace(u.Host), "wails") {
+		return isLoopbackHost(normalizeHost(requestHost))
+	}
+
 	originHost := normalizeHost(u.Host)
 	reqHost := normalizeHost(requestHost)
 	if originHost == "" || reqHost == "" {

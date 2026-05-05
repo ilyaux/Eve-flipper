@@ -8,6 +8,10 @@
     "dev:wails": "vite --mode wails",
     "build": "tsc -b && vite build",
     "build:wails": "tsc -b && vite build --mode wails",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome check --linter-enabled=false --assist-enabled=false .",
+    "check": "biome check .",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -33,6 +37,7 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.14",
     "@tauri-apps/cli": "^2.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

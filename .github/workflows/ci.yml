@@ -17,26 +17,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
         with:
-          go-version-file: go.mod
+          install: true
+          cache: true
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Biome
+        uses: biomejs/setup-biome@v2
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          working-dir: frontend
+
+      - name: Frontend format check
+        run: biome check --linter-enabled=false --assist-enabled=false frontend
+
+      - name: Frontend lint
+        run: biome lint frontend
+
+      - name: Install frontend dependencies
+        run: npm -C frontend ci
 
       - name: Frontend build gate
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm -C frontend run build
 
       - name: Go unit tests
         run: go test ./...
+
+      - name: Go lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          install-mode: none
 
       - name: Engine coverage gate (>= 70%)
         run: |

@@ -1,0 +1,464 @@
+[tools]
+go = "1.25.4"
+golangci-lint = "2.12.1"
+node = "22.22.2"
+lefthook = "2.1.6"
+"github:welpo/git-sumi" = "0.3.0"
+
+[env]
+APP_NAME = "eve-flipper"
+BUILD_DIR = "build"
+
+[tasks.setup]
+description = "Install frontend dependencies and Git hooks"
+run = ["npm -C frontend ci", "lefthook install"]
+
+[tasks.help]
+description = "Show the main development entrypoints"
+run = "printf 'Use `mise run dev` to start both the Go server and the Vite dev server.\\nUse `mise run dev:backend` to start only the Go server.\\nUse `mise run dev:frontend` to start only the Vite dev server.\\nUse `mise run dev:frontend:wails` to start the Vite dev server in Wails mode.\\n'"
+run_windows = "Write-Output \"Use `mise run dev` to start both the Go server and the Vite dev server.`nUse `mise run dev:backend` to start only the Go server.`nUse `mise run dev:frontend` to start only the Vite dev server.`nUse `mise run dev:frontend:wails` to start the Vite dev server in Wails mode.\""
+
+[tasks.dev]
+description = "Run the backend and frontend development servers"
+run = """
+npm -C frontend run dev &
+frontend_pid=$!
+
+go run . &
+backend_pid=$!
+
+cleanup() {
+  kill "$frontend_pid" "$backend_pid" 2>/dev/null || true
+}
+
+trap cleanup INT TERM EXIT
+
+frontend_status=0
+backend_status=0
+
+while :; do
+  if ! kill -0 "$frontend_pid" 2>/dev/null; then
+    wait "$frontend_pid" || frontend_status=$?
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+    break
+  fi
+
+  if ! kill -0 "$backend_pid" 2>/dev/null; then
+    wait "$backend_pid" || backend_status=$?
+    kill "$frontend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+    break
+  fi
+
+  sleep 1
+done
+
+if [ "$frontend_status" -ne 0 ] || [ "$backend_status" -ne 0 ]; then
+  exit 1
+fi
+"""
+run_windows = """
+$frontend = Start-Process npm -ArgumentList '-C','frontend','run','dev' -NoNewWindow -PassThru
+$backend = Start-Process go -ArgumentList 'run','.' -NoNewWindow -PassThru
+
+try {
+  while ($true) {
+    $frontend.Refresh()
+    $backend.Refresh()
+    if ($frontend.HasExited -or $backend.HasExited) { break }
+    Start-Sleep -Seconds 1
+  }
+
+  if (-not $frontend.HasExited) { Stop-Process -Id $frontend.Id -Force }
+  if (-not $backend.HasExited) { Stop-Process -Id $backend.Id -Force }
+
+  $frontend.WaitForExit()
+  $backend.WaitForExit()
+
+  if ($frontend.ExitCode -ne 0 -or $backend.ExitCode -ne 0) {
+    exit 1
+  }
+} finally {
+  if (-not $frontend.HasExited) { Stop-Process -Id $frontend.Id -Force }
+  if (-not $backend.HasExited) { Stop-Process -Id $backend.Id -Force }
+}
+"""
+raw = true
+
+[tasks."dev:backend"]
+description = "Run the local Go web/server backend"
+run = "go run ."
+raw = true
+
+[tasks."dev:frontend"]
+description = "Run the frontend Vite dev server"
+run = "npm -C frontend run dev"
+raw = true
+
+[tasks."dev:frontend:wails"]
+description = "Run the frontend Vite dev server in Wails mode"
+run = "npm -C frontend run dev:wails"
+raw = true
+
+[tasks.frontend]
+description = "Install frontend dependencies and build the web frontend"
+run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+
+cd frontend
+npm ci
+VITE_APP_VERSION="$VERSION" npm run build
+"""
+run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+
+Set-Location frontend
+try {
+  npm ci
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $env:VITE_APP_VERSION = $Version
+  npm run build
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} finally {
+  Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
+  Set-Location ..
+}
+"""
+
+[tasks."frontend-wails"]
+description = "Install frontend dependencies and build the Wails frontend"
+run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+
+cd frontend
+npm ci
+VITE_APP_VERSION="$VERSION" npm run build:wails
+"""
+run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+
+Set-Location frontend
+try {
+  npm ci
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $env:VITE_APP_VERSION = $Version
+  npm run build:wails
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} finally {
+  Remove-Item Env:VITE_APP_VERSION -ErrorAction SilentlyContinue
+  Set-Location ..
+}
+"""
+
+[tasks.build]
+description = "Build the production web/server binary"
+depends = ["frontend"]
+run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+LDFLAGS="-s -w -X main.version=$VERSION"
+
+mkdir -p "$BUILD_DIR"
+
+set -a
+if [ -f .env ]; then
+  tr -d '\\r' < .env > .env.__tmp
+  . ./.env.__tmp
+  rm -f .env.__tmp
+fi
+set +a
+
+go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME" .
+"""
+run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+$LdFlags = "-s -w -X main.version=$Version"
+
+New-Item -ItemType Directory -Path $env:BUILD_DIR -Force | Out-Null
+
+if (Test-Path .env) {
+  Get-Content .env | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or $line -notmatch "=") { return }
+    $parts = $line.Split("=", 2)
+    if ($parts[0].Trim()) {
+      Set-Item -Path "Env:$($parts[0].Trim())" -Value $parts[1].Trim()
+    }
+  }
+}
+
+go build -ldflags $LdFlags -o "$env:BUILD_DIR/$env:APP_NAME.exe" .
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+"""
+
+[tasks.run]
+description = "Build and run the production web/server binary"
+depends = ["build"]
+run = "\"$BUILD_DIR/$APP_NAME\""
+run_windows = "& \"$env:BUILD_DIR/$env:APP_NAME.exe\""
+
+[tasks.test]
+description = "Run the Go test suite (No tests for frontend yet)"
+run = "go test ./..."
+
+[tasks.wails]
+description = "Build the Wails desktop binary"
+depends = ["frontend-wails"]
+run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+LDFLAGS="-s -w -X main.version=$VERSION"
+
+mkdir -p "$BUILD_DIR"
+
+set -a
+if [ -f .env ]; then
+  tr -d '\r' < .env > .env.__tmp
+  . ./.env.__tmp
+  rm -f .env.__tmp
+fi
+set +a
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  export MACOSX_DEPLOYMENT_TARGET=11.0
+  export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }-framework UniformTypeIdentifiers"
+fi
+
+go build -tags "wails,production" -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-wails" .
+"""
+run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+$LdFlags = "-s -w -H=windowsgui -X main.version=$Version"
+
+New-Item -ItemType Directory -Path $env:BUILD_DIR -Force | Out-Null
+
+if (Test-Path .env) {
+  Get-Content .env | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or $line -notmatch "=") { return }
+    $parts = $line.Split("=", 2)
+    if ($parts[0].Trim()) {
+      Set-Item -Path "Env:$($parts[0].Trim())" -Value $parts[1].Trim()
+    }
+  }
+}
+
+go build -tags "wails,production" -ldflags $LdFlags -o "$env:BUILD_DIR/$env:APP_NAME-wails.exe" .
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+"""
+
+[tasks."wails-run"]
+description = "Build and run the Wails desktop binary"
+depends = ["wails"]
+run = "\"$BUILD_DIR/$APP_NAME-wails\""
+run_windows = "& \"$env:BUILD_DIR/$env:APP_NAME-wails.exe\""
+
+[tasks.cross]
+description = "Cross-compile release binaries for supported targets"
+depends = ["frontend"]
+run = """
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+LDFLAGS="-s -w -X main.version=$VERSION"
+
+mkdir -p "$BUILD_DIR"
+
+set -a
+if [ -f .env ]; then
+  tr -d '\\r' < .env > .env.__tmp
+  . ./.env.__tmp
+  rm -f .env.__tmp
+fi
+set +a
+
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS -H windowsgui" -o "$BUILD_DIR/$APP_NAME-windows-amd64.exe" .
+CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-linux-amd64" .
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-linux-arm64" .
+CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-darwin-amd64" .
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "$BUILD_DIR/$APP_NAME-darwin-arm64" .
+
+echo "Binaries in $BUILD_DIR/"
+"""
+run_windows = """
+$Version = git describe --tags --always --dirty 2>$null
+if (-not $Version) { $Version = "dev" }
+$LdFlags = "-s -w -X main.version=$Version"
+
+New-Item -ItemType Directory -Path $env:BUILD_DIR -Force | Out-Null
+
+if (Test-Path .env) {
+  Get-Content .env | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or $line -notmatch "=") { return }
+    $parts = $line.Split("=", 2)
+    if ($parts[0].Trim()) {
+      Set-Item -Path "Env:$($parts[0].Trim())" -Value $parts[1].Trim()
+    }
+  }
+}
+
+$targets = @(
+  @{ GOOS = "windows"; GOARCH = "amd64"; Out = "$env:BUILD_DIR/$env:APP_NAME-windows-amd64.exe"; ExtraLdFlags = " -H windowsgui" },
+  @{ GOOS = "linux"; GOARCH = "amd64"; Out = "$env:BUILD_DIR/$env:APP_NAME-linux-amd64"; ExtraLdFlags = "" },
+  @{ GOOS = "linux"; GOARCH = "arm64"; Out = "$env:BUILD_DIR/$env:APP_NAME-linux-arm64"; ExtraLdFlags = "" },
+  @{ GOOS = "darwin"; GOARCH = "amd64"; Out = "$env:BUILD_DIR/$env:APP_NAME-darwin-amd64"; ExtraLdFlags = "" },
+  @{ GOOS = "darwin"; GOARCH = "arm64"; Out = "$env:BUILD_DIR/$env:APP_NAME-darwin-arm64"; ExtraLdFlags = "" }
+)
+
+try {
+  foreach ($target in $targets) {
+    $env:GOOS = $target.GOOS
+    $env:GOARCH = $target.GOARCH
+    $env:CGO_ENABLED = "0"
+    go build -ldflags ($LdFlags + $target.ExtraLdFlags) -o $target.Out .
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
+} finally {
+  Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
+  Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+  Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+}
+
+Write-Output "Binaries in $env:BUILD_DIR/"
+"""
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = """
+rm -rf "$BUILD_DIR"
+rm -rf frontend/src-tauri/binaries
+rm -rf frontend/src-tauri/target
+"""
+run_windows = """
+if (Test-Path $env:BUILD_DIR) { Remove-Item -Recurse -Force $env:BUILD_DIR }
+if (Test-Path "frontend/src-tauri/binaries") { Remove-Item -Recurse -Force "frontend/src-tauri/binaries" }
+if (Test-Path "frontend/src-tauri/target") { Remove-Item -Recurse -Force "frontend/src-tauri/target" }
+"""
+
+[tasks.all]
+description = "Run tests and cross-compile release binaries"
+depends = ["test", "cross"]
+
+[tasks."build:frontend"]
+description = "Build the frontend for the web/server runtime"
+depends = ["frontend"]
+
+[tasks."build:frontend:wails"]
+description = "Build the frontend for the Wails runtime"
+depends = ["frontend-wails"]
+
+[tasks."build:wails"]
+description = "Alias for the Wails desktop build"
+depends = ["wails"]
+
+[tasks."test:wails"]
+description = "Run the Go test suite with the Wails tag"
+run = "go test -tags wails ./..."
+
+[tasks.vet]
+description = "Run go vet across the module"
+run = "go vet ./..."
+raw = true
+
+[tasks."lint:frontend"]
+description = "Run frontend lint checks"
+run = "npm -C frontend run lint -- --colors=force"
+raw = true
+
+[tasks."lint:backend"]
+description = "Run backend lint checks"
+run = """
+status=0
+
+go vet ./... || status=1
+golangci-lint run || status=1
+
+exit $status
+"""
+run_windows = """
+$status = 0
+
+go vet ./...
+if ($LASTEXITCODE -ne 0) { $status = 1 }
+
+golangci-lint run
+if ($LASTEXITCODE -ne 0) { $status = 1 }
+
+exit $status
+"""
+raw = true
+
+[tasks.lint]
+description = "Run the current lint checks"
+run = """
+status=0
+
+npm -C frontend run lint -- --colors=force || status=1
+go vet ./... || status=1
+golangci-lint run || status=1
+
+exit $status
+"""
+run_windows = """
+$status = 0
+
+npm -C frontend run lint -- --colors=force
+if ($LASTEXITCODE -ne 0) { $status = 1 }
+
+go vet ./...
+if ($LASTEXITCODE -ne 0) { $status = 1 }
+
+golangci-lint run
+if ($LASTEXITCODE -ne 0) { $status = 1 }
+
+exit $status
+"""
+raw = true
+
+[tasks.format]
+description = "Format frontend files with Biome and Go files with gofmt"
+run = ["npm -C frontend run format -- --colors=force", "gofmt -w ."]
+raw = true
+
+[tasks."format:check:frontend"]
+description = "Check frontend formatting"
+run = "npm -C frontend run format:check -- --colors=force"
+raw = true
+
+[tasks."format:check:backend"]
+description = "Check Go formatting"
+run = "test -z \"$(gofmt -l .)\""
+run_windows = "$unformatted = gofmt -l .; if ($unformatted) { Write-Output $unformatted; exit 1 }"
+raw = true
+
+[tasks."format:check"]
+description = "Check frontend formatting and verify Go formatting"
+run = """
+status=0
+
+npm -C frontend run format:check -- --colors=force || status=1
+test -z "$(gofmt -l .)" || status=1
+
+exit $status
+"""
+run_windows = """
+$status = 0
+
+npm -C frontend run format:check -- --colors=force
+if ($LASTEXITCODE -ne 0) { $status = 1 }
+
+$unformatted = gofmt -l .
+if ($unformatted) {
+  Write-Output $unformatted
+  $status = 1
+}
+
+exit $status
+"""
+raw = true
+
+[tasks.check]
+description = "Run the main local verification suite"
+depends = ["format:check", "lint", "test"]
