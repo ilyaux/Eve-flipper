@@ -10,13 +10,14 @@ Thanks for your interest in contributing! This project is maintained by **[@ilya
    git clone https://github.com/<your-username>/Eve-flipper.git
    cd Eve-flipper
    ```
-3. Start the backend:
+3. Install the project toolchain and frontend dependencies:
    ```bash
-   go run main.go
+   mise install
+   mise run setup
    ```
-4. Start the frontend:
+4. Start the development servers:
    ```bash
-   cd frontend && npm install && npm run dev
+   mise run dev
    ```
 
 ## Development Workflow
@@ -26,9 +27,10 @@ Thanks for your interest in contributing! This project is maintained by **[@ilya
    git checkout -b feature/your-feature
    ```
 2. Make your changes
-3. Run tests:
+3. Run the main checks:
    ```bash
-   make test
+   mise run check
+   mise run test
    ```
 4. Commit with a clear message:
    ```bash
@@ -44,7 +46,8 @@ Thanks for your interest in contributing! This project is maintained by **[@ilya
 - Add godoc comments to all exported types and functions
 - Keep packages focused: `engine/` for business logic, `esi/` for API calls, `db/` for persistence
 - Use constants instead of magic numbers
-- Run `go vet ./...` before committing
+- Run `mise run vet` or `mise run lint` before committing
+- `golangci-lint` is part of the backend linting baseline
 
 ### TypeScript / React (Frontend)
 
@@ -52,6 +55,20 @@ Thanks for your interest in contributing! This project is maintained by **[@ilya
 - Keep API calls in `lib/api.ts`, types in `lib/types.ts`
 - All user-facing strings go through the `i18n` system (English + Russian)
 - Use Tailwind CSS utility classes, follow the EVE-themed color scheme (`eve-*` tokens)
+- Frontend formatting and linting are handled with `biome`
+
+## Tooling Commands
+
+- Use `mise` as the primary task runner
+- `mise run help` shows the main development entrypoints
+- `mise run dev` starts both backend and frontend development servers
+- `mise run build` builds the production web/server binary
+- `mise run wails` builds the Wails desktop binary
+- `mise run test` runs the backend Go test suite
+- `mise run format` applies frontend and Go formatting
+- `mise run format:check` verifies frontend and Go formatting without writing changes
+- `mise run lint` runs frontend linting, `go vet`, and `golangci-lint`
+- `mise run check` runs the main local verification suite
 
 ## Project Structure
 
