@@ -1532,7 +1532,7 @@ function App() {
   return (
     <>
       <div
-        className={`cockpit-density-${effectiveCockpitDensity} h-screen flex flex-col gap-1.5 sm:gap-3 p-1.5 sm:p-4 select-none overflow-hidden transition-[opacity,transform,filter] duration-500 ease-out ${
+        className={`cockpit-density-${effectiveCockpitDensity} h-screen flex flex-col gap-1.5 sm:gap-3 p-1.5 sm:p-4 bg-eve-dark text-eve-text select-none overflow-hidden transition-[opacity,transform,filter] duration-500 ease-out ${
           bootSplashState === "hidden"
             ? "opacity-100 scale-100 blur-0"
             : "opacity-0 scale-[0.995] blur-[1px]"
