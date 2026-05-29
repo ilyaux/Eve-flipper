@@ -2,10 +2,12 @@ package esi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMarketOrder_UnmarshalJSON(t *testing.T) {
@@ -43,6 +45,72 @@ func TestNewClient_NonNil(t *testing.T) {
 	c := NewClient(nil)
 	if c == nil {
 		t.Fatal("NewClient(nil) returned nil")
+	}
+}
+
+func TestClassifyStructureNameFailure(t *testing.T) {
+	tests := []struct {
+		errText string
+		reason  string
+		minTTL  time.Duration
+	}{
+		{`ESI 403: {"error":"Forbidden"}`, "inaccessible structure", 23 * time.Hour},
+		{`ESI 420: {"error":"Rate limit exceeded"}`, "ESI rate limit", 14 * time.Minute},
+		{`ESI 503: unavailable`, "transient ESI failure", time.Minute},
+	}
+	for _, tt := range tests {
+		reason, ttl := classifyStructureNameFailure(errors.New(tt.errText))
+		if reason != tt.reason {
+			t.Fatalf("reason for %q = %q, want %q", tt.errText, reason, tt.reason)
+		}
+		if ttl < tt.minTTL {
+			t.Fatalf("ttl for %q = %s, want >= %s", tt.errText, ttl, tt.minTTL)
+		}
+	}
+}
+
+func TestStructureNameFailureSuppression(t *testing.T) {
+	c := NewClient(nil)
+	const structureID int64 = 100000001
+
+	c.rememberStructureNameFailure(structureID, errors.New(`ESI 403: {"error":"Forbidden"}`))
+	if !c.structureNameLookupBlocked(structureID) {
+		t.Fatal("structure lookup should be blocked after 403")
+	}
+
+	otherID := structureID + 1
+	if c.structureNameLookupBlocked(otherID) {
+		t.Fatal("403 for one structure should not globally block unrelated structures")
+	}
+}
+
+func TestStructureNameRateLimitCreatesGlobalSuppression(t *testing.T) {
+	c := NewClient(nil)
+	const structureID int64 = 100000001
+	const otherID int64 = 100000002
+
+	c.rememberStructureNameFailure(structureID, errors.New(`ESI 420: {"error":"Rate limit exceeded"}`))
+	if !c.structureNameLookupBlocked(structureID) {
+		t.Fatal("rate-limited structure should be blocked")
+	}
+	if !c.structureNameLookupBlocked(otherID) {
+		t.Fatal("ESI rate-limit should temporarily block new structure-name lookups globally")
+	}
+}
+
+func TestStructureNameUsesEVERefBeforeSuppression(t *testing.T) {
+	c := NewClient(nil)
+	const structureID int64 = 100000001
+	const structureName = "Known Player Structure"
+
+	c.everefNames.Store(structureID, structureName)
+	c.rememberStructureNameFailure(structureID, errors.New(`ESI 403: {"error":"Forbidden"}`))
+
+	if got := c.StructureName(structureID, ""); got != structureName {
+		t.Fatalf("StructureName() = %q, want EVERef name %q", got, structureName)
+	}
+	if c.structureNameLookupBlocked(structureID) {
+		t.Fatal("successful EVERef resolution should clear the negative cache")
 	}
 }
 

@@ -21,6 +21,8 @@ const (
 
 const baseURL = "https://esi.evetech.net/latest"
 
+const structureNameGlobalFailureKey int64 = -1
+
 // StationStore is a persistent L2 cache for station names.
 type StationStore interface {
 	GetStation(locationID int64) (string, bool)
@@ -46,12 +48,19 @@ type Client struct {
 	everefNames sync.Map // int64 -> string
 	// Known structure -> solar_system_id mappings from ESI/EVERef.
 	structureSystems sync.Map // int64 -> int32
+	// Negative cache for inaccessible/throttled structure name lookups.
+	structureNameFailures sync.Map // int64 -> structureNameFailure
 
 	// Health check cache
 	healthMu      sync.RWMutex
 	healthOK      bool
 	healthChecked time.Time
 	healthLastOK  time.Time
+}
+
+type structureNameFailure struct {
+	RetryAfter time.Time
+	Reason     string
 }
 
 // NewClient creates an ESI client with rate limiting and the given station cache store.
@@ -337,7 +346,26 @@ func (c *Client) StructureName(structureID int64, accessToken string) string {
 			}
 		}
 	}
-	// L3: Authenticated ESI call
+	// L3: EVERef fallback. Check it before ESI so public names are usable even
+	// after a previous authenticated lookup was denied or rate-limited.
+	if eveName := c.EVERefStructureName(structureID); eveName != "" {
+		log.Printf("[ESI] Resolved structure %d via EVERef -> %q", structureID, eveName)
+		c.stationCache.Store(structureID, eveName)
+		c.structureNameFailures.Delete(structureID)
+		if c.stationStore != nil {
+			c.stationStore.SetStation(structureID, eveName)
+		}
+		return eveName
+	}
+
+	if c.structureNameLookupBlocked(structureID) {
+		return fmt.Sprintf("Structure %d", structureID)
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return fmt.Sprintf("Structure %d", structureID)
+	}
+
+	// L4: Authenticated ESI call
 	var info struct {
 		Name          string `json:"name"`
 		SolarSystemID int32  `json:"solar_system_id"`
@@ -346,6 +374,7 @@ func (c *Client) StructureName(structureID int64, accessToken string) string {
 	if err := c.AuthGetJSON(url, accessToken, &info); err == nil && info.Name != "" {
 		log.Printf("[ESI] Resolved structure %d → %q", structureID, info.Name)
 		c.stationCache.Store(structureID, info.Name)
+		c.structureNameFailures.Delete(structureID)
 		if info.SolarSystemID > 0 {
 			c.structureSystems.Store(structureID, info.SolarSystemID)
 		}
@@ -354,12 +383,13 @@ func (c *Client) StructureName(structureID int64, accessToken string) string {
 		}
 		return info.Name
 	} else if err != nil {
-		log.Printf("[ESI] StructureName(%d) failed: %v", structureID, err)
+		c.rememberStructureNameFailure(structureID, err)
 	}
 	// L4: EVERef fallback — public structure dataset
 	if eveName := c.EVERefStructureName(structureID); eveName != "" {
 		log.Printf("[ESI] Resolved structure %d via EVERef → %q", structureID, eveName)
 		c.stationCache.Store(structureID, eveName)
+		c.structureNameFailures.Delete(structureID)
 		if c.stationStore != nil {
 			c.stationStore.SetStation(structureID, eveName)
 		}
@@ -371,20 +401,78 @@ func (c *Client) StructureName(structureID int64, accessToken string) string {
 	return name
 }
 
+func (c *Client) structureNameLookupBlocked(structureID int64) bool {
+	if c.structureNameFailureActive(structureNameGlobalFailureKey) {
+		return true
+	}
+	return c.structureNameFailureActive(structureID)
+}
+
+func (c *Client) structureNameFailureActive(key int64) bool {
+	if v, ok := c.structureNameFailures.Load(key); ok {
+		fail, okCast := v.(structureNameFailure)
+		if okCast && time.Now().Before(fail.RetryAfter) {
+			return true
+		}
+		c.structureNameFailures.Delete(key)
+	}
+	return false
+}
+
+func (c *Client) rememberStructureNameFailure(structureID int64, err error) {
+	reason, ttl := classifyStructureNameFailure(err)
+	if ttl <= 0 {
+		return
+	}
+	c.structureNameFailures.Store(structureID, structureNameFailure{
+		RetryAfter: time.Now().Add(ttl),
+		Reason:     reason,
+	})
+	if reason == "ESI rate limit" || reason == "transient ESI failure" {
+		c.structureNameFailures.Store(structureNameGlobalFailureKey, structureNameFailure{
+			RetryAfter: time.Now().Add(ttl),
+			Reason:     reason,
+		})
+	}
+	log.Printf("[ESI] StructureName(%d) suppressed for %s after %s: %v", structureID, ttl, reason, err)
+}
+
+func classifyStructureNameFailure(err error) (string, time.Duration) {
+	if err == nil {
+		return "", 0
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "ESI 403"), strings.Contains(msg, "ESI 404"):
+		return "inaccessible structure", 24 * time.Hour
+	case strings.Contains(msg, "ESI 420"), strings.Contains(msg, "ESI 429"):
+		return "ESI rate limit", 15 * time.Minute
+	case strings.Contains(msg, "ESI 502"), strings.Contains(msg, "ESI 503"), strings.Contains(msg, "ESI 504"), strings.Contains(msg, "ESI 520"):
+		return "transient ESI failure", 2 * time.Minute
+	default:
+		return "structure lookup failure", 5 * time.Minute
+	}
+}
+
 // StructureDetails fetches a player structure name and solar system id using
 // authenticated ESI. It is used when a cached name exists but the system cache
 // does not, which matters for private/corp structure selectors.
 func (c *Client) StructureDetails(structureID int64, accessToken string) (string, int32, error) {
+	if c.structureNameLookupBlocked(structureID) {
+		return "", 0, fmt.Errorf("structure details %d: lookup temporarily suppressed", structureID)
+	}
 	var info struct {
 		Name          string `json:"name"`
 		SolarSystemID int32  `json:"solar_system_id"`
 	}
 	url := fmt.Sprintf("%s/universe/structures/%d/?datasource=tranquility", baseURL, structureID)
 	if err := c.AuthGetJSON(url, accessToken, &info); err != nil {
+		c.rememberStructureNameFailure(structureID, err)
 		return "", 0, fmt.Errorf("structure details %d: %w", structureID, err)
 	}
 	if info.Name != "" {
 		c.stationCache.Store(structureID, info.Name)
+		c.structureNameFailures.Delete(structureID)
 		if c.stationStore != nil {
 			c.stationStore.SetStation(structureID, info.Name)
 		}
@@ -445,10 +533,13 @@ func (c *Client) FetchSystemStructures(systemID int32, regionID int32, accessTok
 	}
 	results := make(chan result, len(seen))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for id := range seen {
 		wg.Add(1)
 		go func(sid int64) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			name := c.StructureName(sid, accessToken)
 			results <- result{id: sid, name: name}
 		}(id)
@@ -471,6 +562,9 @@ func (c *Client) FetchSystemStructures(systemID int32, regionID int32, accessTok
 // PrefetchStructureNames fetches structure names concurrently for a set of location IDs
 // that are player structures. Requires an access token.
 func (c *Client) PrefetchStructureNames(locationIDs map[int64]bool, accessToken string) {
+	if strings.TrimSpace(accessToken) == "" {
+		return
+	}
 	var toFetch []int64
 	for id := range locationIDs {
 		if !isPlayerStructure(id) {
@@ -482,16 +576,22 @@ func (c *Client) PrefetchStructureNames(locationIDs map[int64]bool, accessToken 
 				continue // already resolved
 			}
 		}
+		if c.EVERefStructureName(id) == "" && c.structureNameLookupBlocked(id) {
+			continue
+		}
 		toFetch = append(toFetch, id)
 	}
 	if len(toFetch) == 0 {
 		return
 	}
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
 	for _, id := range toFetch {
 		wg.Add(1)
 		go func(sid int64) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			c.StructureName(sid, accessToken)
 		}(id)
 	}

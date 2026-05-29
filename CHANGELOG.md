@@ -4,6 +4,23 @@
 
 - No unreleased changes yet.
 
+## v1.6.5 - 2026-05-29
+
+This is a maintenance release focused on stability fixes after v1.6.4.
+
+### ESI and Private Structures
+
+- Fixed an infinite player-structure name lookup loop when ESI returns `403 Forbidden` for private or inaccessible Upwell structures.
+- Added negative caching for inaccessible structure lookups so the app does not retry the same forbidden structure repeatedly.
+- Added global cooldown handling for ESI `420/429` structure-name rate limits to prevent request storms across many structure IDs.
+- Limited concurrent player-structure name resolution in structure prefetch and system-structure discovery paths.
+- Prefer EVERef structure names before authenticated ESI lookup when a public fallback name is already available.
+- Applied the same structure lookup suppression to structure detail resolution used by private/corp structure selectors.
+
+### Tests
+
+- Added regression coverage for forbidden structure suppression, global rate-limit suppression, and EVERef fallback behavior.
+
 ## v1.6.4 - 2026-05-17
 
 This release expands Eve Flipper into a configurable trading cockpit and adds several community-requested intelligence and diagnostics tools.
