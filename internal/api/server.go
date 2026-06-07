@@ -580,6 +580,10 @@ func (s *Server) ensureRequestUserID(w http.ResponseWriter, r *http.Request) str
 }
 
 func (s *Server) acceptsUserIDHeader() bool {
+	return s.isDesktopFlavor()
+}
+
+func (s *Server) isDesktopFlavor() bool {
 	return s != nil && strings.EqualFold(strings.TrimSpace(s.appFlavor), "desktop")
 }
 
@@ -852,14 +856,25 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/gankcheck", s.handleGankCheck)
 	mux.HandleFunc("GET /api/gankcheck/detail", s.handleGankCheckDetail)
 	mux.HandleFunc("GET /api/gankcheck/batch", s.handleGankCheckBatch)
-	return securityHeadersMiddleware(corsMiddleware(originGuardMiddleware(requestBodyLimitMiddleware(s.userScopeMiddleware(mux)))))
+	return securityHeadersMiddleware(s.corsMiddleware(s.originGuardMiddleware(requestBodyLimitMiddleware(s.userScopeMiddleware(mux)))))
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
+	return corsMiddlewareWithOriginCheck(next, isAllowedCORSOrigin)
+}
+
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return corsMiddlewareWithOriginCheck(next, s.isAllowedRequestOrigin)
+}
+
+func corsMiddlewareWithOriginCheck(next http.Handler, isAllowed func(origin, requestHost string) bool) http.Handler {
+	if isAllowed == nil {
+		isAllowed = isAllowedCORSOrigin
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		allowedOrigin := ""
-		if origin != "" && isAllowedCORSOrigin(origin, r.Host) {
+		if origin != "" && isAllowed(origin, r.Host) {
 			allowedOrigin = origin
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -890,15 +905,33 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 }
 
 func originGuardMiddleware(next http.Handler) http.Handler {
+	return originGuardMiddlewareWithOriginCheck(next, isAllowedCORSOrigin, isAllowedRequestReferer)
+}
+
+func (s *Server) originGuardMiddleware(next http.Handler) http.Handler {
+	return originGuardMiddlewareWithOriginCheck(next, s.isAllowedRequestOrigin, s.isAllowedRequestReferer)
+}
+
+func originGuardMiddlewareWithOriginCheck(
+	next http.Handler,
+	isAllowedOrigin func(origin, requestHost string) bool,
+	isAllowedReferer func(referer, requestHost string) bool,
+) http.Handler {
+	if isAllowedOrigin == nil {
+		isAllowedOrigin = isAllowedCORSOrigin
+	}
+	if isAllowedReferer == nil {
+		isAllowedReferer = isAllowedRequestReferer
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isStateChangingMethod(r.Method) {
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
-			if origin != "" && !isAllowedCORSOrigin(origin, r.Host) {
+			if origin != "" && !isAllowedOrigin(origin, r.Host) {
 				writeError(w, http.StatusForbidden, "forbidden origin")
 				return
 			}
 			referer := strings.TrimSpace(r.Header.Get("Referer"))
-			if origin == "" && referer != "" && !isAllowedRequestReferer(referer, r.Host) {
+			if origin == "" && referer != "" && !isAllowedReferer(referer, r.Host) {
 				writeError(w, http.StatusForbidden, "forbidden referer")
 				return
 			}
@@ -955,6 +988,36 @@ func isAllowedRequestReferer(referer, requestHost string) bool {
 		return false
 	}
 	return isAllowedCORSOrigin(u.Scheme+"://"+u.Host, requestHost)
+}
+
+func (s *Server) isAllowedRequestOrigin(origin, requestHost string) bool {
+	if isAllowedCORSOrigin(origin, requestHost) {
+		return true
+	}
+	return s.isDesktopFlavor() && isAllowedDesktopAppOrigin(origin)
+}
+
+func (s *Server) isAllowedRequestReferer(referer, requestHost string) bool {
+	u, err := url.Parse(referer)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	return s.isAllowedRequestOrigin(u.Scheme+"://"+u.Host, requestHost)
+}
+
+func isAllowedDesktopAppOrigin(origin string) bool {
+	u, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return normalizeHostPort(u.Host) == "wails.localhost"
+	case "wails":
+		return normalizeHostPort(u.Host) == "wails"
+	default:
+		return false
+	}
 }
 
 func originListContains(rawList, origin string) bool {

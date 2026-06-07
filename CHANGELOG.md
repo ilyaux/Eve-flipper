@@ -2,9 +2,7 @@
 
 ## Unreleased
 
-- No unreleased changes yet.
-
-## v1.6.6 - 2026-06-08
+Pending v1.6.6.
 
 This release introduces the local security vault, expands encrypted storage for sensitive local data, and tightens desktop/web API boundaries.
 
@@ -20,6 +18,7 @@ This release introduces the local security vault, expands encrypted storage for 
 
 - Added security vault API endpoints and passphrase unlock coverage.
 - Restricted unsigned user-id headers to the desktop flavor, added state-changing request origin checks, body limits, and common security headers.
+- Allowed packaged Wails desktop origins through the vault setup CORS/origin guard so production desktop users can choose a vault mode.
 - Improved startup/security modal behavior so the loader no longer covers the vault popup and users can continue after vault setup without getting stuck behind a forced auth screen.
 
 ### Trading and Workflow Updates

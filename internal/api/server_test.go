@@ -447,6 +447,91 @@ func TestOriginGuardBlocksStateChangingBadOrigin(t *testing.T) {
 	}
 }
 
+func TestDesktopOriginGuardAllowsWailsOriginsOnlyInDesktopFlavor(t *testing.T) {
+	origins := []string{"http://wails.localhost", "wails://wails"}
+
+	for _, origin := range origins {
+		t.Run("desktop "+origin, func(t *testing.T) {
+			srv := NewServer(config.Default(), &esi.Client{}, nil, nil, nil)
+			srv.SetAppFlavor("desktop")
+			handler := srv.originGuardMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/security/vault/setup", strings.NewReader(`{"mode":"standard"}`))
+			req.Host = "127.0.0.1:13370"
+			req.Header.Set("Origin", origin)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("desktop origin guard status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+
+		t.Run("web "+origin, func(t *testing.T) {
+			srv := NewServer(config.Default(), &esi.Client{}, nil, nil, nil)
+			srv.SetAppFlavor("web")
+			handler := srv.originGuardMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/security/vault/setup", strings.NewReader(`{"mode":"standard"}`))
+			req.Host = "127.0.0.1:13370"
+			req.Header.Set("Origin", origin)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("web origin guard status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestDesktopCORSMiddlewareAllowsWailsOrigin(t *testing.T) {
+	srv := NewServer(config.Default(), &esi.Client{}, nil, nil, nil)
+	srv.SetAppFlavor("desktop")
+	handler := srv.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/security/vault/setup", nil)
+	req.Host = "127.0.0.1:13370"
+	req.Header.Set("Origin", "http://wails.localhost")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://wails.localhost" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want Wails origin", got)
+	}
+}
+
+func TestDesktopVaultSetupAcceptsWailsOrigin(t *testing.T) {
+	store := newVaultSessionStoreForAPITest(t)
+	srv := NewServer(config.Default(), &esi.Client{}, nil, nil, store)
+	srv.SetAppFlavor("desktop")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/security/vault/setup", strings.NewReader(`{"mode":"standard"}`))
+	req.Host = "127.0.0.1:13370"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://wails.localhost")
+	req.Header.Set(userIDHeaderName, "eveflipper_desktop")
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://wails.localhost" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want Wails origin", got)
+	}
+}
+
 func TestSecurityVaultPrivatePassphraseAPIFlow(t *testing.T) {
 	store := newVaultSessionStoreForAPITest(t)
 	srv := NewServer(config.Default(), &esi.Client{}, nil, nil, store)
