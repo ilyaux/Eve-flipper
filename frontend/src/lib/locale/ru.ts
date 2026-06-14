@@ -1941,9 +1941,9 @@ export const ru = {
 
     // Player structures
     includeStructures: "Включить структуры игроков",
-    noStationsOrInaccessible: "Нет станций в системе или недоступны",
-    noNpcStationsLoginHint: "В этой системе нет NPC станций. Авторизуйтесь через EVE SSO для поиска структур игроков (Цитадель/Фортизар/Кипстар).",
-    noNpcStationsToggleHint: "Нет NPC станций. Нажмите иконку структуры для поиска структур игроков.",
+    noStationsOrInaccessible: "Доступные станции не найдены. Структуры игроков должны быть видны этому персонажу через ESI.",
+    noNpcStationsLoginHint: "В этой системе нет NPC станций. Авторизуйтесь через EVE SSO для поиска доступных структур игроков.",
+    noNpcStationsToggleHint: "В этой системе нет NPC станций. Включите переключатель «Структуры игроков», чтобы искать доступные Цитадели, Фортизары и Кипстары.",
     loadingStructures: "Загрузка структур...",
     structuresFound: "Найдено структур игроков: {count}",
 

@@ -2177,6 +2177,7 @@ export function StationTrading({
                       onChange={(v) => onChange?.({ ...params, system_name: v })}
                       showLocationButton={true}
                       isLoggedIn={isLoggedIn}
+                      includeStructures={includeStructures}
                       extraActionSlots={1}
                       extraAction={
                         <SystemBlacklistButton

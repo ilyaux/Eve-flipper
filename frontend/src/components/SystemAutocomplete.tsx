@@ -152,6 +152,13 @@ export function SystemAutocomplete({
   const showStructureBtn = isLoggedIn && onIncludeStructuresChange != null;
   const btnCount =
     (showLocationBtn ? 1 : 0) + (showStructureBtn ? 1 : 0) + extraActionSlots;
+  const noStationsHint = !noStations || open
+    ? null
+    : !isLoggedIn
+      ? t("noNpcStationsLoginHint")
+      : includeStructures
+        ? t("noStationsOrInaccessible")
+        : t("noNpcStationsToggleHint");
 
   return (
     <div ref={containerRef} className="relative">
@@ -227,13 +234,9 @@ export function SystemAutocomplete({
           ))}
         </div>
       )}
-      {noStations && !open && (
+      {noStationsHint && (
         <div className="absolute z-40 left-0 right-0 top-full mt-1 px-1 py-0.5 text-[10px] text-amber-400/80 leading-tight bg-eve-panel/95 border border-eve-border/50 rounded-sm">
-          {!isLoggedIn
-            ? t("noNpcStationsLoginHint")
-            : !includeStructures
-              ? t("noNpcStationsToggleHint")
-              : null}
+          {noStationsHint}
         </div>
       )}
     </div>

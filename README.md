@@ -42,7 +42,7 @@ Everything runs locally. There is no hosted service and no central database.
 
 ## Current Public Release
 
-The current public release is `v1.6.7`.
+The current public release is `v1.6.8`.
 
 Download it from:
 

@@ -1941,9 +1941,9 @@ export const en = {
 
     // Player structures
     includeStructures: "Include player structures",
-    noStationsOrInaccessible: "No stations in system or inaccessible",
-    noNpcStationsLoginHint: "No NPC stations in this system. Log in via EVE SSO to search player structures (Citadel/Fortizar/Keepstar).",
-    noNpcStationsToggleHint: "No NPC stations. Click the structure icon to include player structures.",
+    noStationsOrInaccessible: "No accessible stations found. Player structures must be visible to this character in ESI.",
+    noNpcStationsLoginHint: "No NPC stations in this system. Log in via EVE SSO to search accessible player structures.",
+    noNpcStationsToggleHint: "No NPC stations in this system. Turn on Include player structures to search accessible Citadels, Fortizars and Keepstars.",
     loadingStructures: "Loading structures...",
     structuresFound: "{count} player structure(s) found",
 
