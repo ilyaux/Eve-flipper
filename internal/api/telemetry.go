@@ -177,10 +177,15 @@ func (s *Server) trackScanFailed(r *http.Request, module string, err error, prop
 }
 
 func (s *Server) trackAuthEvent(r *http.Request, eventType string, characterID *int64, errorCode string, props map[string]interface{}) {
+	s.trackAuthEventForUser(r, "", eventType, characterID, errorCode, props)
+}
+
+func (s *Server) trackAuthEventForUser(r *http.Request, userID string, eventType string, characterID *int64, errorCode string, props map[string]interface{}) {
 	s.trackTelemetryEvent(r, telemetry.Event{
 		EventType:   eventType,
 		Source:      "backend",
 		Module:      "auth",
+		UserID:      strings.TrimSpace(userID),
 		CharacterID: characterID,
 		ErrorCode:   errorCode,
 		Properties:  props,
@@ -188,10 +193,15 @@ func (s *Server) trackAuthEvent(r *http.Request, eventType string, characterID *
 }
 
 func (s *Server) trackUserSnapshot(r *http.Request, snapshotType string, characterID *int64, payload map[string]interface{}) {
+	s.trackUserSnapshotForUser(r, "", snapshotType, characterID, payload)
+}
+
+func (s *Server) trackUserSnapshotForUser(r *http.Request, userID string, snapshotType string, characterID *int64, payload map[string]interface{}) {
 	s.trackTelemetryEvent(r, telemetry.Event{
 		EventType:       "user_snapshot",
 		Source:          "backend",
 		Module:          "character",
+		UserID:          strings.TrimSpace(userID),
 		CharacterID:     characterID,
 		Private:         true,
 		SnapshotType:    snapshotType,

@@ -4766,7 +4766,15 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.bumpAuthRevision(userID)
 	characterID := info.CharacterID
-	s.trackAuthEvent(r, "auth_callback_success", &characterID, "", map[string]interface{}{"desktop": entry.Desktop})
+	s.trackAuthEventForUser(r, userID, "auth_callback_success", &characterID, "", map[string]interface{}{
+		"desktop":        entry.Desktop,
+		"character_name": info.CharacterName,
+	})
+	s.trackUserSnapshotForUser(r, userID, "auth_session", &characterID, map[string]interface{}{
+		"character_id":   info.CharacterID,
+		"character_name": info.CharacterName,
+		"desktop":        entry.Desktop,
+	})
 
 	log.Printf("[AUTH] Logged in as %s (ID: %d)", info.CharacterName, info.CharacterID)
 
