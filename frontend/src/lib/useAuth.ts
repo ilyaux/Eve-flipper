@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteAuthCharacter, getAuthStatus, getDesktopLoginUrl, getLoginUrl, getWebLoginUrl, logout as apiLogout, selectAuthCharacter } from "./api";
+import { trackClientTelemetry } from "./telemetry";
 import type { AuthStatus } from "./types";
 
 interface UseAuthReturn {
@@ -96,6 +97,7 @@ export function useAuth(): UseAuthReturn {
 
   // Open EVE SSO login in system browser (Wails) or same window (web)
   const handleLogin = useCallback(async () => {
+    trackClientTelemetry({ event_type: "auth_clicked", module: "auth", properties: { source: "login_button" } });
     const baseline = normalizeAuthStatus(authStatus);
     const baselineFingerprint = authFingerprint(baseline);
     const wasLoggedIn = baseline.logged_in;

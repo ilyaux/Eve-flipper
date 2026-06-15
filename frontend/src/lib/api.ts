@@ -1608,6 +1608,26 @@ export async function setupSecurityVault(mode: "standard" | "private", passphras
   return handleResponse<SecurityVaultStatus>(res);
 }
 
+export interface ClientTelemetryPayload {
+  event_type: "active_session" | "feature_opened" | "scan_started" | "scan_finished" | "auth_clicked" | "vault_setup_clicked";
+  session_id: string;
+  module?: string;
+  character_id?: number;
+  properties?: Record<string, unknown>;
+}
+
+export async function postClientTelemetry(payload: ClientTelemetryPayload): Promise<void> {
+  try {
+    await apiFetch(`${BASE}/api/telemetry/client`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Telemetry is best-effort and must never affect app workflows.
+  }
+}
+
 export async function unlockSecurityVault(passphrase: string): Promise<SecurityVaultStatus> {
   const res = await apiFetch(`${BASE}/api/security/vault/unlock`, {
     method: "POST",

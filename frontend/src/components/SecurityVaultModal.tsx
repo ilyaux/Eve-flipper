@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { KeyRound, Lock, RotateCcw, ShieldCheck } from "lucide-react";
 import { Modal } from "./Modal";
 import { resetSecurityVault, setupSecurityVault, unlockSecurityVault } from "../lib/api";
+import { trackClientTelemetry } from "../lib/telemetry";
 import type { AuthStatus, SecurityVaultStatus } from "../lib/types";
 
 type SecurityVaultModalProps = {
@@ -85,6 +86,7 @@ export function SecurityVaultModal({ authStatus, onRefresh, onLogin }: SecurityV
 
   const setupStandard = () =>
     run(async () => {
+      trackClientTelemetry({ event_type: "vault_setup_clicked", module: "security", properties: { mode: "standard" } });
       await setupSecurityVault("standard");
       setDismissed(false);
       setSetupDone(true);
@@ -93,6 +95,7 @@ export function SecurityVaultModal({ authStatus, onRefresh, onLogin }: SecurityV
 
   const setupPrivate = () =>
     run(async () => {
+      trackClientTelemetry({ event_type: "vault_setup_clicked", module: "security", properties: { mode: "private" } });
       if (passphrase.length < 8) {
         setMessage(text.short);
         return;

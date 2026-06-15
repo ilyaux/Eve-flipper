@@ -25,6 +25,7 @@ import (
 	"eve-flipper/internal/esi"
 	"eve-flipper/internal/logger"
 	"eve-flipper/internal/sde"
+	"eve-flipper/internal/telemetry"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -192,6 +193,7 @@ func startBackend(host string, preferredPort int) (*backendRuntime, error) {
 	srv := api.NewServer(cfg, esiClient, database, ssoConfig, sessions)
 	srv.SetAppVersion(version)
 	srv.SetAppFlavor("desktop")
+	srv.SetTelemetry(telemetry.NewFromEnv())
 
 	// Load SDE in background.
 	go func() {

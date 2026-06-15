@@ -23,6 +23,7 @@ import (
 	"eve-flipper/internal/esi"
 	"eve-flipper/internal/logger"
 	"eve-flipper/internal/sde"
+	"eve-flipper/internal/telemetry"
 )
 
 var version = "dev"
@@ -168,6 +169,7 @@ func main() {
 	srv := api.NewServer(cfg, esiClient, database, ssoConfig, sessions)
 	srv.SetAppVersion(version)
 	srv.SetAppFlavor("web")
+	srv.SetTelemetry(telemetry.NewFromEnv())
 
 	// Load SDE in background
 	go func() {

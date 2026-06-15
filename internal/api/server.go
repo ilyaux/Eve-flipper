@@ -92,6 +92,8 @@ type Server struct {
 
 	updateSkipMu     sync.RWMutex
 	updateSkipByUser map[string]string
+
+	telemetry telemetrySink
 }
 
 // ssoStateEntry holds metadata for a pending SSO login flow.
@@ -757,6 +759,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/update/skip", s.handleUpdateSkipForSession)
 	mux.HandleFunc("POST /api/update/apply", s.handleUpdateApply)
 	mux.HandleFunc("POST /api/internal/wiki/gollum", s.handleInternalWikiGollumWebhook)
+	mux.HandleFunc("POST /api/telemetry/client", s.handleTelemetryClient)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleSetConfig)
 	mux.HandleFunc("GET /api/cockpit/preferences", s.handleGetCockpitPreferences)
@@ -883,7 +886,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/gankcheck", s.handleGankCheck)
 	mux.HandleFunc("GET /api/gankcheck/detail", s.handleGankCheckDetail)
 	mux.HandleFunc("GET /api/gankcheck/batch", s.handleGankCheckBatch)
-	return securityHeadersMiddleware(s.corsMiddleware(s.originGuardMiddleware(requestBodyLimitMiddleware(s.userScopeMiddleware(mux)))))
+	return securityHeadersMiddleware(s.corsMiddleware(s.originGuardMiddleware(requestBodyLimitMiddleware(s.userScopeMiddleware(s.telemetryMiddleware(mux))))))
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -2623,6 +2626,8 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			params.AccessToken = token
 		}
 	}
+	scanTelemetry := scanRequestTelemetryProps(req)
+	s.trackScanStarted(r, "radius", scanTelemetry)
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2649,6 +2654,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	results, err := scanner.Scan(params, sendProgress)
 	if err != nil {
 		log.Printf("[API] Scan error: %v", err)
+		s.trackScanFailed(r, "radius", err, scanTelemetry)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 		fmt.Fprintf(w, "%s\n", line)
 		flusher.Flush()
@@ -2689,6 +2695,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 		totalProfit += kpiProfit
 	}
+	scanTelemetry["top_profit"] = topProfit
+	scanTelemetry["total_profit"] = totalProfit
+	s.trackScanFinished(r, "radius", len(results), durationMs, scanTelemetry)
 	scanID := s.db.InsertHistoryFull("radius", req.SystemName, len(results), topProfit, totalProfit, durationMs, req)
 	go s.db.InsertFlipResults(scanID, results)
 	var scanIDPtr *int64
@@ -2735,6 +2744,8 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 			params.AccessToken = token
 		}
 	}
+	scanTelemetry := scanRequestTelemetryProps(req)
+	s.trackScanStarted(r, "region", scanTelemetry)
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2767,6 +2778,7 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 	results, err := scanner.ScanMultiRegion(params, sendProgress)
 	if err != nil {
 		log.Printf("[API] ScanMultiRegion error: %v", err)
+		s.trackScanFailed(r, "region", err, scanTelemetry)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 		fmt.Fprintf(w, "%s\n", line)
 		flusher.Flush()
@@ -2807,6 +2819,9 @@ func (s *Server) handleScanMultiRegion(w http.ResponseWriter, r *http.Request) {
 		}
 		totalProfit += kpiProfit
 	}
+	scanTelemetry["top_profit"] = topProfit
+	scanTelemetry["total_profit"] = totalProfit
+	s.trackScanFinished(r, "region", len(results), durationMs, scanTelemetry)
 	scanID := s.db.InsertHistoryFull("region", req.SystemName, len(results), topProfit, totalProfit, durationMs, req)
 	go s.db.InsertFlipResults(scanID, results)
 	var scanIDPtr *int64
@@ -2857,6 +2872,8 @@ func (s *Server) handleScanRegionalDay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "target_market_system is required for regional day trader scan")
 		return
 	}
+	scanTelemetry := scanRequestTelemetryProps(req)
+	s.trackScanStarted(r, "regional_day", scanTelemetry)
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2897,6 +2914,7 @@ func (s *Server) handleScanRegionalDay(w http.ResponseWriter, r *http.Request) {
 	results, err := scanner.ScanMultiRegion(scanParams, sendProgress)
 	if err != nil {
 		log.Printf("[API] ScanRegionalDay error: %v", err)
+		s.trackScanFailed(r, "regional_day", err, scanTelemetry)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 		fmt.Fprintf(w, "%s\n", line)
 		flusher.Flush()
@@ -2959,6 +2977,13 @@ func (s *Server) handleScanRegionalDay(w http.ResponseWriter, r *http.Request) {
 	if historyCount == 0 {
 		historyCount = len(results)
 	}
+	scanTelemetry["top_profit"] = topProfit
+	scanTelemetry["total_profit"] = totalProfit
+	scanTelemetry["target_region_name"] = targetRegionName
+	scanTelemetry["period_days"] = periodDays
+	scanTelemetry["hub_count"] = len(hubs)
+	scanTelemetry["item_count"] = totalItems
+	s.trackScanFinished(r, "regional_day", historyCount, durationMs, scanTelemetry)
 	scanID := s.db.InsertHistoryFull("region", req.SystemName, historyCount, topProfit, totalProfit, durationMs, req)
 	if scanID > 0 && len(dayRows) > 0 {
 		go s.db.InsertRegionalDayResults(scanID, dayRows)
@@ -3202,6 +3227,8 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
+	scanTelemetry := scanRequestTelemetryProps(req)
+	s.trackScanStarted(r, "contracts", scanTelemetry)
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -3236,6 +3263,7 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[API] ScanContracts error: %v", err)
+		s.trackScanFailed(r, "contracts", err, scanTelemetry)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 		fmt.Fprintf(w, "%s\n", line)
 		flusher.Flush()
@@ -3260,6 +3288,9 @@ func (s *Server) handleScanContracts(w http.ResponseWriter, r *http.Request) {
 		}
 		totalProfit += kpiProfit
 	}
+	scanTelemetry["top_profit"] = topProfit
+	scanTelemetry["total_profit"] = totalProfit
+	s.trackScanFinished(r, "contracts", len(results), durationMs, scanTelemetry)
 	scanID := s.db.InsertHistoryFull("contracts", req.SystemName, len(results), topProfit, totalProfit, durationMs, req)
 	if ctx.Err() == nil {
 		go s.db.InsertContractResults(scanID, results)
@@ -3401,11 +3432,20 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		req.MinHops,
 		req.MaxHops,
 	)
+	routeTelemetry := map[string]interface{}{
+		"scan_module":   "route",
+		"system_name":   req.SystemName,
+		"target_system": req.TargetSystemName,
+		"route_mode":    req.RouteMode,
+		"filters":       req,
+	}
+	s.trackScanStarted(r, "route", routeTelemetry)
 
 	startTime := time.Now()
 	results, err := scanner.FindRoutes(params, sendProgress)
 	if err != nil {
 		log.Printf("[API] RouteFind error: %v", err)
+		s.trackScanFailed(r, "route", err, routeTelemetry)
 		line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 		fmt.Fprintf(w, "%s\n", line)
 		flusher.Flush()
@@ -3444,6 +3484,10 @@ func (s *Server) handleRouteFind(w http.ResponseWriter, r *http.Request) {
 		}
 		totalProfit += r.TotalProfit
 	}
+	routeTelemetry["top_profit"] = topProfit
+	routeTelemetry["total_profit"] = totalProfit
+	routeTelemetry["raw_count"] = rawCount
+	s.trackScanFinished(r, "route", len(results), durationMs, routeTelemetry)
 
 	scanID := s.db.InsertHistoryFull("route", req.SystemName, len(results), topProfit, totalProfit, durationMs, req)
 	go s.db.InsertRouteResults(scanID, results)
@@ -3810,6 +3854,8 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[API] ScanStation starting: stations=%d, regions=%d, margin=%.1f, tax=%.1f, broker=%.1f, cts_profile=%s",
 		len(stationIDs), len(regionIDs), req.MinMargin, req.SalesTaxPercent, req.BrokerFee, strings.TrimSpace(req.CTSProfile))
+	scanTelemetry := stationScanTelemetryProps(req, historyLabel)
+	s.trackScanStarted(r, "station", scanTelemetry)
 
 	// Get auth token if available (for structure name resolution)
 	accessToken := ""
@@ -3869,6 +3915,7 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("[API] ScanStation error (region %d): %v", regionID, err)
+			s.trackScanFailed(r, "station", err, scanTelemetry)
 			line, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 			_, _ = fmt.Fprintf(w, "%s\n", line)
 			flusher.Flush()
@@ -3913,6 +3960,9 @@ func (s *Server) handleScanStation(w http.ResponseWriter, r *http.Request) {
 		}
 		totalProfit += p
 	}
+	scanTelemetry["top_profit"] = topProfit
+	scanTelemetry["total_profit"] = totalProfit
+	s.trackScanFinished(r, "station", len(allResults), durationMs, scanTelemetry)
 
 	// Save to history with full params
 	scanID := s.db.InsertHistoryFull("station", historyLabel, len(allResults), topProfit, totalProfit, durationMs, req)
@@ -4608,19 +4658,23 @@ func (s *Server) writeAuthStatus(w http.ResponseWriter, userID string) {
 
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sso == nil {
+		s.trackAuthEvent(r, "auth_callback_failed", nil, "sso_not_configured", map[string]interface{}{"stage": "login"})
 		writeError(w, 500, "SSO not configured")
 		return
 	}
 	state := auth.GenerateState()
 	desktop := r.URL.Query().Get("desktop") == "1"
 	userID := userIDFromRequest(r)
+	s.trackAuthEvent(r, "auth_started", nil, "", map[string]interface{}{"desktop": desktop, "mode": strings.TrimSpace(r.URL.Query().Get("mode"))})
 	if s.sessions != nil && s.sessions.Vault() != nil && s.sessions.Vault().TableReady() {
 		vaultStatus := s.sessions.Vault().StatusForUser(userID)
 		if !vaultStatus.Configured {
+			s.trackAuthEvent(r, "auth_callback_failed", nil, "vault_not_configured", map[string]interface{}{"stage": "login"})
 			writeError(w, http.StatusConflict, "security vault not configured")
 			return
 		}
 		if vaultStatus.Locked {
+			s.trackAuthEvent(r, "auth_callback_failed", nil, "vault_locked", map[string]interface{}{"stage": "login"})
 			writeError(w, http.StatusLocked, "private security vault locked")
 			return
 		}
@@ -4651,6 +4705,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if s.sso == nil {
+		s.trackAuthEvent(r, "auth_callback_failed", nil, "sso_not_configured", map[string]interface{}{"stage": "callback"})
 		writeError(w, 500, "SSO not configured")
 		return
 	}
@@ -4666,6 +4721,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	s.ssoStatesMu.Unlock()
 
 	if state == "" || !ok || time.Now().After(entry.ExpiresAt) {
+		s.trackAuthEvent(r, "auth_callback_failed", nil, "invalid_state", map[string]interface{}{"stage": "callback"})
 		writeError(w, 400, "invalid or expired state parameter")
 		return
 	}
@@ -4674,6 +4730,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.sso.ExchangeCode(code)
 	if err != nil {
 		log.Printf("[AUTH] Exchange error: %v", err)
+		s.trackAuthEvent(r, "auth_callback_failed", nil, "token_exchange_failed", map[string]interface{}{"stage": "exchange"})
 		writeError(w, 500, "token exchange failed")
 		return
 	}
@@ -4682,6 +4739,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	info, err := auth.VerifyToken(tok.AccessToken)
 	if err != nil {
 		log.Printf("[AUTH] Verify error: %v", err)
+		s.trackAuthEvent(r, "auth_callback_failed", nil, "token_verify_failed", map[string]interface{}{"stage": "verify"})
 		writeError(w, 500, "token verify failed")
 		return
 	}
@@ -4701,10 +4759,14 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.sessions.SaveAndActivateForUser(userID, sess); err != nil {
 		log.Printf("[AUTH] Save session error: %v", err)
+		characterID := info.CharacterID
+		s.trackAuthEvent(r, "auth_callback_failed", &characterID, "save_session_failed", map[string]interface{}{"stage": "save"})
 		writeError(w, 500, "save session failed")
 		return
 	}
 	s.bumpAuthRevision(userID)
+	characterID := info.CharacterID
+	s.trackAuthEvent(r, "auth_callback_success", &characterID, "", map[string]interface{}{"desktop": entry.Desktop})
 
 	log.Printf("[AUTH] Logged in as %s (ID: %d)", info.CharacterName, info.CharacterID)
 
@@ -4748,12 +4810,20 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromRequest(r)
+	var characterID *int64
+	if s.sessions != nil {
+		if sess := s.sessions.GetForUser(userID); sess != nil && sess.CharacterID > 0 {
+			id := sess.CharacterID
+			characterID = &id
+		}
+	}
 	if s.sessions != nil {
 		s.sessions.DeleteForUser(userID)
 	}
 	s.bumpAuthRevision(userID)
 	s.clearWalletTxnCache()
 	log.Println("[AUTH] Logged out")
+	s.trackAuthEvent(r, "logout", characterID, "", nil)
 	s.writeAuthStatus(w, userID)
 }
 
@@ -5094,6 +5164,24 @@ func (s *Server) handleAuthCharacter(w http.ResponseWriter, r *http.Request) {
 			result.Risk = risk
 		}
 	}
+
+	var snapshotCharacterID *int64
+	if result.CharacterID > 0 {
+		id := result.CharacterID
+		snapshotCharacterID = &id
+	}
+	s.trackUserSnapshot(r, "auth_character", snapshotCharacterID, map[string]interface{}{
+		"character_id":   result.CharacterID,
+		"character_name": result.CharacterName,
+		"wallet_balance": result.Wallet,
+		"orders":         result.Orders,
+		"order_history":  result.OrderHistory,
+		"transactions":   result.Transactions,
+		"assets":         result.Assets,
+		"industry_jobs":  result.IndustryJobs,
+		"skills":         result.Skills,
+		"risk":           result.Risk,
+	})
 
 	writeJSON(w, result)
 }

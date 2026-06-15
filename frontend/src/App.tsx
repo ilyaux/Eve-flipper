@@ -54,6 +54,7 @@ import { formatISK } from "./lib/format";
 import { useAuth } from "./lib/useAuth";
 import { useVersionCheck } from "./lib/useVersionCheck";
 import { useEsiStatus } from "./lib/useEsiStatus";
+import { publicScanParams, trackClientTelemetry } from "./lib/telemetry";
 import {
   getCockpitTabLayout,
   getEffectiveCockpitDensity,
@@ -435,6 +436,40 @@ function App() {
       (Boolean(securityVaultStatus.configured) &&
         !securityVaultStatus.security_migration_required &&
         !securityVaultStatus.private_unlock_required));
+
+  useEffect(() => {
+    trackClientTelemetry({
+      event_type: "feature_opened",
+      module: tab,
+      character_id: authStatus.character_id,
+      properties: {
+        tab,
+        logged_in: authStatus.logged_in,
+        app_version: appVersion,
+      },
+    });
+  }, [tab, authStatus.character_id, authStatus.logged_in, appVersion]);
+
+  useEffect(() => {
+    const sendHeartbeat = () => {
+      trackClientTelemetry({
+        event_type: "active_session",
+        module: tab,
+        character_id: authStatus.character_id,
+        properties: {
+          tab,
+          logged_in: authStatus.logged_in,
+          app_version: appVersion,
+          visibility: document.visibilityState,
+          locale: navigator.language,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+      });
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 30_000);
+    return () => window.clearInterval(timer);
+  }, [tab, authStatus.character_id, authStatus.logged_in, appVersion]);
 
   const [radiusResults, setRadiusResults] = useState<FlipResult[]>([]);
   const [regionResults, setRegionResults] = useState<FlipResult[]>([]);
@@ -1187,6 +1222,24 @@ function App() {
     }
 
     const currentTab = tab;
+    const telemetryModule =
+      currentTab === "region"
+        ? "regional_day"
+        : currentTab === "contracts"
+          ? "contracts"
+          : currentTab === "radius"
+            ? "radius"
+            : currentTab;
+    const telemetryStartedAt = performance.now();
+    trackClientTelemetry({
+      event_type: "scan_started",
+      module: telemetryModule,
+      character_id: authStatus.character_id,
+      properties: {
+        tab: currentTab,
+        filters: publicScanParams(params as unknown as Record<string, unknown>),
+      },
+    });
     const controller = new AbortController();
     abortRef.current = controller;
     setScanning(true);
@@ -1314,6 +1367,16 @@ function App() {
         setContractResults(results);
         setContractCacheMeta(meta ?? null);
         setContractScanCompleted(true);
+        trackClientTelemetry({
+          event_type: "scan_finished",
+          module: "contracts",
+          character_id: authStatus.character_id,
+          properties: {
+            tab: currentTab,
+            result_count: results.length,
+            duration_ms: Math.round(performance.now() - telemetryStartedAt),
+          },
+        });
         void trackAchievementEvent("scan_completed", { rowsScanned: Math.max(1, results.length) });
       } else if (currentTab === "radius") {
         let meta: StationCacheMeta | undefined;
@@ -1331,6 +1394,16 @@ function App() {
         );
         setRadiusResults(results);
         setRadiusCacheMeta(meta ?? null);
+        trackClientTelemetry({
+          event_type: "scan_finished",
+          module: "radius",
+          character_id: authStatus.character_id,
+          properties: {
+            tab: currentTab,
+            result_count: results.length,
+            duration_ms: Math.round(performance.now() - telemetryStartedAt),
+          },
+        });
         void trackAchievementEvent("scan_completed", { rowsScanned: Math.max(1, results.length) });
         await triggerDesktopAlerts(results);
       } else if (currentTab === "region") {
@@ -1347,6 +1420,16 @@ function App() {
         setRegionResults(normalizedRows);
         setRegionCacheMeta(meta ?? null);
         queueRegionScanPersistence(normalizedRows);
+        trackClientTelemetry({
+          event_type: "scan_finished",
+          module: "regional_day",
+          character_id: authStatus.character_id,
+          properties: {
+            tab: currentTab,
+            result_count: normalizedRows.length,
+            duration_ms: Math.round(performance.now() - telemetryStartedAt),
+          },
+        });
         void trackAchievementEvent("scan_completed", { rowsScanned: Math.max(1, normalizedRows.length) });
 
         const flatRows: Array<{
@@ -1384,6 +1467,16 @@ function App() {
         );
         setRegionResults(results);
         setRegionCacheMeta(meta ?? null);
+        trackClientTelemetry({
+          event_type: "scan_finished",
+          module: "region",
+          character_id: authStatus.character_id,
+          properties: {
+            tab: currentTab,
+            result_count: results.length,
+            duration_ms: Math.round(performance.now() - telemetryStartedAt),
+          },
+        });
         void trackAchievementEvent("scan_completed", { rowsScanned: Math.max(1, results.length) });
         await triggerDesktopAlerts(results);
       }
@@ -1394,7 +1487,7 @@ function App() {
     } finally {
       setScanning(false);
     }
-  }, [scanning, tab, params, t, addToast, alertChannels, queueRegionScanPersistence, trackAchievementEvent]);
+  }, [scanning, tab, params, t, addToast, alertChannels, queueRegionScanPersistence, trackAchievementEvent, authStatus.character_id]);
 
   // Auto-refresh: when enabled and radius cache expires, re-trigger scan automatically
   useEffect(() => {
