@@ -335,6 +335,11 @@ func (s *Scanner) BuildRegionalDayTrader(
 		}
 
 		rejectionReason := ""
+		setRejection := func(reason string) {
+			if rejectionReason == "" {
+				rejectionReason = reason
+			}
+		}
 		// Category filter: early exit before any costly calculations.
 		if len(params.CategoryIDs) > 0 && s.SDE != nil {
 			if typeInfo, ok := s.SDE.Types[row.TypeID]; ok {
@@ -342,8 +347,41 @@ func (s *Scanner) BuildRegionalDayTrader(
 					if !params.RegionalDiagnosticMode {
 						continue
 					}
-					rejectionReason = "category_filter"
+					setRejection("category_filter")
 				}
+			}
+		}
+		if params.MinDailyVolume > 0 && (!row.HistoryAvailable || row.DailyVolume < params.MinDailyVolume) {
+			if !params.RegionalDiagnosticMode {
+				continue
+			}
+			setRejection("below_min_daily_volume")
+		}
+		scanMargin := row.RealMarginPercent
+		if scanMargin == 0 {
+			scanMargin = row.MarginPercent
+		}
+		if params.MinMargin > 0 && scanMargin < params.MinMargin {
+			if !params.RegionalDiagnosticMode {
+				continue
+			}
+			setRejection("below_scan_margin")
+		}
+		scanQty := row.FilledQty
+		if scanQty <= 0 {
+			scanQty = row.UnitsToBuy
+		}
+		scanBuyPrice := row.ExpectedBuyPrice
+		if scanBuyPrice <= 0 {
+			scanBuyPrice = row.BuyPrice
+		}
+		if params.MaxInvestment > 0 && scanBuyPrice > 0 && scanQty > 0 {
+			scanCapitalRequired := scanBuyPrice * buyCostMult * float64(scanQty)
+			if scanCapitalRequired > params.MaxInvestment {
+				if !params.RegionalDiagnosticMode {
+					continue
+				}
+				setRejection("above_scan_investment")
 			}
 		}
 
@@ -396,9 +434,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "untrusted_source_price"
-			}
+			setRejection("untrusted_source_price")
 		}
 
 		targetDemandPerDay := blendedRegionalDemandPerDay(row, targetStats, periodDays)
@@ -427,9 +463,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 				if !params.RegionalDiagnosticMode {
 					continue
 				}
-				if rejectionReason == "" {
-					rejectionReason = "cargo_too_small"
-				}
+				setRejection("cargo_too_small")
 				purchaseUnits = 0
 			} else {
 				if maxByCargoF > float64(math.MaxInt32) {
@@ -449,9 +483,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 					if !params.RegionalDiagnosticMode {
 						continue
 					}
-					if rejectionReason == "" {
-						rejectionReason = "capital_limit"
-					}
+					setRejection("capital_limit")
 					purchaseUnits = 0
 				} else if purchaseUnits > maxByCapital {
 					purchaseUnits = maxByCapital
@@ -462,9 +494,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "no_purchase_quantity"
-			}
+			setRejection("no_purchase_quantity")
 		}
 
 		coveredByAssets := int64(0)
@@ -493,9 +523,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "covered_by_existing_assets_orders"
-			}
+			setRejection("covered_by_existing_assets_orders")
 		}
 
 		jumps := row.SellJumps
@@ -516,9 +544,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "below_min_profit"
-			}
+			setRejection("below_min_profit")
 		}
 
 		capitalRequired := sourceAvgPrice * buyCostMult * float64(purchaseUnits)
@@ -567,25 +593,19 @@ func (s *Scanner) BuildRegionalDayTrader(
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "below_min_margin"
-			}
+			setRejection("below_min_margin")
 		}
 		if params.MinPeriodROI > 0 && roiPeriod < params.MinPeriodROI {
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "below_min_period_roi"
-			}
+			setRejection("below_min_period_roi")
 		}
 		if params.MinDemandPerDay > 0 && targetDemandPerDay < params.MinDemandPerDay {
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "below_min_demand"
-			}
+			setRejection("below_min_demand")
 		}
 
 		targetSupplyUnits := regionalFallbackSupplyUnits(row, periodDays)
@@ -604,31 +624,34 @@ func (s *Scanner) BuildRegionalDayTrader(
 			if !params.RegionalDiagnosticMode {
 				continue
 			}
-			if rejectionReason == "" {
-				rejectionReason = "above_max_dos"
-			}
+			setRejection("above_max_dos")
 		}
 		diagnosticDetails := regionalDiagnosticDetails(regionalDiagnosticInput{
-			Reason:             rejectionReason,
-			SourceAvgPrice:     sourceAvgPrice,
-			TargetNowPrice:     targetNowPrice,
-			TargetPeriodPrice:  targetPeriodPrice,
-			TargetDemandPerDay: targetDemandPerDay,
-			TargetDOS:          targetDOS,
-			PurchaseUnits:      purchaseUnits,
-			NowProfit:          nowProfit,
-			PeriodProfit:       periodProfit,
-			MarginNow:          marginNow,
-			ROIPeriod:          roiPeriod,
-			CapitalRequired:    capitalRequired,
-			CargoCapacity:      params.CargoCapacity,
-			ItemVolume:         row.Volume,
-			MinMargin:          params.MinMargin,
-			MinPeriodROI:       params.MinPeriodROI,
-			MinDemandPerDay:    params.MinDemandPerDay,
-			MinItemProfit:      params.MinItemProfit,
-			MaxDOS:             params.MaxDOS,
-			MaxInvestment:      params.MaxInvestment,
+			Reason:              rejectionReason,
+			ScanMargin:          scanMargin,
+			ScanCapitalRequired: scanBuyPrice * buyCostMult * float64(scanQty),
+			DailyVolume:         row.DailyVolume,
+			HistoryAvailable:    row.HistoryAvailable,
+			SourceAvgPrice:      sourceAvgPrice,
+			TargetNowPrice:      targetNowPrice,
+			TargetPeriodPrice:   targetPeriodPrice,
+			TargetDemandPerDay:  targetDemandPerDay,
+			TargetDOS:           targetDOS,
+			PurchaseUnits:       purchaseUnits,
+			NowProfit:           nowProfit,
+			PeriodProfit:        periodProfit,
+			MarginNow:           marginNow,
+			ROIPeriod:           roiPeriod,
+			CapitalRequired:     capitalRequired,
+			CargoCapacity:       params.CargoCapacity,
+			ItemVolume:          row.Volume,
+			MinMargin:           params.MinMargin,
+			MinDailyVolume:      params.MinDailyVolume,
+			MinPeriodROI:        params.MinPeriodROI,
+			MinDemandPerDay:     params.MinDemandPerDay,
+			MinItemProfit:       params.MinItemProfit,
+			MaxDOS:              params.MaxDOS,
+			MaxInvestment:       params.MaxInvestment,
 		})
 
 		tradeScore := computeTradeScore(regionalTradeScoreInput{
@@ -868,26 +891,31 @@ func regionalMarketDataStatus(
 }
 
 type regionalDiagnosticInput struct {
-	Reason             string
-	SourceAvgPrice     float64
-	TargetNowPrice     float64
-	TargetPeriodPrice  float64
-	TargetDemandPerDay float64
-	TargetDOS          float64
-	PurchaseUnits      int32
-	NowProfit          float64
-	PeriodProfit       float64
-	MarginNow          float64
-	ROIPeriod          float64
-	CapitalRequired    float64
-	CargoCapacity      float64
-	ItemVolume         float64
-	MinMargin          float64
-	MinPeriodROI       float64
-	MinDemandPerDay    float64
-	MinItemProfit      float64
-	MaxDOS             float64
-	MaxInvestment      float64
+	Reason              string
+	ScanMargin          float64
+	ScanCapitalRequired float64
+	DailyVolume         int64
+	HistoryAvailable    bool
+	SourceAvgPrice      float64
+	TargetNowPrice      float64
+	TargetPeriodPrice   float64
+	TargetDemandPerDay  float64
+	TargetDOS           float64
+	PurchaseUnits       int32
+	NowProfit           float64
+	PeriodProfit        float64
+	MarginNow           float64
+	ROIPeriod           float64
+	CapitalRequired     float64
+	CargoCapacity       float64
+	ItemVolume          float64
+	MinMargin           float64
+	MinDailyVolume      int64
+	MinPeriodROI        float64
+	MinDemandPerDay     float64
+	MinItemProfit       float64
+	MaxDOS              float64
+	MaxInvestment       float64
 }
 
 func regionalDiagnosticDetails(in regionalDiagnosticInput) []string {
@@ -901,6 +929,15 @@ func regionalDiagnosticDetails(in regionalDiagnosticInput) []string {
 	switch in.Reason {
 	case "below_min_margin":
 		add("now margin", in.MarginNow, in.MinMargin)
+	case "below_scan_margin":
+		add("scan margin", in.ScanMargin, in.MinMargin)
+	case "below_min_daily_volume":
+		details = append(details,
+			fmt.Sprintf("daily volume %d / min %d", in.DailyVolume, in.MinDailyVolume),
+		)
+		if !in.HistoryAvailable {
+			details = append(details, "market history unavailable")
+		}
 	case "below_min_period_roi":
 		add("period ROI", in.ROIPeriod, in.MinPeriodROI)
 	case "below_min_demand":
@@ -920,6 +957,11 @@ func regionalDiagnosticDetails(in regionalDiagnosticInput) []string {
 	case "capital_limit":
 		details = append(details,
 			fmt.Sprintf("capital required %s", formatRegionalDiagNumber(in.CapitalRequired)),
+			fmt.Sprintf("max investment %s", formatRegionalDiagNumber(in.MaxInvestment)),
+		)
+	case "above_scan_investment":
+		details = append(details,
+			fmt.Sprintf("scan capital required %s", formatRegionalDiagNumber(in.ScanCapitalRequired)),
 			fmt.Sprintf("max investment %s", formatRegionalDiagNumber(in.MaxInvestment)),
 		)
 	case "no_purchase_quantity":

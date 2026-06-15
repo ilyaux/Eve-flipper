@@ -1779,6 +1779,15 @@ export function ScanResultsTable({
     regionGroups,
   ]);
 
+  const selectableVisibleRows = useMemo(
+    () => visibleRows.filter((ir) => !ir.row.DayDiagnosticRejected),
+    [visibleRows],
+  );
+  const selectableVisibleIds = useMemo(
+    () => new Set(selectableVisibleRows.map((ir) => ir.id)),
+    [selectableVisibleRows],
+  );
+
   const { pageRows, totalPages, safePage } = useMemo(() => {
     if (isRegionGrouped || isItemGrouped) {
       return { pageRows: visibleRows, totalPages: 1, safePage: 0 };
@@ -1795,10 +1804,10 @@ export function ScanResultsTable({
   const backtestRows = useMemo(() => {
     const rows =
       selectedIds.size > 0
-        ? visibleRows.filter((ir) => selectedIds.has(ir.id))
-        : visibleRows;
+        ? selectableVisibleRows.filter((ir) => selectedIds.has(ir.id))
+        : selectableVisibleRows;
     return rows.map((ir) => ir.row);
-  }, [selectedIds, visibleRows]);
+  }, [selectableVisibleRows, selectedIds]);
 
   const createPaperTradeFromRow = useCallback(
     async (row: FlipResult) => {
@@ -1884,13 +1893,12 @@ export function ScanResultsTable({
   // Prune selected rows that are hidden by filters
   useEffect(() => {
     if (selectedIds.size === 0) return;
-    const visibleIds = new Set(visibleRows.map((ir) => ir.id));
     setSelectedIds((prev) => {
       if (prev.size === 0) return prev;
-      const next = new Set([...prev].filter((id) => visibleIds.has(id)));
+      const next = new Set([...prev].filter((id) => selectableVisibleIds.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [selectedIds.size, visibleRows]);
+  }, [selectableVisibleIds, selectedIds.size]);
 
   useEffect(() => {
     if (!ignoredModalOpen) {
@@ -2011,20 +2019,23 @@ export function ScanResultsTable({
   const hasActiveFilters = Object.values(filters).some((v) => !!v);
 
   const toggleSelect = useCallback((id: number) => {
+    if (!selectableVisibleIds.has(id)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  }, [selectableVisibleIds]);
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (prev.size === visibleRows.length) return new Set();
-      return new Set(visibleRows.map((ir) => ir.id));
+      if (selectableVisibleRows.length > 0 && prev.size === selectableVisibleRows.length) {
+        return new Set();
+      }
+      return new Set(selectableVisibleRows.map((ir) => ir.id));
     });
-  }, [visibleRows]);
+  }, [selectableVisibleRows]);
 
   const togglePin = useCallback((id: number) => {
     setPinnedIds((prev) => {
@@ -2190,8 +2201,8 @@ export function ScanResultsTable({
   const exportCSV = useCallback(() => {
     const rows =
       selectedIds.size > 0
-        ? visibleRows.filter((ir) => selectedIds.has(ir.id))
-        : visibleRows;
+        ? selectableVisibleRows.filter((ir) => selectedIds.has(ir.id))
+        : selectableVisibleRows;
     const header = columnDefs.map((c) => t(c.labelKey)).join(",");
     const csvRows = rows.map((ir) =>
       columnDefs
@@ -2210,20 +2221,20 @@ export function ScanResultsTable({
     a.click();
     URL.revokeObjectURL(url);
     addToast(`${t("exportCSV")}: ${rows.length} rows`, "success", 2000);
-  }, [visibleRows, selectedIds, columnDefs, addToast, t]);
+  }, [selectableVisibleRows, selectedIds, columnDefs, addToast, t]);
 
   const copyTable = useCallback(() => {
     const rows =
       selectedIds.size > 0
-        ? visibleRows.filter((ir) => selectedIds.has(ir.id))
-        : visibleRows;
+        ? selectableVisibleRows.filter((ir) => selectedIds.has(ir.id))
+        : selectableVisibleRows;
     const header = columnDefs.map((c) => t(c.labelKey)).join("\t");
     const tsv = rows.map((ir) =>
       columnDefs.map((col) => fmtCell(col, ir.row)).join("\t"),
     );
     navigator.clipboard.writeText([header, ...tsv].join("\n"));
     addToast(t("copied"), "success", 2000);
-  }, [visibleRows, selectedIds, columnDefs, addToast, t]);
+  }, [selectableVisibleRows, selectedIds, columnDefs, addToast, t]);
 
   const hiddenEntries = useMemo(
     () =>
@@ -2368,7 +2379,8 @@ export function ScanResultsTable({
         pinnedLeftByKey={pinnedLeftByKey}
         compactMode={compactMode}
         isPinned={pinnedIds.has(ir.id)}
-        isSelected={selectedIds.has(ir.id)}
+        isSelected={selectableVisibleIds.has(ir.id) && selectedIds.has(ir.id)}
+        isSelectable={!ir.row.DayDiagnosticRejected}
         isFocused={focusedRowId === ir.id}
         variant={variantByRowId.get(ir.id)}
         rowHidden={hiddenMap[flipStateKey(ir.row)]}
@@ -2397,6 +2409,7 @@ export function ScanResultsTable({
       onLmbClick,
       pinnedIds,
       selectedIds,
+      selectableVisibleIds,
       t,
       toggleItemGroupExpanded,
       togglePin,
@@ -2954,11 +2967,12 @@ export function ScanResultsTable({
                 <input
                   type="checkbox"
                   checked={
-                    visibleRows.length > 0 &&
-                    selectedIds.size === visibleRows.length
+                    selectableVisibleRows.length > 0 &&
+                    selectedIds.size === selectableVisibleRows.length
                   }
+                  disabled={selectableVisibleRows.length === 0}
                   onChange={toggleSelectAll}
-                  className="accent-eve-accent cursor-pointer"
+                  className="accent-eve-accent cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
                 />
               </th>
               <th className="sticky left-8 z-30 w-8 px-1 py-2 bg-eve-dark" />
@@ -3667,6 +3681,7 @@ interface DataRowProps {
   compactMode: boolean;
   isPinned: boolean;
   isSelected: boolean;
+  isSelectable: boolean;
   isFocused: boolean;
   variant: { index: number; total: number } | undefined;
   rowHidden: HiddenFlipEntry | undefined;
@@ -3750,7 +3765,7 @@ function RouteSafetyCell({
 const DataRow = memo(
   function DataRow({
     ir, globalIdx, columnDefs, pinnedLeftByKey, compactMode,
-    isPinned, isSelected, isFocused, variant, rowHidden,
+    isPinned, isSelected, isSelectable, isFocused, variant, rowHidden,
     isItemGrouped, isRegionGrouped, variantExpandable, variantExpanded,
     onToggleVariantGroup, onContextMenu, onLmbClick,
     onToggleSelect, onTogglePin, tFn,
@@ -3784,8 +3799,12 @@ const DataRow = memo(
           <input
             type="checkbox"
             checked={isSelected}
-            onChange={() => onToggleSelect(ir.id)}
-            className="accent-eve-accent cursor-pointer"
+            disabled={!isSelectable}
+            onChange={() => {
+              if (isSelectable) onToggleSelect(ir.id);
+            }}
+            title={isSelectable ? undefined : "Diagnostic rejected rows are not selectable"}
+            className="accent-eve-accent cursor-pointer disabled:cursor-not-allowed disabled:opacity-35"
           />
         </td>
         <td className={`sticky left-8 z-10 w-8 px-1 text-center bg-inherit ${compactMode ? "py-1" : "py-1.5"}`}>
@@ -3903,6 +3922,7 @@ const DataRow = memo(
   (prev, next) =>
     prev.isPinned === next.isPinned &&
     prev.isSelected === next.isSelected &&
+    prev.isSelectable === next.isSelectable &&
     prev.isFocused === next.isFocused &&
     prev.rowHidden === next.rowHidden &&
     prev.globalIdx === next.globalIdx &&

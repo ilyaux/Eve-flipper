@@ -999,6 +999,86 @@ func TestBuildRegionalDayTrader_MaxDOSBehavior(t *testing.T) {
 
 // ── extractLastNAvgPrices ────────────────────────────────────────────────────
 
+func TestBuildRegionalDayTrader_DiagnosticMarksRowsFilteredByUpstreamScan(t *testing.T) {
+	scanner := &Scanner{
+		SDE: &sde.Data{
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Jita", RegionID: 10, Security: 0.9},
+				2: {ID: 2, Name: "Amarr", RegionID: 20, Security: 0.9},
+			},
+			Regions: map[int32]*sde.Region{
+				10: {ID: 10, Name: "The Forge"},
+				20: {ID: 20, Name: "Domain"},
+			},
+		},
+	}
+
+	base := FlipResult{
+		TypeID:            8001,
+		TypeName:          "Diagnostic Probe",
+		Volume:            1,
+		BuyPrice:          100,
+		ExpectedBuyPrice:  100,
+		SellPrice:         300,
+		ExpectedSellPrice: 300,
+		BuySystemID:       1,
+		BuySystemName:     "Jita",
+		BuyRegionID:       10,
+		BuyRegionName:     "The Forge",
+		SellSystemID:      2,
+		SellSystemName:    "Amarr",
+		SellRegionID:      20,
+		SellRegionName:    "Domain",
+		UnitsToBuy:        10,
+		FilledQty:         10,
+		SellOrderRemain:   100,
+		TargetSellSupply:  100,
+		DailyVolume:       100,
+		S2BPerDay:         25,
+		SellJumps:         1,
+		HistoryAvailable:  true,
+		RealMarginPercent: 200,
+		MarginPercent:     200,
+	}
+
+	assertDiagnosticReject := func(t *testing.T, params ScanParams, row FlipResult, reason string) {
+		t.Helper()
+
+		hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(params, []FlipResult{row}, nil, nil)
+		if len(hubs) != 0 || totalItems != 0 {
+			t.Fatalf("normal mode returned hubs=%d totalItems=%d, want filtered out", len(hubs), totalItems)
+		}
+
+		params.RegionalDiagnosticMode = true
+		hubs, totalItems, _, _ = scanner.BuildRegionalDayTrader(params, []FlipResult{row}, nil, nil)
+		if len(hubs) != 1 || totalItems != 1 || len(hubs[0].Items) != 1 {
+			t.Fatalf("diagnostic mode shape hubs=%d totalItems=%d", len(hubs), totalItems)
+		}
+		item := hubs[0].Items[0]
+		if !item.DiagnosticRejected || item.DiagnosticReason != reason {
+			t.Fatalf("diagnostic rejection = (%v, %q), want true/%q", item.DiagnosticRejected, item.DiagnosticReason, reason)
+		}
+	}
+
+	t.Run("min_daily_volume", func(t *testing.T) {
+		row := base
+		row.DailyVolume = 5
+		assertDiagnosticReject(t, ScanParams{MinDailyVolume: 100}, row, "below_min_daily_volume")
+	})
+
+	t.Run("scan_margin", func(t *testing.T) {
+		row := base
+		row.RealMarginPercent = 2
+		row.MarginPercent = 2
+		assertDiagnosticReject(t, ScanParams{MinMargin: 10}, row, "below_scan_margin")
+	})
+
+	t.Run("scan_investment", func(t *testing.T) {
+		row := base
+		assertDiagnosticReject(t, ScanParams{MaxInvestment: 500}, row, "above_scan_investment")
+	})
+}
+
 func TestExtractLastNAvgPrices_Empty(t *testing.T) {
 	result := extractLastNAvgPrices(nil, 14)
 	if result != nil {
