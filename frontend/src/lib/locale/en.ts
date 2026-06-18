@@ -3,7 +3,7 @@ export const en = {
     appTitle: "EVE Flipper",
     loginEve: "Login with EVE",
     loginWaiting: "Waiting for login...",
-    patronsTitle: "Patreon Supporters",
+    patronsTitle: "Project Supporters",
     patronsOpenList: "Open supporters list",
     patronsSource: "Data source:",
     patronsRefresh: "Refresh list",
@@ -1352,7 +1352,7 @@ export const en = {
     headerTagline: "Regional Trade Engine",
     discordCta: "Join Discord",
     discordPitch: "Builds, updates, early features",
-    supportPatreon: "Support on Patreon",
+    supportDonation: "Support on Ko-fi",
 
     // Portfolio P&L
     charPnlTab: "P&L",

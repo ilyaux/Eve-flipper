@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Search } from "lucide-react";
+import { ClipboardList, Coffee, Search } from "lucide-react";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import { StatusBar } from "./components/StatusBar";
 import { ParametersPanel } from "./components/ParametersPanel";
@@ -109,6 +109,10 @@ const defaultPatronsURL = "https://ilyaux.github.io/eve-flipper-data/patrons.jso
 const patronsDataURL =
   (import.meta.env.VITE_PATRONS_URL as string | undefined)?.trim() ||
   defaultPatronsURL;
+const defaultDonationURL = "https://ko-fi.com/eveflipper";
+const donationURL =
+  (import.meta.env.VITE_DONATION_URL as string | undefined)?.trim() ||
+  defaultDonationURL;
 const REGION_SCAN_RESTORE_MAX_ROWS = 750;
 
 type DesktopRuntimeWindow = Window & {
@@ -1711,22 +1715,15 @@ function App() {
               </svg>
             </a>
             <a
-              href="https://www.patreon.com/cw/EVEFlipper"
+              href={donationURL}
               target="_blank"
               rel="noreferrer"
               className="p-1 rounded-sm hover:bg-eve-panel hover:text-eve-accent transition-colors"
-              aria-label={t("supportPatreon")}
-              title={t("supportPatreon")}
+              aria-label={t("supportDonation")}
+              title={t("supportDonation")}
             >
-            <svg
-              className="w-4 h-4"
-              viewBox="0 0 1080 1080"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <path d="M1033.05 324.45c-.19-137.9-107.59-250.92-233.6-291.7-156.48-50.64-362.86-43.3-512.28 27.2-181.1 85.46-237.99 272.66-240.11 459.36-1.74 153.5 13.58 557.79 241.62 560.67 169.44 2.15 194.67-216.18 273.07-321.33 55.78-74.81 127.6-95.94 216.01-117.82 151.95-37.61 255.51-157.53 255.29-316.38z" />
-            </svg>
-          </a>
+              <Coffee className="w-4 h-4" aria-hidden="true" />
+            </a>
             <button
               type="button"
               onClick={() => setShowPatrons(true)}
@@ -2173,16 +2170,14 @@ function App() {
             </svg>
           </a>
           <a
-            href="https://www.patreon.com/cw/EVEFlipper"
+            href={donationURL}
             target="_blank"
             rel="noreferrer"
             className="flex items-center justify-center h-9 w-9 bg-eve-panel border border-eve-border rounded-sm text-eve-dim hover:text-eve-accent"
-            aria-label={t("supportPatreon")}
-            title={t("supportPatreon")}
+            aria-label={t("supportDonation")}
+            title={t("supportDonation")}
           >
-            <svg className="w-4 h-4" viewBox="0 0 1080 1080" fill="currentColor">
-              <path d="M1033.05 324.45c-.19-137.9-107.59-250.92-233.6-291.7-156.48-50.64-362.86-43.3-512.28 27.2-181.1 85.46-237.99 272.66-240.11 459.36-1.74 153.5 13.58 557.79 241.62 560.67 169.44 2.15 194.67-216.18 273.07-321.33 55.78-74.81 127.6-95.94 216.01-117.82 151.95-37.61 255.51-157.53 255.29-316.38z" />
-            </svg>
+            <Coffee className="w-4 h-4" aria-hidden="true" />
           </a>
           <button
             type="button"
@@ -2760,15 +2755,13 @@ function App() {
 
           <div className="mt-4 pt-3 border-t border-eve-border/50">
             <a
-              href="https://www.patreon.com/cw/EVEFlipper"
+              href={donationURL}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 text-sm text-eve-accent hover:text-eve-accent-hover"
             >
-              <svg className="w-4 h-4" viewBox="0 0 1080 1080" fill="currentColor" aria-hidden="true">
-                <path d="M1033.05 324.45c-.19-137.9-107.59-250.92-233.6-291.7-156.48-50.64-362.86-43.3-512.28 27.2-181.1 85.46-237.99 272.66-240.11 459.36-1.74 153.5 13.58 557.79 241.62 560.67 169.44 2.15 194.67-216.18 273.07-321.33 55.78-74.81 127.6-95.94 216.01-117.82 151.95-37.61 255.51-157.53 255.29-316.38z" />
-              </svg>
-              <span>{t("supportPatreon")}</span>
+              <Coffee className="w-4 h-4" aria-hidden="true" />
+              <span>{t("supportDonation")}</span>
             </a>
           </div>
         </div>

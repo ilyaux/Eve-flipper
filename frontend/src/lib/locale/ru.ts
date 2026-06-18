@@ -3,15 +3,15 @@ export const ru = {
     appTitle: "EVE Flipper",
     loginEve: "Войти через EVE",
     loginWaiting: "Ожидание входа...",
-    patronsTitle: "Поддержка на Patreon",
-    patronsOpenList: "Открыть список патронов",
+    patronsTitle: "Поддержавшие проект",
+    patronsOpenList: "Открыть список поддержавших",
     patronsSource: "Источник данных:",
     patronsRefresh: "Обновить список",
-    patronsLoading: "Загружаю список патронов...",
-    patronsFetchError: "Не удалось загрузить список патронов",
-    patronsEmpty: "Список патронов пока пуст.",
+    patronsLoading: "Загружаю список поддержавших...",
+    patronsFetchError: "Не удалось загрузить список поддержавших",
+    patronsEmpty: "Список поддержавших пока пуст.",
     patronsSince: "С",
-    patronsCountLabel: "Патронов: {count}",
+    patronsCountLabel: "Поддержавших: {count}",
     patronsUpdatedAt: "Обновлено {date}",
 
     // Achievements
@@ -1352,7 +1352,7 @@ export const ru = {
     headerTagline: "Движок Regional Trade",
     discordCta: "Залетай в Discord",
     discordPitch: "Сборки, апдейты, ранний доступ",
-    supportPatreon: "Поддержать на Patreon",
+    supportDonation: "Поддержать на Ko-fi",
 
     // Portfolio P&L
     charPnlTab: "P&L",
