@@ -4729,11 +4729,20 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if s.sessions != nil && s.sessions.Vault() != nil && s.sessions.Vault().TableReady() {
 		vaultStatus := s.sessions.Vault().StatusForUser(userID)
 		if !vaultStatus.Configured {
-			s.trackAuthEvent(r, "auth_callback_failed", nil, "vault_not_configured", map[string]interface{}{"stage": "login"})
-			writeError(w, http.StatusConflict, "security vault not configured")
-			return
+			if s.isHostedDeployment() {
+				if err := s.sessions.Vault().SetupStandardForUser(userID); err != nil {
+					s.trackAuthEvent(r, "auth_callback_failed", nil, "vault_setup_failed", map[string]interface{}{"stage": "login"})
+					writeError(w, http.StatusInternalServerError, "security vault setup failed")
+					return
+				}
+				s.bumpAuthRevision(userID)
+			} else {
+				s.trackAuthEvent(r, "auth_callback_failed", nil, "vault_not_configured", map[string]interface{}{"stage": "login"})
+				writeError(w, http.StatusConflict, "security vault not configured")
+				return
+			}
 		}
-		if vaultStatus.Locked {
+		if vaultStatus.Locked && !s.isHostedDeployment() {
 			s.trackAuthEvent(r, "auth_callback_failed", nil, "vault_locked", map[string]interface{}{"stage": "login"})
 			writeError(w, http.StatusLocked, "private security vault locked")
 			return

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
@@ -44,6 +45,15 @@ func normalizeUserID(userID string) string {
 		return defaultUserID
 	}
 	return trimmed
+}
+
+func hostedSessionModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("EVEFLIPPER_HOSTED"))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // Save stores or updates a character session while preserving active selection.
@@ -274,8 +284,49 @@ func (s *SessionStore) prepareSessionForStorage(userID string, sess *Session) (*
 		return &stored, nil
 	}
 	if !s.vault.IsConfiguredForUser(userID) {
+		if hostedSessionModeEnabled() {
+			if err := s.vault.SetupStandardForUser(userID); err != nil {
+				return nil, fmt.Errorf("setup hosted security vault: %w", err)
+			}
+			stored = *sess
+		} else {
+			return nil, fmt.Errorf("security vault not configured")
+		}
+	}
+	prepared, err := s.prepareSessionForConfiguredVault(userID, &stored)
+	if err == nil {
+		return prepared, nil
+	}
+	if !hostedSessionModeEnabled() {
+		return nil, err
+	}
+	log.Printf("[AUTH] Resetting hosted security vault for %s after token encryption failure: %v", userID, err)
+	if resetErr := s.vault.ResetForUser(userID, false); resetErr != nil {
+		return nil, fmt.Errorf("reset hosted security vault: %w", resetErr)
+	}
+	if setupErr := s.vault.SetupStandardForUser(userID); setupErr != nil {
+		return nil, fmt.Errorf("setup hosted security vault: %w", setupErr)
+	}
+	stored = *sess
+	prepared, err = s.prepareSessionForConfiguredVault(userID, &stored)
+	if err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func (s *SessionStore) prepareSessionForConfiguredVault(userID string, sess *Session) (*Session, error) {
+	if sess == nil {
+		return nil, fmt.Errorf("nil session")
+	}
+	if s.vault == nil || !s.vault.TableReady() {
+		stored := *sess
+		return &stored, nil
+	}
+	if !s.vault.IsConfiguredForUser(userID) {
 		return nil, fmt.Errorf("security vault not configured")
 	}
+	stored := *sess
 	accessToken, err := s.vault.PrepareTokenForStorage(userID, stored.CharacterID, "access", stored.AccessToken)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt access token: %w", err)

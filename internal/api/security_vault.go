@@ -107,6 +107,22 @@ func (s *Server) handleSecurityVaultReset(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) securityVaultPayload(userID string) map[string]interface{} {
+	protectedFields := securityVaultProtectedFields()
+	if s != nil && s.isHostedDeployment() {
+		return map[string]interface{}{
+			"available":                    false,
+			"configured":                   true,
+			"mode":                         "standard",
+			"status":                       "managed",
+			"security_migration_required":  false,
+			"private_unlock_required":      false,
+			"destructive_reset_available":  false,
+			"standard_background_sync":     true,
+			"zero_knowledge_local_storage": false,
+			"field_encryption_active":      true,
+			"protected_fields":             protectedFields,
+		}
+	}
 	if s.sessions == nil || s.sessions.Vault() == nil {
 		return map[string]interface{}{
 			"configured":                  false,
@@ -117,24 +133,6 @@ func (s *Server) securityVaultPayload(userID string) map[string]interface{} {
 		}
 	}
 	status := s.sessions.Vault().StatusForUser(userID)
-	protectedFields := []string{
-		"auth_session.access_token",
-		"auth_session.refresh_token",
-		"config.alert_telegram_token",
-		"config.alert_telegram_chat_id",
-		"config.alert_discord_webhook",
-		"wallet_archive_sync.wallet_balance",
-		"wallet_archive_sync.total_sp",
-		"wallet_journal_archive.reason",
-		"wallet_journal_archive.description",
-		"wallet_journal_archive.context_id_type",
-		"paper_trades.notes",
-		"paper_trades.source",
-		"industry_projects.notes",
-		"industry_jobs.notes",
-		"cockpit_preferences.payload_json",
-		"cockpit_loadouts.payload_json",
-	}
 	return map[string]interface{}{
 		"available":                    true,
 		"configured":                   status.Configured,
@@ -154,5 +152,26 @@ func (s *Server) securityVaultPayload(userID string) map[string]interface{} {
 		"zero_knowledge_local_storage": status.Configured && status.Mode == "private",
 		"field_encryption_active":      status.Configured && !status.Locked,
 		"protected_fields":             protectedFields,
+	}
+}
+
+func securityVaultProtectedFields() []string {
+	return []string{
+		"auth_session.access_token",
+		"auth_session.refresh_token",
+		"config.alert_telegram_token",
+		"config.alert_telegram_chat_id",
+		"config.alert_discord_webhook",
+		"wallet_archive_sync.wallet_balance",
+		"wallet_archive_sync.total_sp",
+		"wallet_journal_archive.reason",
+		"wallet_journal_archive.description",
+		"wallet_journal_archive.context_id_type",
+		"paper_trades.notes",
+		"paper_trades.source",
+		"industry_projects.notes",
+		"industry_jobs.notes",
+		"cockpit_preferences.payload_json",
+		"cockpit_loadouts.payload_json",
 	}
 }
