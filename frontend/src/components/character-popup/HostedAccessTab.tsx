@@ -242,7 +242,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
       `Optional Reason / Description code: ${payment.reason_code}`,
       `Request expires: ${formatDate(payment.expires_at)} (${formatCountdown(payment.expires_at, now)})`,
       "If your EVE transfer window has no Reason / Description field, leave it empty. The payment can still match by sender and exact amount.",
-      "After sending: keep this tab open or press Refresh status. Wallet journal polling checks about every 20 seconds.",
+      "After sending: keep this tab open or press Refresh status. Wallet journal polling checks about every 30 seconds.",
     ].filter(Boolean);
     await copyText("all", lines.join("\n"), "full");
   };
@@ -446,7 +446,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
                 <div className="flex min-w-0 items-center gap-2">
                   <Clock3 className="h-4 w-4 shrink-0" />
                   <span>
-                    Pending request{pendingPlan ? ` for ${pendingPlan.name}` : ""}. Wallet polling checks about every 20 seconds.
+                    Pending request{pendingPlan ? ` for ${pendingPlan.name}` : ""}. Wallet polling checks about every 30 seconds.
                   </span>
                 </div>
                 <span className={paymentExpired ? "font-semibold text-eve-error" : "font-semibold text-eve-accent"}>{pendingCountdown}</span>
