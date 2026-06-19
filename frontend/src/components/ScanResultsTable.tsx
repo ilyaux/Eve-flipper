@@ -245,8 +245,9 @@ const baseColumnDefs: ColumnDef[] = [
   {
     key: "TotalJumps",
     labelKey: "colJumps",
-    width: "min-w-[60px]",
+    width: "min-w-[78px]",
     numeric: true,
+    tooltipKey: "colJumpsHint" as TranslationKey,
   },
   {
     key: "DailyVolume",
@@ -962,6 +963,18 @@ function fmtCell(col: ColumnDef, row: FlipResult): string {
   }
   if (typeof val === "number") return val.toLocaleString();
   return String(val ?? "");
+}
+
+function tripJumpsBreakdown(row: FlipResult): { total: number; pickup: number; trade: number; title: string } {
+  const pickup = Math.max(0, Math.floor(finiteNumber(row.BuyJumps)));
+  const trade = Math.max(0, Math.floor(finiteNumber(row.SellJumps)));
+  const explicitTotal = Math.floor(finiteNumber(row.TotalJumps));
+  const total = explicitTotal > 0 ? explicitTotal : pickup + trade;
+  const title =
+    pickup > 0
+      ? `Total trip: ${total} jumps (${pickup} pickup + ${trade} buy-to-sell)`
+      : `Buy-to-sell route: ${total} jumps`;
+  return { total, pickup, trade, title };
 }
 
 function finiteNumber(value: unknown, fallback = 0): number {
@@ -3940,6 +3953,20 @@ const DataRow = memo(
                 to={ir.row.SellSystemID}
                 onRouteSafetyClick={onRouteSafetyClick}
               />
+            ) : col.key === "TotalJumps" ? (
+              (() => {
+                const jumps = tripJumpsBreakdown(ir.row);
+                return (
+                  <div title={jumps.title} className="flex flex-col items-end leading-tight">
+                    <span>{jumps.total.toLocaleString()}</span>
+                    {jumps.pickup > 0 && jumps.trade > 0 && (
+                      <span className="text-[10px] font-normal text-eve-dim">
+                        {jumps.pickup}+{jumps.trade}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()
             ) : col.key === "BuyStation" ? (
               <span className="truncate">{fmtCell(col, ir.row)}</span>
             ) : (
