@@ -330,9 +330,9 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
     const valueContent = <span className="break-words">{value}</span>;
 
     return (
-      <div className="border border-eve-border/65 bg-eve-dark/45 p-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
+      <div className="min-w-0 border border-eve-border/65 bg-eve-dark/45 p-3">
+        <div className="flex min-w-0 flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1 basis-60">
             <div className="text-[10px] uppercase tracking-[0.16em] text-eve-dim">
               {step}. {title}
             </div>
@@ -345,7 +345,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
             )}
             {hint && <div className="mt-1 text-xs leading-relaxed text-eve-dim">{hint}</div>}
           </div>
-          {renderCopyButton(key, "Copy", copyValue, copyMode)}
+          <div className="max-w-full shrink-0">{renderCopyButton(key, "Copy", copyValue, copyMode)}</div>
         </div>
       </div>
     );
@@ -424,8 +424,8 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
 
   return (
     <div className="space-y-4 text-sm">
-      <div className="grid gap-3 xl:grid-cols-[minmax(360px,0.85fr)_minmax(560px,1.15fr)]">
-        <section className="border border-eve-border bg-eve-panel/65 p-4">
+      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <section className="min-w-0 border border-eve-border bg-eve-panel/65 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-[10px] uppercase tracking-[0.2em] text-eve-dim">Current access</div>
@@ -471,7 +471,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
           </div>
         </section>
 
-        <section className="border border-eve-border bg-eve-panel/65 p-4">
+        <section className="min-w-0 border border-eve-border bg-eve-panel/65 p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-[10px] uppercase tracking-[0.2em] text-eve-dim">Payment</div>
             <button
@@ -493,7 +493,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
                 <span className={`shrink-0 font-semibold ${paymentExpired ? "text-eve-error" : "text-eve-accent"}`}>{pendingCountdown}</span>
               </div>
 
-              <div className="space-y-2 border border-eve-border/70 bg-eve-dark/35 p-3">
+              <div className="min-w-0 space-y-2 border border-eve-border/70 bg-eve-dark/35 p-3">
                 {renderPaymentDetail(
                   "receiver",
                   "1",
@@ -529,40 +529,40 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex min-w-0 flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={copyPaymentInstructions}
-                  className="inline-flex items-center gap-1.5 border border-eve-border bg-eve-dark/70 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-dim hover:border-eve-accent/50 hover:text-eve-accent"
+                  className="inline-flex max-w-full items-center gap-1.5 border border-eve-border bg-eve-dark/70 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-dim hover:border-eve-accent/50 hover:text-eve-accent"
                 >
                   {copiedKey === "all" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  {copiedKey === "all" ? "Copied instructions" : "Copy full instructions"}
+                  <span className="truncate">{copiedKey === "all" ? "Copied instructions" : "Copy full instructions"}</span>
                 </button>
                 <button
                   type="button"
                   onClick={onReload}
                   disabled={loading}
-                  className="inline-flex items-center gap-1.5 border border-eve-border bg-eve-dark/70 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-dim hover:border-eve-accent/50 hover:text-eve-accent"
+                  className="inline-flex max-w-full items-center gap-1.5 border border-eve-border bg-eve-dark/70 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-dim hover:border-eve-accent/50 hover:text-eve-accent"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  {refreshStatusLabel}
+                  <span className="truncate">{refreshStatusLabel}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowPlanPicker(true)}
-                  className="inline-flex items-center gap-1.5 border border-eve-border bg-eve-dark/70 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-dim hover:border-eve-accent/50 hover:text-eve-accent disabled:opacity-50"
+                  className="inline-flex max-w-full items-center gap-1.5 border border-eve-border bg-eve-dark/70 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-dim hover:border-eve-accent/50 hover:text-eve-accent disabled:opacity-50"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
-                  Choose another plan
+                  <span className="truncate">Choose another plan</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => { void cancelPaymentRequest(); }}
                   disabled={cancelingPayment}
-                  className="inline-flex items-center gap-1.5 border border-eve-error/45 bg-eve-error/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-error hover:bg-eve-error/15 disabled:opacity-50"
+                  className="inline-flex max-w-full items-center gap-1.5 border border-eve-error/45 bg-eve-error/10 px-3 py-2 text-xs uppercase tracking-[0.12em] text-eve-error hover:bg-eve-error/15 disabled:opacity-50"
                 >
                   <X className="h-3.5 w-3.5" />
-                  {cancelingPayment ? "Canceling..." : "Cancel pending"}
+                  <span className="truncate">{cancelingPayment ? "Canceling..." : "Cancel pending"}</span>
                 </button>
               </div>
               {paymentError && <div className="border border-eve-error/40 bg-eve-error/10 px-3 py-2 text-xs text-eve-error">{paymentError}</div>}
