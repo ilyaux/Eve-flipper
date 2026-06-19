@@ -124,7 +124,7 @@ function paymentHistoryHint(status?: string) {
     case "receiver_mismatch":
       return "Transfer went to a different receiver wallet.";
     case "unmatched":
-      return "Reason code was not recognized.";
+      return "No active request matched the wallet row by code, sender, and exact amount.";
     default:
       return "";
   }
@@ -137,7 +137,7 @@ function paymentState(access: HostedAccessStatus | null, paymentHistory: HostedA
     return {
       tone: "text-eve-accent border-eve-accent/40 bg-eve-accent/10",
       title: "Waiting for payment",
-      body: "Send ISK with the exact reason code. Wallet polling will activate access automatically after the transfer is visible.",
+      body: "Send the exact ISK amount to the receiver. If EVE shows a Reason / Description field, paste the optional code too. Wallet polling activates access after the transfer is visible.",
     };
   }
   if (status === "active" || status === "trial" || status === "grace") {
@@ -164,7 +164,7 @@ function paymentState(access: HostedAccessStatus | null, paymentHistory: HostedA
   return {
     tone: "text-eve-dim border-eve-border bg-eve-dark/55",
     title: "Choose a plan",
-    body: "Create a payment request, send ISK with the generated reason code, then refresh status.",
+    body: "Create a payment request, send the exact ISK amount to the receiver, then refresh status.",
   };
 }
 
@@ -239,8 +239,9 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
       pendingPlan ? `Plan: ${pendingPlan.name} (${pendingPlan.id})` : pendingHistoryRow?.plan_id ? `Plan: ${pendingHistoryRow.plan_id}` : "",
       ...receiverInstructionLines(payment),
       `Exact amount: ${exactIskAmount(payment.amount_isk)} ISK`,
-      `Reason / Description: ${payment.reason_code}`,
+      `Optional Reason / Description code: ${payment.reason_code}`,
       `Request expires: ${formatDate(payment.expires_at)} (${formatCountdown(payment.expires_at, now)})`,
+      "If your EVE transfer window has no Reason / Description field, leave it empty. The payment can still match by sender and exact amount.",
       "After sending: keep this tab open or press Refresh status. Wallet journal polling checks about every 20 seconds.",
     ].filter(Boolean);
     await copyText("all", lines.join("\n"), "full");
@@ -475,7 +476,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
                   <div className="min-w-0 border border-eve-border/60 bg-eve-panel/45 p-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-[10px] uppercase tracking-[0.14em] text-eve-dim">3. Reason</div>
+                        <div className="text-[10px] uppercase tracking-[0.14em] text-eve-dim">3. Optional code</div>
                         <button
                           type="button"
                           onClick={copyPaymentCode}
@@ -488,8 +489,9 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
                     </div>
                   </div>
                 </div>
-                <div className="mt-2 text-xs leading-relaxed text-eve-dim">
-                  In EVE: open People & Places, find the receiver, choose Give Money, send the exact ISK amount, and paste the reason code into Reason / Description.
+                <div className="mt-2 border border-eve-accent/25 bg-eve-accent/10 px-2 py-2 text-xs leading-relaxed text-eve-dim">
+                  In EVE: Wallet {"->"} Send ISK, choose the receiver and send the exact amount. If the transfer window has
+                  a Reason / Description field, paste the optional code. If there is no such field, leave it empty.
                 </div>
               </div>
 
