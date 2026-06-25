@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-06-25T04:36:17.893Z",
+  "generated_at": "2026-06-25T09:46:15.395Z",
   "latest_release": "v1.6.12",
-  "total_downloads": 1712,
-  "current_github_total": 1712,
+  "total_downloads": 1716,
+  "current_github_total": 1716,
   "active_asset_count": 312,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -1382,13 +1382,13 @@
       "tag_name": "v1.6.12",
       "release_id": "342975743",
       "state": "active",
-      "download_count": 14,
-      "github_download_count": 14,
+      "download_count": 15,
+      "github_download_count": 15,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.12/eve-flipper-desktop-windows-amd64.exe",
       "created_at": "2026-06-22T14:54:22Z",
       "updated_at": "2026-06-22T14:54:24Z",
       "first_seen_at": "2026-06-22T14:54:43.461Z",
-      "last_seen_at": "2026-06-25T04:36:17.893Z"
+      "last_seen_at": "2026-06-25T09:46:15.395Z"
     },
     {
       "id": "454682353",
@@ -1424,13 +1424,13 @@
       "tag_name": "v1.6.12",
       "release_id": "342975743",
       "state": "active",
-      "download_count": 3,
-      "github_download_count": 3,
+      "download_count": 4,
+      "github_download_count": 4,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.12/eve-flipper-web-linux-amd64",
       "created_at": "2026-06-22T14:54:22Z",
       "updated_at": "2026-06-22T14:54:24Z",
       "first_seen_at": "2026-06-22T14:54:43.461Z",
-      "last_seen_at": "2026-06-24T09:52:30.093Z"
+      "last_seen_at": "2026-06-25T09:46:15.395Z"
     },
     {
       "id": "454682350",
@@ -1466,13 +1466,13 @@
       "tag_name": "v1.6.12",
       "release_id": "342975743",
       "state": "active",
-      "download_count": 15,
-      "github_download_count": 15,
+      "download_count": 17,
+      "github_download_count": 17,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.12/SHA256SUMS.txt",
       "created_at": "2026-06-22T14:54:22Z",
       "updated_at": "2026-06-22T14:54:22Z",
       "first_seen_at": "2026-06-22T14:54:43.461Z",
-      "last_seen_at": "2026-06-25T04:36:17.893Z"
+      "last_seen_at": "2026-06-25T09:46:15.395Z"
     },
     {
       "id": "450478689",
