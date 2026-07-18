@@ -56,6 +56,12 @@ import { useVersionCheck } from "./lib/useVersionCheck";
 import { useEsiStatus } from "./lib/useEsiStatus";
 import { publicScanParams, trackClientTelemetry } from "./lib/telemetry";
 import {
+  invalidateScanRequest,
+  isCurrentScanRequest,
+  startScanRequest,
+  type ScanLifecycleState,
+} from "./lib/scanLifecycle";
+import {
   getCockpitTabLayout,
   getEffectiveCockpitDensity,
   getVisibleMainTabs,
@@ -526,7 +532,10 @@ function App() {
   const [alertDiscordWebhook, setAlertDiscordWebhook] = useState("");
   const [alertTestLoading, setAlertTestLoading] = useState(false);
 
-  const abortRef = useRef<AbortController | null>(null);
+  const scanLifecycleRef = useRef<ScanLifecycleState<AbortController>>({
+    currentRequestId: 0,
+    currentController: null,
+  });
   const desktopAlertCooldownRef = useRef<Map<string, number>>(new Map());
   const radiusAutoRefreshSignatureRef = useRef<string>("");
   const radiusAutoRefreshLastRunRef = useRef<number>(0);
@@ -1221,7 +1230,11 @@ function App() {
 
   const handleScan = useCallback(async () => {
     if (scanning) {
-      abortRef.current?.abort();
+      const controller = scanLifecycleRef.current.currentController;
+      invalidateScanRequest(scanLifecycleRef.current);
+      controller?.abort();
+      setScanning(false);
+      setProgress("");
       return;
     }
 
@@ -1245,9 +1258,15 @@ function App() {
       },
     });
     const controller = new AbortController();
-    abortRef.current = controller;
+    const requestId = startScanRequest(scanLifecycleRef.current, controller);
+    const isCurrentScan = () => isCurrentScanRequest(scanLifecycleRef.current, requestId, controller);
+    const setScanProgress = (message: string) => {
+      if (isCurrentScan()) {
+        setProgress(message);
+      }
+    };
     setScanning(true);
-    setProgress(t("scanStarting"));
+    setScanProgress(t("scanStarting"));
 
     // Clear previous results immediately so the user sees a fresh scan
     if (currentTab === "contracts") {
@@ -1270,11 +1289,13 @@ function App() {
           DailyVolume: number;
         }>,
       ) => {
-        if (!alertChannels.desktop || rows.length === 0) return;
+        if (!isCurrentScan() || !alertChannels.desktop || rows.length === 0) return;
         try {
           const wl = await getWatchlist();
+          if (!isCurrentScan()) return;
           const now = Date.now();
           for (const item of wl) {
+            if (!isCurrentScan()) return;
             const metric =
               item.alert_metric === "total_profit" ||
               item.alert_metric === "profit_per_unit" ||
@@ -1362,12 +1383,13 @@ function App() {
         let meta: StationCacheMeta | undefined;
         const results = await scanContracts(
           params,
-          setProgress,
+          setScanProgress,
           controller.signal,
           (m) => {
             meta = m;
           },
         );
+        if (!isCurrentScan()) return;
         setContractResults(results);
         setContractCacheMeta(meta ?? null);
         setContractScanCompleted(true);
@@ -1390,12 +1412,13 @@ function App() {
             : { ...params, target_market_system: "", target_market_location_id: 0 };
         const results = await scan(
           radiusParams,
-          setProgress,
+          setScanProgress,
           controller.signal,
           (m) => {
             meta = m;
           },
         );
+        if (!isCurrentScan()) return;
         setRadiusResults(results);
         setRadiusCacheMeta(meta ?? null);
         trackClientTelemetry({
@@ -1414,12 +1437,13 @@ function App() {
         let meta: StationCacheMeta | undefined;
         const rows = await scanRegionalDayTrader(
           params,
-          setProgress,
+          setScanProgress,
           controller.signal,
           (m) => {
             meta = m;
           },
         );
+        if (!isCurrentScan()) return;
         const normalizedRows = normalizeRegionalResults(rows as unknown[]);
         setRegionResults(normalizedRows);
         setRegionCacheMeta(meta ?? null);
@@ -1463,12 +1487,13 @@ function App() {
         let meta: StationCacheMeta | undefined;
         const results = await scanMultiRegion(
           params,
-          setProgress,
+          setScanProgress,
           controller.signal,
           (m) => {
             meta = m;
           },
         );
+        if (!isCurrentScan()) return;
         setRegionResults(results);
         setRegionCacheMeta(meta ?? null);
         trackClientTelemetry({
@@ -1485,11 +1510,14 @@ function App() {
         await triggerDesktopAlerts(results);
       }
     } catch (e: unknown) {
-      if (e instanceof Error && e.name !== "AbortError") {
+      if (isCurrentScan() && e instanceof Error && e.name !== "AbortError") {
         setProgress(t("errorPrefix") + e.message);
       }
     } finally {
-      setScanning(false);
+      if (isCurrentScanRequest(scanLifecycleRef.current, requestId, controller)) {
+        scanLifecycleRef.current.currentController = null;
+        setScanning(false);
+      }
     }
   }, [scanning, tab, params, t, addToast, alertChannels, queueRegionScanPersistence, trackAchievementEvent, authStatus.character_id]);
 
@@ -2332,6 +2360,7 @@ function App() {
               buySalesTaxPercent={params.buy_sales_tax_percent}
               sellSalesTaxPercent={params.sell_sales_tax_percent}
               isLoggedIn={authStatus.logged_in}
+              characterScope={authStatus.character_id}
               cargoLimit={params.cargo_capacity}
             />
           </TabPanel>
@@ -2410,6 +2439,7 @@ function App() {
               buySalesTaxPercent={params.buy_sales_tax_percent}
               sellSalesTaxPercent={params.sell_sales_tax_percent}
               isLoggedIn={authStatus.logged_in}
+              characterScope={authStatus.character_id}
               showRegions
               columnProfile={regionColumnProfile}
               cargoLimit={params.cargo_capacity}

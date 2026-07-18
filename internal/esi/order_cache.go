@@ -1,6 +1,7 @@
 package esi
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,8 +14,12 @@ import (
 
 // orderCacheKey identifies a cached set of region orders.
 type orderCacheKey struct {
-	RegionID  int32
-	OrderType string // "sell" or "buy"
+	RegionID   int32
+	OrderType  string // "sell" or "buy"
+	Scope      string
+	TypeID     int32
+	LocationID int64
+	TokenHash  string
 }
 
 // orderCacheEntry holds cached orders together with HTTP caching metadata.
@@ -109,10 +114,14 @@ func (oc *OrderCache) EvictExpired() int {
 // Get returns cached orders if they exist and have not expired.
 // Returns (orders, etag, hit).
 func (oc *OrderCache) Get(regionID int32, orderType string) ([]MarketOrder, string, bool) {
+	return oc.GetScoped(orderCacheKey{RegionID: regionID, OrderType: orderType})
+}
+
+func (oc *OrderCache) GetScoped(key orderCacheKey) ([]MarketOrder, string, bool) {
 	oc.mu.RLock()
 	defer oc.mu.RUnlock()
 
-	e, ok := oc.entries[orderCacheKey{regionID, orderType}]
+	e, ok := oc.entries[key]
 	if !ok {
 		return nil, "", false
 	}
@@ -126,6 +135,10 @@ func (oc *OrderCache) Get(regionID int32, orderType string) ([]MarketOrder, stri
 // Put stores orders in the cache with the given etag and expiry.
 // Periodically evicts long-expired entries to bound memory usage.
 func (oc *OrderCache) Put(regionID int32, orderType string, orders []MarketOrder, etag string, expires time.Time) {
+	oc.PutScoped(orderCacheKey{RegionID: regionID, OrderType: orderType}, orders, etag, expires)
+}
+
+func (oc *OrderCache) PutScoped(key orderCacheKey, orders []MarketOrder, etag string, expires time.Time) {
 	oc.mu.Lock()
 	defer oc.mu.Unlock()
 
@@ -140,7 +153,7 @@ func (oc *OrderCache) Put(regionID int32, orderType string, orders []MarketOrder
 		}
 	}
 
-	oc.entries[orderCacheKey{regionID, orderType}] = &orderCacheEntry{
+	oc.entries[key] = &orderCacheEntry{
 		orders:  orders,
 		etag:    etag,
 		expires: expires,
@@ -150,10 +163,13 @@ func (oc *OrderCache) Put(regionID int32, orderType string, orders []MarketOrder
 
 // Touch updates the expiry of an existing cache entry (used on 304 Not Modified).
 func (oc *OrderCache) Touch(regionID int32, orderType string, expires time.Time) {
+	oc.TouchScoped(orderCacheKey{RegionID: regionID, OrderType: orderType}, expires)
+}
+
+func (oc *OrderCache) TouchScoped(key orderCacheKey, expires time.Time) {
 	oc.mu.Lock()
 	defer oc.mu.Unlock()
 
-	key := orderCacheKey{regionID, orderType}
 	if e, ok := oc.entries[key]; ok {
 		e.expires = expires
 		e.updated = time.Now().UTC()
@@ -251,6 +267,21 @@ func (c *Client) ClearOrderCache() int {
 	return c.orderCache.Clear()
 }
 
+func (c *Client) ensureOrderCache() *OrderCache {
+	if c == nil {
+		return nil
+	}
+	if c.orderCache != nil {
+		return c.orderCache
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.orderCache == nil {
+		c.orderCache = NewOrderCache()
+	}
+	return c.orderCache
+}
+
 // FetchRegionOrdersCached fetches region orders with full caching support:
 //  1. If orders are in cache and not expired → instant return
 //  2. If orders expired but we have an ETag → conditional request (If-None-Match)
@@ -260,9 +291,13 @@ func (c *Client) ClearOrderCache() int {
 //
 // Uses singleflight to coalesce concurrent requests for the same region+orderType.
 func (c *Client) FetchRegionOrdersCached(regionID int32, orderType string) ([]MarketOrder, error) {
+	cache := c.ensureOrderCache()
+	if cache == nil {
+		return nil, fmt.Errorf("esi client is nil")
+	}
 	sfKey := fmt.Sprintf("%d:%s", regionID, orderType)
 
-	result, err, _ := c.orderCache.Do(sfKey, func() (interface{}, error) {
+	result, err, _ := cache.Do(sfKey, func() (interface{}, error) {
 		return c.fetchRegionOrdersWithCache(regionID, orderType)
 	})
 	if err != nil {
@@ -324,10 +359,22 @@ func (c *Client) fetchRegionOrdersWithCache(regionID int32, orderType string) ([
 // conditionalCheck sends a HEAD-like GET with If-None-Match.
 // Returns (notModified, newExpires, error).
 func (c *Client) conditionalCheck(pageURL, etag string) (bool, time.Time, error) {
-	c.scanSem <- struct{}{}
+	return c.conditionalCheckContext(context.Background(), pageURL, etag)
+}
+
+func (c *Client) conditionalCheckContext(ctx context.Context, pageURL, etag string) (bool, time.Time, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.ensureBulkHTTP(); err != nil {
+		return false, time.Time{}, err
+	}
+	if err := acquireSemaphore(ctx, c.scanSem); err != nil {
+		return false, time.Time{}, err
+	}
 	defer func() { <-c.scanSem }()
 
-	req, err := newESIRequest(pageURL)
+	req, err := newESIRequestContext(ctx, pageURL)
 	if err != nil {
 		return false, time.Time{}, err
 	}
@@ -349,7 +396,14 @@ func (c *Client) conditionalCheck(pageURL, etag string) (bool, time.Time, error)
 
 // newESIRequest creates a standard ESI GET request with common headers.
 func newESIRequest(url string) (*http.Request, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	return newESIRequestContext(context.Background(), url)
+}
+
+func newESIRequestContext(ctx context.Context, url string) (*http.Request, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

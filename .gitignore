@@ -41,6 +41,7 @@ frontend/node_modules/
 
 # Frontend build output
 frontend/dist/
+frontend/tmp/
 
 # TypeScript build cache
 frontend/tsconfig.tsbuildinfo
@@ -51,6 +52,9 @@ frontend/tsconfig.tsbuildinfo
 # Claude settings
 .claude/
 CLAUDE.md
+
+# Graphify knowledge graph output
+graphify-out/
 
 # IDE / editor
 .vscode/

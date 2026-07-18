@@ -296,3 +296,60 @@ func TestOrderBookMaintenanceHandlers(t *testing.T) {
 		t.Fatalf("stats after cleanup = %#v", stats)
 	}
 }
+
+func TestOrderBookCleanupHandlerUsesBatchedCleanupOptions(t *testing.T) {
+	database := openAPITestDB(t)
+
+	old := time.Now().UTC().AddDate(0, 0, -90)
+	for i := 0; i < 4; i++ {
+		if err := database.RecordMarketOrderSnapshot(esi.MarketOrderSnapshot{
+			RegionID:   10000002,
+			OrderType:  "sell",
+			Source:     "region",
+			CapturedAt: old.Add(time.Duration(i) * time.Minute),
+			Orders: []esi.MarketOrder{
+				{OrderID: int64(10 + i), TypeID: int32(100 + i), LocationID: 60008494, SystemID: 30000142, Price: 100, VolumeRemain: 1},
+			},
+		}); err != nil {
+			t.Fatalf("record old snapshot %d: %v", i, err)
+		}
+	}
+	if err := database.RecordMarketOrderSnapshot(esi.MarketOrderSnapshot{
+		RegionID:   10000002,
+		OrderType:  "sell",
+		Source:     "region",
+		CapturedAt: time.Now().UTC(),
+		Orders: []esi.MarketOrder{
+			{OrderID: 20, TypeID: 200, LocationID: 60008494, SystemID: 30000142, Price: 100, VolumeRemain: 1},
+		},
+	}); err != nil {
+		t.Fatalf("record fresh snapshot: %v", err)
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"keep_days":       30,
+		"batch_size":      1,
+		"max_duration_ms": 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal cleanup: %v", err)
+	}
+	handler := (&Server{db: database}).Handler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/orderbook/cleanup", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cleanup status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var cleanup db.OrderBookCleanupPlan
+	if err := json.NewDecoder(rec.Body).Decode(&cleanup); err != nil {
+		t.Fatalf("decode cleanup: %v", err)
+	}
+	if cleanup.DryRun || cleanup.SnapshotsDeleted <= 0 || cleanup.SnapshotsDeleted > 4 {
+		t.Fatalf("cleanup = %#v, want bounded non-dry run deletion", cleanup)
+	}
+	if cleanup.LevelsDeleted != cleanup.SnapshotsDeleted {
+		t.Fatalf("cleanup levels = %#v, want one level per snapshot", cleanup)
+	}
+}

@@ -295,3 +295,49 @@ func TestCleanupOrderBookSnapshotsBatch(t *testing.T) {
 		t.Fatalf("stats after second batch = %#v, want only fresh snapshot", stats)
 	}
 }
+
+func TestCleanupOrderBookSnapshotsBatches(t *testing.T) {
+	d := openTestDB(t)
+	defer d.Close()
+
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	for i := 0; i < 5; i++ {
+		if err := d.RecordMarketOrderSnapshot(esi.MarketOrderSnapshot{
+			RegionID:   10000002,
+			OrderType:  "sell",
+			Source:     "region",
+			CapturedAt: old.Add(time.Duration(i) * time.Hour),
+			Orders: []esi.MarketOrder{
+				{OrderID: int64(300 + i), TypeID: int32(50 + i), LocationID: 60008494, SystemID: 30000142, Price: float64(10 + i), VolumeRemain: 10, IsBuyOrder: false},
+			},
+		}); err != nil {
+			t.Fatalf("record old snapshot %d: %v", i, err)
+		}
+	}
+	if err := d.RecordMarketOrderSnapshot(esi.MarketOrderSnapshot{
+		RegionID:   10000002,
+		OrderType:  "sell",
+		Source:     "region",
+		CapturedAt: time.Now().UTC(),
+		Orders: []esi.MarketOrder{
+			{OrderID: 400, TypeID: 60, LocationID: 60008494, SystemID: 30000142, Price: 99, VolumeRemain: 10, IsBuyOrder: false},
+		},
+	}); err != nil {
+		t.Fatalf("record fresh snapshot: %v", err)
+	}
+
+	plan, err := d.CleanupOrderBookSnapshotsBatches(30, 2, 5*time.Second)
+	if err != nil {
+		t.Fatalf("cleanup batches: %v", err)
+	}
+	if plan.SnapshotsDeleted != 5 || plan.LevelsDeleted != 5 {
+		t.Fatalf("cleanup batches = %#v, want all 5 old snapshots and levels", plan)
+	}
+	stats, err := d.GetOrderBookStats(5)
+	if err != nil {
+		t.Fatalf("stats after cleanup batches: %v", err)
+	}
+	if stats.SnapshotCount != 1 || stats.LevelCount != 1 || stats.TopTypes[0].TypeID != 60 {
+		t.Fatalf("stats after cleanup batches = %#v, want only fresh snapshot", stats)
+	}
+}

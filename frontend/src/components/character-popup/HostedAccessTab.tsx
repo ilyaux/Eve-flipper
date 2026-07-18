@@ -84,7 +84,7 @@ function exactIskAmount(value: number) {
   return String(Math.trunc(value));
 }
 
-function formatCountdown(expiresAt?: string, now = Date.now()) {
+export function formatHostedPaymentCountdown(expiresAt?: string, now = Date.now()) {
   if (!expiresAt) return "No expiry time";
   const expires = new Date(expiresAt).getTime();
   if (Number.isNaN(expires)) return "Unknown expiry";
@@ -135,7 +135,7 @@ function paymentHistoryHint(status?: string) {
   }
 }
 
-function paymentState(access: HostedAccessStatus | null, paymentHistory: HostedAccessStatus["payment_history"]) {
+export function hostedPaymentState(access: HostedAccessStatus | null, paymentHistory: HostedAccessStatus["payment_history"]) {
   const status = (access?.status ?? "").toLowerCase();
   const latest = latestPaymentStatus(paymentHistory);
   if (status === "active" || status === "trial" || status === "grace") {
@@ -143,7 +143,7 @@ function paymentState(access: HostedAccessStatus | null, paymentHistory: HostedA
       tone: "text-eve-success border-eve-success/40 bg-eve-success/10",
       title: status === "grace" ? "Subscription in grace period" : "Subscription active",
       body: access?.payment
-        ? "Paid access is already enabled. The pending payment on the right is only for an extension or plan change; cancel it if it was created by mistake."
+        ? "Paid access is already enabled. Previous payment requests remain visible in payment history."
         : "Paid access is enabled. Usage counters below show the current billing window.",
     };
   }
@@ -189,16 +189,17 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
   const featureEntries = Object.entries(access?.features ?? {}).filter(([, enabled]) => enabled);
   const planOffers = access?.available_plans ?? [];
   const paymentHistory = access?.payment_history ?? [];
-  const state = paymentState(access, paymentHistory);
+  const state = hostedPaymentState(access, paymentHistory);
   const refreshLabel = loading ? "Checking..." : "Refresh";
   const refreshStatusLabel = loading ? "Checking..." : "Refresh status";
-  const payment = access?.payment;
+  const isPaidAccessActive = ["active", "trial", "grace"].includes((access?.status ?? "").toLowerCase());
+  const payment = isPaidAccessActive ? undefined : access?.payment;
   const pendingHistoryRow = useMemo(
-    () => paymentHistory.find((row) => row.code === payment?.reason_code || row.status?.toLowerCase() === "pending"),
+    () => payment ? paymentHistory.find((row) => row.code === payment.reason_code || row.status?.toLowerCase() === "pending") : undefined,
     [payment?.reason_code, paymentHistory]
   );
   const pendingPlan = planOffers.find((plan) => plan.id === pendingHistoryRow?.plan_id);
-  const pendingCountdown = formatCountdown(payment?.expires_at, now);
+  const pendingCountdown = formatHostedPaymentCountdown(payment?.expires_at, now);
   const paymentExpired = pendingCountdown === "Expired";
 
   useEffect(() => {
@@ -267,7 +268,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
       ...receiverInstructionLines(payment),
       `Exact amount: ${exactIskAmount(payment.amount_isk)} ISK`,
       `Optional Reason / Description code: ${payment.reason_code}`,
-      `Request expires: ${formatDate(payment.expires_at)} (${formatCountdown(payment.expires_at, now)})`,
+      `Request expires: ${formatDate(payment.expires_at)} (${formatHostedPaymentCountdown(payment.expires_at, now)})`,
       "If your EVE transfer window has no Reason / Description field, leave it empty. The payment can still match by sender and exact amount.",
       `After sending: press "I sent ISK" or keep this tab open. ${WALLET_SETTLEMENT_COPY}`,
     ].filter(Boolean);
@@ -639,7 +640,7 @@ export function HostedAccessTab({ access, loading, error, lastCheckedAt, onReloa
               </button>
               {renderPlanPicker("Choose another plan", "Select a tariff first. A new pending request is created only after you press the confirmation button. Use only the latest request when sending ISK.")}
             </div>
-          ) : (access?.status === "active" || access?.status === "trial" || access?.status === "grace") ? (
+          ) : isPaidAccessActive ? (
             <div className="mt-3 space-y-3">
               <div className="border border-eve-success/35 bg-eve-success/10 px-3 py-2 text-xs text-eve-success">
                 No pending payment. Current hosted access is active.

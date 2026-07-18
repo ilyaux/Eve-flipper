@@ -54,27 +54,28 @@ type FlipResult struct {
 	// True when market history for this type/region was fetched successfully.
 	HistoryAvailable bool `json:"HistoryAvailable"`
 	// Execution-plan derived (expected fill prices from order book depth)
-	ExpectedBuyPrice      float64 `json:"ExpectedBuyPrice,omitempty"`
-	ExpectedSellPrice     float64 `json:"ExpectedSellPrice,omitempty"`
-	ExpectedProfit        float64 `json:"ExpectedProfit,omitempty"`
-	RealProfit            float64 `json:"RealProfit,omitempty"` // primary KPI: expected net ISK with depth/slippage
-	FilledQty             int32   `json:"FilledQty,omitempty"`  // executable profitable quantity from execution simulation
-	CanFill               bool    `json:"CanFill"`              // true when requested quantity is executable profitably
-	SlippageBuyPct        float64 `json:"SlippageBuyPct,omitempty"`
-	SlippageSellPct       float64 `json:"SlippageSellPct,omitempty"`
-	FillTimeDays          float64 `json:"FillTimeDays,omitempty"`          // estimated days to complete the full cycle
-	LiquidityScore        float64 `json:"LiquidityScore,omitempty"`        // 0-100 score from fill time and history confidence
-	LiquidityLabel        string  `json:"LiquidityLabel,omitempty"`        // high | medium | low | thin | unknown
-	BacktestDays          int     `json:"BacktestDays,omitempty"`          // number of history days used for fill viability
-	BacktestFillRate      float64 `json:"BacktestFillRate,omitempty"`      // % of history days with enough target volume
-	BacktestMedianVol     int64   `json:"BacktestMedianVol,omitempty"`     // median daily volume in the backtest window
-	CharacterAssets       int64   `json:"CharacterAssets,omitempty"`       // owned asset units for this type in selected scope
-	CharacterBuyOrders    int64   `json:"CharacterBuyOrders,omitempty"`    // active buy-order units for this type in selected scope
-	CharacterSellOrders   int64   `json:"CharacterSellOrders,omitempty"`   // active sell-order units for this type in selected scope
-	RouteSafetyMultiplier float64 `json:"RouteSafetyMultiplier,omitempty"` // backtest route-time safety multiplier from gank risk
-	RouteSafetyDanger     string  `json:"RouteSafetyDanger,omitempty"`     // green | yellow | red
-	RouteSafetyKills      int     `json:"RouteSafetyKills,omitempty"`
-	RouteSafetyISK        float64 `json:"RouteSafetyISK,omitempty"`
+	ExpectedBuyPrice      float64         `json:"ExpectedBuyPrice,omitempty"`
+	ExpectedSellPrice     float64         `json:"ExpectedSellPrice,omitempty"`
+	ExpectedProfit        float64         `json:"ExpectedProfit,omitempty"`
+	RealProfit            float64         `json:"RealProfit,omitempty"`     // primary KPI: expected net ISK with depth/slippage
+	FilledQty             int32           `json:"FilledQty,omitempty"`      // executable profitable quantity from execution simulation
+	CanFill               bool            `json:"CanFill"`                  // true when requested quantity is executable profitably
+	ExecutionQuote        *ExecutionQuote `json:"ExecutionQuote,omitempty"` // unified execution snapshot for downstream UX/API
+	SlippageBuyPct        float64         `json:"SlippageBuyPct,omitempty"`
+	SlippageSellPct       float64         `json:"SlippageSellPct,omitempty"`
+	FillTimeDays          float64         `json:"FillTimeDays,omitempty"`          // estimated days to complete the full cycle
+	LiquidityScore        float64         `json:"LiquidityScore,omitempty"`        // 0-100 score from fill time and history confidence
+	LiquidityLabel        string          `json:"LiquidityLabel,omitempty"`        // high | medium | low | thin | unknown
+	BacktestDays          int             `json:"BacktestDays,omitempty"`          // number of history days used for fill viability
+	BacktestFillRate      float64         `json:"BacktestFillRate,omitempty"`      // % of history days with enough target volume
+	BacktestMedianVol     int64           `json:"BacktestMedianVol,omitempty"`     // median daily volume in the backtest window
+	CharacterAssets       int64           `json:"CharacterAssets,omitempty"`       // owned asset units for this type in selected scope
+	CharacterBuyOrders    int64           `json:"CharacterBuyOrders,omitempty"`    // active buy-order units for this type in selected scope
+	CharacterSellOrders   int64           `json:"CharacterSellOrders,omitempty"`   // active sell-order units for this type in selected scope
+	RouteSafetyMultiplier float64         `json:"RouteSafetyMultiplier,omitempty"` // backtest route-time safety multiplier from gank risk
+	RouteSafetyDanger     string          `json:"RouteSafetyDanger,omitempty"`     // green | yellow | red
+	RouteSafetyKills      int             `json:"RouteSafetyKills,omitempty"`
+	RouteSafetyISK        float64         `json:"RouteSafetyISK,omitempty"`
 
 	// Regional day-trader enrichments (EVE Guru-style grouped region view).
 	DaySecurity           float64   `json:"DaySecurity,omitempty"`

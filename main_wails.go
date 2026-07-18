@@ -203,9 +203,10 @@ func startBackend(host string, preferredPort int) (*backendRuntime, error) {
 			logger.Error("SDE", fmt.Sprintf("Load failed: %v", err))
 			return
 		}
-		prepareShipPackagedVolumes(dataDir, data, esiClient)
+		missingShipVolumes := prepareShipPackagedVolumes(dataDir, data)
 		srv.SetSDE(data)
 		logger.Success("SDE", "Scanner ready")
+		refreshShipPackagedVolumesInBackground(dataDir, missingShipVolumes, esiClient)
 	}()
 
 	addr := fmt.Sprintf("%s:%d", host, port)

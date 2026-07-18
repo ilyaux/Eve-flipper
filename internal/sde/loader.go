@@ -89,15 +89,8 @@ func Load(dataDir string) (*Data, error) {
 	zipPath := filepath.Join(dataDir, "sde.zip")
 	extractDir := filepath.Join(dataDir, "sde")
 
-	if _, err := os.Stat(extractDir); os.IsNotExist(err) {
-		logger.Info("SDE", "Downloading data... first launch can take a few minutes")
-		if err := downloadFile(zipPath, sdeURL); err != nil {
-			return nil, fmt.Errorf("download SDE: %w", err)
-		}
-		logger.Info("SDE", "Extracting data...")
-		if err := extractZip(zipPath, extractDir); err != nil {
-			return nil, fmt.Errorf("extract SDE: %w", err)
-		}
+	if err := ensureSDEExtracted(dataDir, zipPath, extractDir); err != nil {
+		return nil, err
 	}
 
 	data := &Data{
@@ -162,6 +155,89 @@ func Load(dataDir string) (*Data, error) {
 	logger.Stats("Stations", len(data.Stations))
 	logger.Stats("Blueprints", len(data.Industry.Blueprints))
 	return data, nil
+}
+
+var requiredSDEJSONLFiles = []string{
+	"mapRegions",
+	"mapSolarSystems",
+	"groups",
+	"types",
+	"npcStations",
+	"mapStargates",
+}
+
+func ensureSDEExtracted(dataDir, zipPath, extractDir string) error {
+	if err := validateSDEExtractDir(extractDir); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		logger.Warn("SDE", fmt.Sprintf("Existing SDE extract is incomplete: %v", err))
+	}
+
+	if _, err := os.Stat(zipPath); os.IsNotExist(err) {
+		logger.Info("SDE", "Downloading data... first launch can take a few minutes")
+		if err := downloadFile(zipPath, sdeURL); err != nil {
+			return fmt.Errorf("download SDE: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat SDE zip: %w", err)
+	}
+
+	logger.Info("SDE", "Extracting data...")
+	return extractSDEAtomically(zipPath, extractDir)
+}
+
+func validateSDEExtractDir(extractDir string) error {
+	info, err := os.Stat(extractDir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("SDE extract path is not a directory: %s", extractDir)
+	}
+	for _, baseName := range requiredSDEJSONLFiles {
+		path, err := findJSONLPath(extractDir, baseName)
+		if err != nil {
+			return err
+		}
+		if path == "" {
+			return fmt.Errorf("required SDE file %s.jsonl is missing", baseName)
+		}
+	}
+	return nil
+}
+
+func extractSDEAtomically(zipPath, extractDir string) error {
+	parent := filepath.Dir(extractDir)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return err
+	}
+	tempDir, err := os.MkdirTemp(parent, ".sde-extract-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir)
+
+	if err := extractZip(zipPath, tempDir); err != nil {
+		return fmt.Errorf("extract SDE: %w", err)
+	}
+	if err := validateSDEExtractDir(tempDir); err != nil {
+		return fmt.Errorf("validate extracted SDE: %w", err)
+	}
+
+	if _, err := os.Stat(extractDir); err == nil {
+		corruptDir := extractDir + ".corrupt." + time.Now().UTC().Format("20060102T150405Z")
+		if err := os.Rename(extractDir, corruptDir); err != nil {
+			return fmt.Errorf("quarantine incomplete SDE extract: %w", err)
+		}
+		logger.Warn("SDE", fmt.Sprintf("Moved incomplete SDE extract to %s", corruptDir))
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat SDE extract dir: %w", err)
+	}
+
+	if err := os.Rename(tempDir, extractDir); err != nil {
+		return fmt.Errorf("activate SDE extract: %w", err)
+	}
+	return nil
 }
 
 // RegionNames returns a map of region ID to region name.

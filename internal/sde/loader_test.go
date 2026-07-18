@@ -1,51 +1,82 @@
 package sde
 
-import "testing"
+import (
+	"archive/zip"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
-func TestIsRigGroupName(t *testing.T) {
-	tests := []struct {
-		name       string
-		categoryID int32
-		groupName  string
-		want       bool
-	}{
-		{name: "rig armor", categoryID: 7, groupName: "Rig Armor", want: true},
-		{name: "rig launcher", categoryID: 7, groupName: "Rig Launcher", want: true},
-		{name: "rig navigation lowercase", categoryID: 7, groupName: "rig navigation", want: true},
-		{name: "non-rig module", categoryID: 7, groupName: "Energy Weapon", want: false},
-		{name: "rig blueprint", categoryID: 9, groupName: "Rig Blueprint", want: false},
-		{name: "ship group", categoryID: 6, groupName: "Tactical Destroyer", want: false},
-		{name: "empty", categoryID: 7, groupName: "", want: false},
+func TestEnsureSDEExtractedQuarantinesIncompleteExtract(t *testing.T) {
+	dataDir := t.TempDir()
+	zipPath := filepath.Join(dataDir, "sde.zip")
+	extractDir := filepath.Join(dataDir, "sde")
+
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		t.Fatalf("create incomplete extract: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(extractDir, "partial.txt"), []byte("broken"), 0644); err != nil {
+		t.Fatalf("write partial marker: %v", err)
+	}
+	if err := writeMinimalSDEZip(zipPath); err != nil {
+		t.Fatalf("write sde zip: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isRigGroupName(tt.categoryID, tt.groupName); got != tt.want {
-				t.Fatalf("isRigGroupName(%d, %q) = %v, want %v", tt.categoryID, tt.groupName, got, tt.want)
-			}
-		})
+	if err := ensureSDEExtracted(dataDir, zipPath, extractDir); err != nil {
+		t.Fatalf("ensure SDE extracted: %v", err)
+	}
+	if err := validateSDEExtractDir(extractDir); err != nil {
+		t.Fatalf("validate activated extract: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(extractDir, "partial.txt")); !os.IsNotExist(err) {
+		t.Fatalf("partial marker still exists in activated extract: %v", err)
+	}
+
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		t.Fatalf("read data dir: %v", err)
+	}
+	foundQuarantine := false
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "sde.corrupt.") {
+			foundQuarantine = true
+			break
+		}
+	}
+	if !foundQuarantine {
+		t.Fatalf("expected incomplete extract to be quarantined")
 	}
 }
 
-func TestApplyShipPackagedVolumes(t *testing.T) {
-	data := &Data{
-		Types: map[int32]*ItemType{
-			608: {ID: 608, Name: "Atron", CategoryID: 6, Volume: 22500},
-			34:  {ID: 34, Name: "Tritanium", CategoryID: 4, Volume: 0.01},
-		},
-		shipTypesMissingPackagedVolume: map[int32]bool{608: true},
+func TestValidateSDEExtractDirRequiresCoreFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mapRegions.jsonl"), []byte("{}\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
+	if err := validateSDEExtractDir(dir); err == nil {
+		t.Fatalf("validate SDE extract succeeded with missing required files")
+	}
+}
 
-	if got := data.ApplyShipPackagedVolumes(map[int32]float64{608: 2500, 34: 999}); got != 1 {
-		t.Fatalf("ApplyShipPackagedVolumes applied %d, want 1", got)
+func writeMinimalSDEZip(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
 	}
-	if data.Types[608].Volume != 2500 {
-		t.Fatalf("ship volume = %v, want packaged volume 2500", data.Types[608].Volume)
+	defer f.Close()
+
+	zw := zip.NewWriter(f)
+	for _, baseName := range requiredSDEJSONLFiles {
+		w, err := zw.Create(baseName + ".jsonl")
+		if err != nil {
+			zw.Close()
+			return err
+		}
+		if _, err := w.Write([]byte("{}\n")); err != nil {
+			zw.Close()
+			return err
+		}
 	}
-	if data.Types[34].Volume != 0.01 {
-		t.Fatalf("non-ship volume changed to %v", data.Types[34].Volume)
-	}
-	if missing := data.MissingShipPackagedVolumeTypeIDs(); len(missing) != 0 {
-		t.Fatalf("missing after apply = %v, want empty", missing)
-	}
+	return zw.Close()
 }

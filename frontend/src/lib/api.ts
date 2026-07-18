@@ -15,6 +15,7 @@ import type {
   CorpMiningEntry,
   DemandRegionResponse,
   DemandRegionsResponse,
+  ExecutionQuote,
   ExecutionPlanResult,
   EveLedgerDashboard,
   FlipBacktestResult,
@@ -909,6 +910,69 @@ export async function getExecutionPlan(params: {
     }),
   });
   return handleResponse<ExecutionPlanResult>(res);
+}
+
+export async function getExecutionQuote(params: {
+  type_id: number;
+  quantity: number;
+  buy_region_id: number;
+  buy_system_id?: number;
+  buy_location_id?: number;
+  sell_region_id: number;
+  sell_system_id?: number;
+  sell_location_id?: number;
+  packaged_volume_m3?: number;
+  shipping_cost_per_m3_jump?: number;
+  shipping_jumps?: number;
+  broker_fee_percent?: number;
+  sales_tax_percent?: number;
+  split_trade_fees?: boolean;
+  buy_broker_fee_percent?: number;
+  sell_broker_fee_percent?: number;
+  buy_sales_tax_percent?: number;
+  sell_sales_tax_percent?: number;
+  character_id?: CharacterScope;
+  impact_days?: number;
+  signal?: AbortSignal;
+}): Promise<ExecutionQuote> {
+  const query = new URLSearchParams();
+  appendCharacterScope(query, params.character_id);
+  const res = await apiFetch(`${BASE}/api/execution/plan${query.toString() ? `?${query.toString()}` : ""}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: params.signal,
+    body: JSON.stringify({
+      include_quote: true,
+      type_id: params.type_id,
+      region_id: params.buy_region_id,
+      system_id: params.buy_system_id ?? 0,
+      location_id: params.buy_location_id ?? 0,
+      quantity: params.quantity,
+      is_buy: true,
+      impact_days: params.impact_days ?? 0,
+      buy_region_id: params.buy_region_id,
+      buy_system_id: params.buy_system_id ?? 0,
+      buy_location_id: params.buy_location_id ?? 0,
+      sell_region_id: params.sell_region_id,
+      sell_system_id: params.sell_system_id ?? 0,
+      sell_location_id: params.sell_location_id ?? 0,
+      packaged_volume_m3: params.packaged_volume_m3 ?? 0,
+      shipping_cost_per_m3_jump: params.shipping_cost_per_m3_jump ?? 0,
+      shipping_jumps: params.shipping_jumps ?? 0,
+      broker_fee_percent: params.broker_fee_percent ?? 0,
+      sales_tax_percent: params.sales_tax_percent ?? 0,
+      split_trade_fees: params.split_trade_fees ?? false,
+      buy_broker_fee_percent: params.buy_broker_fee_percent ?? 0,
+      sell_broker_fee_percent: params.sell_broker_fee_percent ?? 0,
+      buy_sales_tax_percent: params.buy_sales_tax_percent ?? 0,
+      sell_sales_tax_percent: params.sell_sales_tax_percent ?? 0,
+    }),
+  });
+  const plan = await handleResponse<ExecutionPlanResult>(res);
+  if (!plan.quote) {
+    throw new Error("Execution quote unavailable");
+  }
+  return plan.quote;
 }
 
 export async function scanStation(
@@ -2201,7 +2265,7 @@ export async function getContractDetails(contractID: number): Promise<ContractDe
 
 export async function getGankCheck(from: number, to: number, minSec = 0): Promise<SystemDanger[]> {
   const res = await apiFetch(`${BASE}/api/gankcheck?from=${from}&to=${to}&min_sec=${minSec}`);
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Failed to check route safety: HTTP ${res.status}`);
   return res.json();
 }
 
@@ -2220,6 +2284,6 @@ export async function getGankCheckBatch(
   const res = await apiFetch(
     `${BASE}/api/gankcheck/batch?pairs=${encodeURIComponent(pairsStr)}&min_sec=${minSec}`,
   );
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Failed to check route safety batch: HTTP ${res.status}`);
   return res.json();
 }

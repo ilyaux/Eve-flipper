@@ -4297,16 +4297,232 @@ func filterExecutionPlanOrders(orders []esi.MarketOrder, typeID int32, systemID 
 	return filtered
 }
 
-func (s *Server) handleExecutionPlan(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TypeID     int32 `json:"type_id"`
-		RegionID   int32 `json:"region_id"`
-		SystemID   int32 `json:"system_id"`
-		LocationID int64 `json:"location_id"` // 0 = whole region
-		Quantity   int32 `json:"quantity"`
-		IsBuy      bool  `json:"is_buy"`
-		ImpactDays int   `json:"impact_days"` // 0 = use engine default (e.g. 30); from station trading "Period (days)"
+type executionPlanAPIRequest struct {
+	TypeID                int32   `json:"type_id"`
+	RegionID              int32   `json:"region_id"`
+	SystemID              int32   `json:"system_id"`
+	LocationID            int64   `json:"location_id"` // 0 = whole region
+	Quantity              int32   `json:"quantity"`
+	IsBuy                 bool    `json:"is_buy"`
+	ImpactDays            int     `json:"impact_days"` // 0 = use engine default (e.g. 30)
+	IncludeQuote          bool    `json:"include_quote"`
+	Quote                 bool    `json:"quote"`
+	BuyRegionID           int32   `json:"buy_region_id"`
+	BuySystemID           int32   `json:"buy_system_id"`
+	BuyLocationID         int64   `json:"buy_location_id"`
+	SellRegionID          int32   `json:"sell_region_id"`
+	SellSystemID          int32   `json:"sell_system_id"`
+	SellLocationID        int64   `json:"sell_location_id"`
+	PackagedVolumeM3      float64 `json:"packaged_volume_m3"`
+	ShippingCostPerM3Jump float64 `json:"shipping_cost_per_m3_jump"`
+	ShippingJumps         int     `json:"shipping_jumps"`
+	SplitTradeFees        bool    `json:"split_trade_fees"`
+	BrokerFeePercent      float64 `json:"broker_fee_percent"`
+	SalesTaxPercent       float64 `json:"sales_tax_percent"`
+	BuyBrokerFeePercent   float64 `json:"buy_broker_fee_percent"`
+	SellBrokerFeePercent  float64 `json:"sell_broker_fee_percent"`
+	BuySalesTaxPercent    float64 `json:"buy_sales_tax_percent"`
+	SellSalesTaxPercent   float64 `json:"sell_sales_tax_percent"`
+}
+
+var (
+	executionFetchRegionOrders = func(c *esi.Client, regionID int32, orderType string) ([]esi.MarketOrder, error) {
+		return c.FetchRegionOrders(regionID, orderType)
 	}
+	executionFetchStructureOrders = func(ctx context.Context, c *esi.Client, structureID int64, accessToken string) ([]esi.MarketOrder, error) {
+		return c.FetchStructureOrdersContext(ctx, structureID, accessToken)
+	}
+	executionOrderCacheWindow = func(c *esi.Client, regionIDs []int32, orderType string) esi.OrderCacheWindow {
+		return c.OrderCacheWindow(regionIDs, orderType)
+	}
+)
+
+func (s *Server) fetchExecutionOrders(r *http.Request, regionID int32, locationID int64, orderType string) ([]esi.MarketOrder, error) {
+	if locationID != 0 && isPlayerStructure(locationID) {
+		userID := userIDFromRequest(r)
+		if userID == "" || s.sessions == nil || s.sso == nil {
+			return nil, errors.New("player structure market data requires authenticated character access")
+		}
+		characterID, allScope, err := parseAuthScope(r)
+		if err != nil {
+			return nil, err
+		}
+		selectedSessions, err := s.authSessionsForScope(userID, characterID, allScope, false)
+		if err != nil || len(selectedSessions) == 0 {
+			return nil, errors.New("player structure market data requires an authenticated character")
+		}
+		token, err := s.sessions.EnsureValidTokenForUserCharacter(s.sso, userID, selectedSessions[0].CharacterID)
+		if err != nil {
+			log.Printf("[API] execution EnsureValidTokenForUserCharacter: %v", err)
+			return nil, errors.New("failed to refresh character token")
+		}
+		orders, err := executionFetchStructureOrders(r.Context(), s.esi, locationID, token)
+		if err != nil {
+			log.Printf("[API] execution FetchStructureOrders(%d): %v", locationID, err)
+			return nil, errors.New("failed to fetch structure market orders")
+		}
+		return orders, nil
+	}
+	orders, err := executionFetchRegionOrders(s.esi, regionID, orderType)
+	if err != nil {
+		log.Printf("[API] execution FetchRegionOrders(%d,%s): %v", regionID, orderType, err)
+		return nil, errors.New("failed to fetch market orders")
+	}
+	return orders, nil
+}
+
+func (s *Server) packagedVolumeForExecution(typeID int32, fallback float64) float64 {
+	if fallback < 0 {
+		fallback = 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.sdeData == nil || s.sdeData.Types == nil {
+		return fallback
+	}
+	item, ok := s.sdeData.Types[typeID]
+	if !ok || item == nil || item.Volume <= 0 {
+		return fallback
+	}
+	return item.Volume
+}
+
+func cacheAgeSeconds(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	age := int64(time.Since(t).Seconds())
+	if age < 0 {
+		return 0
+	}
+	return age
+}
+
+func requestBoolQuery(r *http.Request, key string) bool {
+	if r == nil {
+		return false
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return false
+	}
+	value, err := strconv.ParseBool(raw)
+	return err == nil && value
+}
+
+func (s *Server) executionQuoteCacheInfo(buyRegionID, sellRegionID int32, buyLocationID, sellLocationID int64) (*engine.ExecutionQuoteCacheInfo, []string) {
+	if s == nil || s.esi == nil {
+		return nil, nil
+	}
+	info := &engine.ExecutionQuoteCacheInfo{}
+	var warnings []string
+	if buyRegionID > 0 && !isPlayerStructure(buyLocationID) {
+		window := executionOrderCacheWindow(s.esi, []int32{buyRegionID}, "sell")
+		info.BuyAgeSeconds = cacheAgeSeconds(window.LastRefreshAt)
+		info.BuyTTLSeconds = window.MinTTLSeconds
+		if window.Stale {
+			info.Stale = true
+			warnings = append(warnings, "buy_order_cache_stale")
+		}
+		if window.Entries == 0 {
+			warnings = append(warnings, "buy_order_cache_meta_unavailable")
+		}
+	}
+	if sellRegionID > 0 && !isPlayerStructure(sellLocationID) {
+		window := executionOrderCacheWindow(s.esi, []int32{sellRegionID}, "buy")
+		info.SellAgeSeconds = cacheAgeSeconds(window.LastRefreshAt)
+		info.SellTTLSeconds = window.MinTTLSeconds
+		if window.Stale {
+			info.Stale = true
+			warnings = append(warnings, "sell_order_cache_stale")
+		}
+		if window.Entries == 0 {
+			warnings = append(warnings, "sell_order_cache_meta_unavailable")
+		}
+	}
+	if (buyLocationID != 0 && isPlayerStructure(buyLocationID)) || (sellLocationID != 0 && isPlayerStructure(sellLocationID)) {
+		warnings = append(warnings, "structure_market_cache_age_unavailable")
+	}
+	if info.BuyAgeSeconds > int64(15*time.Minute/time.Second) || info.SellAgeSeconds > int64(15*time.Minute/time.Second) {
+		warnings = append(warnings, "market_cache_age_high")
+	}
+	if info.BuyTTLSeconds > 0 || info.SellTTLSeconds > 0 {
+		warnings = append(warnings, "esi_market_orders_may_be_cached")
+	}
+	return info, warnings
+}
+
+func (s *Server) buildExecutionQuote(r *http.Request, req executionPlanAPIRequest) (engine.ExecutionQuote, error) {
+	buyRegionID := req.BuyRegionID
+	if buyRegionID == 0 {
+		buyRegionID = req.RegionID
+	}
+	buySystemID := req.BuySystemID
+	if buySystemID == 0 {
+		buySystemID = req.SystemID
+	}
+	buyLocationID := req.BuyLocationID
+	if buyLocationID == 0 {
+		buyLocationID = req.LocationID
+	}
+	sellRegionID := req.SellRegionID
+	if sellRegionID == 0 {
+		sellRegionID = req.RegionID
+	}
+	sellSystemID := req.SellSystemID
+	if sellSystemID == 0 {
+		sellSystemID = req.SystemID
+	}
+	sellLocationID := req.SellLocationID
+
+	if req.TypeID == 0 || req.Quantity <= 0 || buyRegionID == 0 || sellRegionID == 0 {
+		return engine.ExecutionQuote{}, errors.New("type_id, quantity, buy_region_id and sell_region_id required")
+	}
+
+	buyOrders, err := s.fetchExecutionOrders(r, buyRegionID, buyLocationID, "sell")
+	if err != nil {
+		return engine.ExecutionQuote{}, err
+	}
+	sellOrders, err := s.fetchExecutionOrders(r, sellRegionID, sellLocationID, "buy")
+	if err != nil {
+		return engine.ExecutionQuote{}, err
+	}
+
+	buyFiltered := filterExecutionPlanOrders(buyOrders, req.TypeID, buySystemID, buyLocationID)
+	sellFiltered := filterExecutionPlanOrders(sellOrders, req.TypeID, sellSystemID, sellLocationID)
+	cacheInfo, warnings := s.executionQuoteCacheInfo(buyRegionID, sellRegionID, buyLocationID, sellLocationID)
+	packagedVolume := s.packagedVolumeForExecution(req.TypeID, req.PackagedVolumeM3)
+	quote := engine.ComputeExecutionQuote(engine.ExecutionQuoteInput{
+		TypeID:                req.TypeID,
+		RequestedQty:          req.Quantity,
+		BuyRegionID:           buyRegionID,
+		BuySystemID:           buySystemID,
+		BuyLocationID:         buyLocationID,
+		SellRegionID:          sellRegionID,
+		SellSystemID:          sellSystemID,
+		SellLocationID:        sellLocationID,
+		BuyOrders:             buyFiltered,
+		SellOrders:            sellFiltered,
+		PackagedVolumeM3:      packagedVolume,
+		ShippingCostPerM3Jump: req.ShippingCostPerM3Jump,
+		ShippingJumps:         req.ShippingJumps,
+		Fees: engine.ExecutionQuoteFeeInputs{
+			SplitTradeFees:       req.SplitTradeFees,
+			BrokerFeePercent:     req.BrokerFeePercent,
+			SalesTaxPercent:      req.SalesTaxPercent,
+			BuyBrokerFeePercent:  req.BuyBrokerFeePercent,
+			SellBrokerFeePercent: req.SellBrokerFeePercent,
+			BuySalesTaxPercent:   req.BuySalesTaxPercent,
+			SellSalesTaxPercent:  req.SellSalesTaxPercent,
+		},
+		Warnings: warnings,
+	})
+	quote.Cache = cacheInfo
+	return quote, nil
+}
+
+func (s *Server) handleExecutionPlan(w http.ResponseWriter, r *http.Request) {
+	var req executionPlanAPIRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid json")
 		return
@@ -4321,48 +4537,38 @@ func (s *Server) handleExecutionPlan(w http.ResponseWriter, r *http.Request) {
 	if !req.IsBuy {
 		orderType = "buy"
 	}
-	var orders []esi.MarketOrder
-	var err error
-	if req.LocationID != 0 && isPlayerStructure(req.LocationID) {
-		userID := userIDFromRequest(r)
-		if userID == "" || s.sessions == nil || s.sso == nil {
-			writeError(w, 401, "player structure market data requires authenticated character access")
-			return
+	orders, err := s.fetchExecutionOrders(r, req.RegionID, req.LocationID, orderType)
+	if err != nil {
+		status := 502
+		msg := err.Error()
+		if strings.Contains(msg, "authenticated") || strings.Contains(msg, "refresh character token") {
+			status = 401
+		} else if strings.Contains(msg, "character_id") || strings.Contains(msg, "scope") {
+			status = 400
 		}
-		characterID, allScope, err := parseAuthScope(r)
-		if err != nil {
-			writeError(w, 400, err.Error())
-			return
-		}
-		selectedSessions, err := s.authSessionsForScope(userID, characterID, allScope, false)
-		if err != nil || len(selectedSessions) == 0 {
-			writeError(w, 401, "player structure market data requires an authenticated character")
-			return
-		}
-		token, err := s.sessions.EnsureValidTokenForUserCharacter(s.sso, userID, selectedSessions[0].CharacterID)
-		if err != nil {
-			log.Printf("[API] execution/plan EnsureValidTokenForUserCharacter: %v", err)
-			writeError(w, 401, "failed to refresh character token")
-			return
-		}
-		orders, err = s.esi.FetchStructureOrders(req.LocationID, token)
-		if err != nil {
-			log.Printf("[API] execution/plan FetchStructureOrders(%d): %v", req.LocationID, err)
-			writeError(w, 502, "failed to fetch structure market orders")
-			return
-		}
-	} else {
-		orders, err = s.esi.FetchRegionOrders(req.RegionID, orderType)
-		if err != nil {
-			log.Printf("[API] execution/plan FetchRegionOrders: %v", err)
-			writeError(w, 502, "failed to fetch market orders")
-			return
-		}
+		writeError(w, status, msg)
+		return
 	}
 
 	filtered := filterExecutionPlanOrders(orders, req.TypeID, req.SystemID, req.LocationID)
 
 	result := engine.ComputeExecutionPlan(filtered, req.Quantity, req.IsBuy)
+	includeQuote := req.IncludeQuote || req.Quote || requestBoolQuery(r, "quote") || requestBoolQuery(r, "include_quote")
+	if includeQuote {
+		quote, err := s.buildExecutionQuote(r, req)
+		if err != nil {
+			status := 502
+			msg := err.Error()
+			if strings.Contains(msg, "authenticated") || strings.Contains(msg, "refresh character token") {
+				status = 401
+			} else if strings.Contains(msg, "required") || strings.Contains(msg, "scope") {
+				status = 400
+			}
+			writeError(w, status, msg)
+			return
+		}
+		result.Quote = &quote
+	}
 
 	// When market history is available, add impact calibration (Amihud, σ, TWAP slices)
 	if s.db != nil {
@@ -5401,7 +5607,7 @@ func (s *Server) handleAuthUndercuts(w http.ResponseWriter, r *http.Request) {
 		go func(rt regionType) {
 			defer wg.Done()
 			undercutSem <- struct{}{}
-			ro, fetchErr := s.esi.FetchRegionOrdersByType(rt.regionID, rt.typeID)
+			ro, fetchErr := s.esi.FetchRegionOrdersByTypeContext(r.Context(), rt.regionID, rt.typeID)
 			<-undercutSem
 			mu.Lock()
 			results[rt] = fetchResult{ro, fetchErr}
@@ -7170,7 +7376,7 @@ func (s *Server) handleAuthOrderDesk(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 
 			sem <- struct{}{}
-			ro, fetchErr := s.esi.FetchRegionOrdersByType(rt.regionID, rt.typeID)
+			ro, fetchErr := s.esi.FetchRegionOrdersByTypeContext(r.Context(), rt.regionID, rt.typeID)
 			<-sem
 
 			var entries []esi.HistoryEntry
@@ -7484,7 +7690,7 @@ func (s *Server) handleAuthStationCommand(w http.ResponseWriter, r *http.Request
 		go func(rt regionType) {
 			defer booksWG.Done()
 			booksSem <- struct{}{}
-			ro, fetchErr := s.esi.FetchRegionOrdersByType(rt.regionID, rt.typeID)
+			ro, fetchErr := s.esi.FetchRegionOrdersByTypeContext(r.Context(), rt.regionID, rt.typeID)
 			<-booksSem
 			booksMu.Lock()
 			bookByPair[rt] = fetchResult{orders: ro, err: fetchErr}

@@ -1,6 +1,7 @@
 package esi
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -111,6 +112,24 @@ func (c *Client) ensureLightweightHTTP() error {
 	defer c.mu.Unlock()
 	if c.sem == nil {
 		c.sem = make(chan struct{}, 50)
+	}
+	if c.http == nil {
+		c.http = &http.Client{Timeout: 30 * time.Second}
+	}
+	return nil
+}
+
+func (c *Client) ensureBulkHTTP() error {
+	if c == nil {
+		return fmt.Errorf("esi client is nil")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sem == nil {
+		c.sem = make(chan struct{}, 50)
+	}
+	if c.scanSem == nil {
+		c.scanSem = make(chan struct{}, 50)
 	}
 	if c.http == nil {
 		c.http = &http.Client{Timeout: 30 * time.Second}
@@ -631,6 +650,68 @@ func isRetryable(statusCode int) bool {
 	return statusCode == 420 || statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504 || statusCode == 520
 }
 
+func retryBackoff(attempt int) time.Duration {
+	if attempt <= 0 {
+		return 0
+	}
+	return retryBaseWait * time.Duration(1<<(attempt-1))
+}
+
+func esiRetryDelay(resp *http.Response, fallback time.Duration) time.Duration {
+	if resp == nil {
+		return fallback
+	}
+	if retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After")); retryAfter != "" {
+		if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+			return minDuration(time.Duration(seconds)*time.Second, 30*time.Second)
+		}
+		if at, err := http.ParseTime(retryAfter); err == nil {
+			if wait := time.Until(at); wait > 0 {
+				return minDuration(wait, 30*time.Second)
+			}
+		}
+	}
+	remain, remainErr := strconv.Atoi(strings.TrimSpace(resp.Header.Get("X-Esi-Error-Limit-Remain")))
+	reset, resetErr := strconv.Atoi(strings.TrimSpace(resp.Header.Get("X-Esi-Error-Limit-Reset")))
+	if remainErr == nil && resetErr == nil && remain <= 1 && reset > 0 {
+		return minDuration(time.Duration(reset)*time.Second, 30*time.Second)
+	}
+	return fallback
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func acquireSemaphore(ctx context.Context, sem chan struct{}) error {
+	if sem == nil {
+		return nil
+	}
+	select {
+	case sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // PostJSON sends a POST request with a JSON body and decodes the response into dst.
 // Uses the lightweight semaphore and retries transient errors like GetJSON.
 func (c *Client) PostJSON(url string, body interface{}, dst interface{}) error {
@@ -707,16 +788,33 @@ func (r *bytesReader) Read(p []byte) (int, error) {
 // Retries up to maxRetries times on transient ESI errors (502/503/504) with exponential backoff.
 // Semaphore is released before sleeping so other requests can proceed.
 func (c *Client) GetJSON(url string, dst interface{}) error {
+	return c.GetJSONContext(context.Background(), url, dst)
+}
+
+func (c *Client) GetJSONContext(ctx context.Context, url string, dst interface{}) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.ensureLightweightHTTP(); err != nil {
+		return err
+	}
 	var lastErr error
+	var retryWait time.Duration
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			wait := retryBaseWait * time.Duration(1<<(attempt-1)) // 500ms, 1s, 2s
-			time.Sleep(wait)
+			if retryWait <= 0 {
+				retryWait = retryBackoff(attempt)
+			}
+			if err := sleepWithContext(ctx, retryWait); err != nil {
+				return err
+			}
 		}
 
-		c.sem <- struct{}{} // acquire only for the actual request
+		if err := acquireSemaphore(ctx, c.sem); err != nil {
+			return err
+		}
 
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			<-c.sem
 			return err
@@ -740,6 +838,7 @@ func (c *Client) GetJSON(url string, dst interface{}) error {
 		}
 
 		body, _ := io.ReadAll(resp.Body)
+		retryWait = esiRetryDelay(resp, retryBackoff(attempt+1))
 		resp.Body.Close()
 		<-c.sem // release before potential retry sleep
 		lastErr = fmt.Errorf("ESI %d: %s", resp.StatusCode, string(body))
@@ -755,25 +854,45 @@ func (c *Client) GetJSON(url string, dst interface{}) error {
 
 // GetPaginated fetches all pages from a paginated ESI endpoint (unauthenticated).
 func (c *Client) GetPaginated(url string) ([]json.RawMessage, error) {
-	return c.getPaginatedInternal(url, "")
+	return c.GetPaginatedContext(context.Background(), url)
+}
+
+func (c *Client) GetPaginatedContext(ctx context.Context, url string) ([]json.RawMessage, error) {
+	return c.getPaginatedInternalContext(ctx, url, "")
 }
 
 // AuthGetPaginated fetches all pages from a paginated ESI endpoint with an access token.
 // Required for authenticated endpoints like corp journal and corp orders.
 func (c *Client) AuthGetPaginated(url, accessToken string) ([]json.RawMessage, error) {
-	return c.getPaginatedInternal(url, accessToken)
+	return c.AuthGetPaginatedContext(context.Background(), url, accessToken)
+}
+
+func (c *Client) AuthGetPaginatedContext(ctx context.Context, url, accessToken string) ([]json.RawMessage, error) {
+	return c.getPaginatedInternalContext(ctx, url, accessToken)
 }
 
 // getPaginatedInternal is the shared implementation for paginated fetches.
 // If accessToken is non-empty, it is sent as a Bearer token.
 func (c *Client) getPaginatedInternal(url, accessToken string) ([]json.RawMessage, error) {
-	c.sem <- struct{}{}
+	return c.getPaginatedInternalContext(context.Background(), url, accessToken)
+}
+
+func (c *Client) getPaginatedInternalContext(ctx context.Context, url, accessToken string) ([]json.RawMessage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.ensureLightweightHTTP(); err != nil {
+		return nil, err
+	}
+	if err := acquireSemaphore(ctx, c.sem); err != nil {
+		return nil, err
+	}
 
 	sep := "&"
 	if !strings.Contains(url, "?") {
 		sep = "?"
 	}
-	req, err := http.NewRequest("GET", url+sep+"page=1", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url+sep+"page=1", nil)
 	if err != nil {
 		<-c.sem
 		return nil, err
@@ -825,9 +944,9 @@ func (c *Client) getPaginatedInternal(url, accessToken string) ([]json.RawMessag
 			var data []json.RawMessage
 			var fetchErr error
 			if accessToken != "" {
-				fetchErr = c.AuthGetJSON(pageURL, accessToken, &data)
+				fetchErr = c.AuthGetJSONContext(ctx, pageURL, accessToken, &data)
 			} else {
-				fetchErr = c.GetJSON(pageURL, &data)
+				fetchErr = c.GetJSONContext(ctx, pageURL, &data)
 			}
 			results <- pageResult{page: pageNum, data: data, err: fetchErr}
 		}(p)
@@ -848,7 +967,11 @@ func (c *Client) getPaginatedInternal(url, accessToken string) ([]json.RawMessag
 
 // GetPaginatedDirect fetches all pages and decodes directly into MarketOrder slice.
 func (c *Client) GetPaginatedDirect(url string, regionID int32) ([]MarketOrder, error) {
-	orders, _, _, err := c.getPaginatedDirectWithHeaders(url, regionID)
+	return c.GetPaginatedDirectContext(context.Background(), url, regionID)
+}
+
+func (c *Client) GetPaginatedDirectContext(ctx context.Context, url string, regionID int32) ([]MarketOrder, error) {
+	orders, _, _, err := c.getPaginatedDirectWithHeadersContext(ctx, url, regionID)
 	return orders, err
 }
 
@@ -856,21 +979,39 @@ func (c *Client) GetPaginatedDirect(url string, regionID int32) ([]MarketOrder, 
 // Uses scanSem so bulk page fetches never starve regular API calls.
 // Retries transient ESI errors with exponential backoff; semaphore released during sleep.
 func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]MarketOrder, string, time.Time, error) {
+	return c.getPaginatedDirectWithHeadersContext(context.Background(), url, regionID)
+}
+
+func (c *Client) getPaginatedDirectWithHeadersContext(ctx context.Context, url string, regionID int32) ([]MarketOrder, string, time.Time, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.ensureBulkHTTP(); err != nil {
+		return nil, "", time.Time{}, err
+	}
 	// Fetch page 1 with retry
 	var page1 []MarketOrder
 	var totalPages int
 	var respEtag string
 	var respExpires time.Time
 	var lastErr error
+	var retryWait time.Duration
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(retryBaseWait * time.Duration(1<<(attempt-1)))
+			if retryWait <= 0 {
+				retryWait = retryBackoff(attempt)
+			}
+			if err := sleepWithContext(ctx, retryWait); err != nil {
+				return nil, "", time.Time{}, err
+			}
 		}
 
-		c.scanSem <- struct{}{}
+		if err := acquireSemaphore(ctx, c.scanSem); err != nil {
+			return nil, "", time.Time{}, err
+		}
 
-		req, err := newESIRequest(url + "&page=1")
+		req, err := newESIRequestContext(ctx, url+"&page=1")
 		if err != nil {
 			<-c.scanSem
 			return nil, "", time.Time{}, err
@@ -885,6 +1026,7 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 		}
 
 		if resp.StatusCode != 200 {
+			retryWait = esiRetryDelay(resp, retryBackoff(attempt+1))
 			resp.Body.Close()
 			<-c.scanSem
 			lastErr = fmt.Errorf("ESI %d on page 1", resp.StatusCode)
@@ -937,15 +1079,25 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 		go func(pageNum int) {
 			var data []MarketOrder
 			pageURL := fmt.Sprintf("%s&page=%d", url, pageNum)
+			var retryWait time.Duration
 
 			for attempt := 0; attempt <= maxRetries; attempt++ {
 				if attempt > 0 {
-					time.Sleep(retryBaseWait * time.Duration(1<<(attempt-1)))
+					if retryWait <= 0 {
+						retryWait = retryBackoff(attempt)
+					}
+					if err := sleepWithContext(ctx, retryWait); err != nil {
+						results <- pageResult{err: err}
+						return
+					}
 				}
 
-				c.scanSem <- struct{}{}
+				if err := acquireSemaphore(ctx, c.scanSem); err != nil {
+					results <- pageResult{err: err}
+					return
+				}
 
-				pageReq, err := newESIRequest(pageURL)
+				pageReq, err := newESIRequestContext(ctx, pageURL)
 				if err != nil {
 					<-c.scanSem
 					results <- pageResult{err: err}
@@ -964,6 +1116,7 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 				}
 
 				if pageResp.StatusCode != 200 {
+					wait := esiRetryDelay(pageResp, retryBackoff(attempt+1))
 					pageResp.Body.Close()
 					<-c.scanSem
 					if !isRetryable(pageResp.StatusCode) || attempt == maxRetries {
@@ -971,6 +1124,7 @@ func (c *Client) getPaginatedDirectWithHeaders(url string, regionID int32) ([]Ma
 						results <- pageResult{err: fmt.Errorf("ESI %d", pageResp.StatusCode)}
 						return
 					}
+					retryWait = wait
 					continue
 				}
 

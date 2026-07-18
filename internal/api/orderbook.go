@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"eve-flipper/internal/db"
 )
@@ -189,9 +190,13 @@ func (s *Server) handleOrderBookStats(w http.ResponseWriter, r *http.Request) {
 }
 
 type orderBookCleanupRequest struct {
-	KeepDays int  `json:"keep_days"`
-	DryRun   bool `json:"dry_run"`
-	Vacuum   bool `json:"vacuum"`
+	KeepDays      int  `json:"keep_days"`
+	DryRun        bool `json:"dry_run"`
+	Vacuum        bool `json:"vacuum"`
+	BatchSize     int  `json:"batch_size"`
+	MaxSeconds    int  `json:"max_seconds"`
+	MaxSnapshots  int  `json:"max_snapshots"`   // legacy alias for batch_size
+	MaxDurationMs int  `json:"max_duration_ms"` // optional precise time budget
 }
 
 func (s *Server) handleOrderBookCleanup(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +216,33 @@ func (s *Server) handleOrderBookCleanup(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "keep_days must be positive")
 		return
 	}
-	plan, err := s.db.CleanupOrderBookSnapshots(req.KeepDays, req.DryRun, req.Vacuum)
+	batchSize := req.BatchSize
+	if batchSize <= 0 {
+		batchSize = req.MaxSnapshots
+	}
+	if batchSize <= 0 {
+		batchSize = db.DefaultOrderBookCleanupBatchSnapshots
+	}
+	maxDuration := time.Duration(req.MaxSeconds) * time.Second
+	if req.MaxDurationMs > 0 {
+		maxDuration = time.Duration(req.MaxDurationMs) * time.Millisecond
+	}
+	if maxDuration <= 0 {
+		maxDuration = time.Duration(db.DefaultOrderBookCleanupMaxSeconds) * time.Second
+	}
+
+	var plan db.OrderBookCleanupPlan
+	var err error
+	if req.DryRun {
+		plan, err = s.db.CleanupOrderBookSnapshots(req.KeepDays, true, false)
+	} else {
+		plan, err = s.db.CleanupOrderBookSnapshotsBatches(req.KeepDays, batchSize, maxDuration)
+		plan.DryRun = false
+		plan.Vacuum = req.Vacuum
+		if err == nil && req.Vacuum && plan.SnapshotsDeleted > 0 {
+			err = s.db.Vacuum()
+		}
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

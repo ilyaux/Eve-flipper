@@ -1,6 +1,7 @@
 package esi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -156,12 +157,21 @@ type CharacterLocation struct {
 // transport (connection pooling, keep-alive). Uses the lightweight semaphore so that
 // character API calls never compete with bulk scan page fetches.
 func (c *Client) AuthGetJSON(url, accessToken string, dst interface{}) error {
+	return c.AuthGetJSONContext(context.Background(), url, accessToken, dst)
+}
+
+func (c *Client) AuthGetJSONContext(ctx context.Context, url, accessToken string, dst interface{}) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := c.ensureLightweightHTTP(); err != nil {
 		return err
 	}
-	c.sem <- struct{}{} // acquire lightweight semaphore
+	if err := acquireSemaphore(ctx, c.sem); err != nil {
+		return err
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		<-c.sem
 		return err

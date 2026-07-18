@@ -34,6 +34,9 @@ func TestComputeExecutionPlan_Buy_Exact(t *testing.T) {
 	if !got.CanFill {
 		t.Error("CanFill want true")
 	}
+	if got.VolumeFilled != 150 {
+		t.Errorf("VolumeFilled = %v, want 150", got.VolumeFilled)
+	}
 	if got.TotalDepth != 300 {
 		t.Errorf("TotalDepth = %v, want 300", got.TotalDepth)
 	}
@@ -66,6 +69,9 @@ func TestComputeExecutionPlan_CannotFill(t *testing.T) {
 	}
 	if got.TotalDepth != 50 {
 		t.Errorf("TotalDepth = %v, want 50", got.TotalDepth)
+	}
+	if got.VolumeFilled != 50 {
+		t.Errorf("VolumeFilled = %v, want 50", got.VolumeFilled)
 	}
 	if math.Abs(got.ExpectedPrice-100) > 1e-9 {
 		t.Errorf("ExpectedPrice = %v, want 100", got.ExpectedPrice)

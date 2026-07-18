@@ -279,7 +279,7 @@ func (s *Server) handleItemIntelligence(w http.ResponseWriter, r *http.Request) 
 		},
 	}
 
-	orders, orderErr := s.esi.FetchRegionOrdersByType(regionID, typeID)
+	orders, orderErr := s.esi.FetchRegionOrdersByTypeContext(r.Context(), regionID, typeID)
 	if orderErr != nil {
 		resp.Warnings = append(resp.Warnings, "market orders unavailable: "+orderErr.Error())
 	} else {

@@ -31,6 +31,8 @@ export function RouteSafetyBadge({ from, to, minSec = 0 }: Props) {
       setLoading(false);
       setModalOpen(true);
       void trackAchievementEvent("route_checked", { gankRiskViewed: true });
+    }).catch(() => {
+      setLoading(false);
     });
   };
 

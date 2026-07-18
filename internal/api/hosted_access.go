@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,7 +117,18 @@ func (s *Server) handleHostedAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	characterID := strings.TrimSpace(r.URL.Query().Get("character_id"))
-	access, err := s.fetchHostedAccess(r.Context(), userIDFromRequest(r), characterID)
+	identity, identityOK := s.hostedBillingIdentityFromRequest(r, characterID, false)
+	if !identityOK && characterID != "" {
+		writeError(w, http.StatusUnauthorized, "verified EVE character identity is required")
+		return
+	}
+	billingUserID := ""
+	verifiedCharacterID := ""
+	if identityOK {
+		billingUserID = identity.UserID
+		verifiedCharacterID = identity.CharacterID
+	}
+	access, err := s.fetchHostedAccess(r.Context(), billingUserID, verifiedCharacterID)
 	if err != nil {
 		access = defaultHostedAccess()
 		access.Hosted = true
@@ -126,14 +138,14 @@ func (s *Server) handleHostedAccess(w http.ResponseWriter, r *http.Request) {
 		s.trackTelemetryEvent(r, telemetryEvent("entitlement_checked", "hosted", map[string]interface{}{
 			"entitlement_result": "fallback",
 			"error":              err.Error(),
-			"character_id":       characterID,
+			"character_id":       verifiedCharacterID,
 		}))
 	} else {
 		s.trackTelemetryEvent(r, telemetryEvent("entitlement_checked", "hosted", map[string]interface{}{
 			"entitlement_result":  "ok",
 			"plan":                access.Plan.ID,
 			"subscription_status": access.Status,
-			"character_id":        characterID,
+			"character_id":        verifiedCharacterID,
 		}))
 	}
 	writeJSON(w, access)
@@ -160,9 +172,9 @@ func (s *Server) handleHostedPaymentRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "plan_id is required")
 		return
 	}
-	userID, ok := hostedBillingUserIDFromRequest(r)
+	identity, ok := s.hostedBillingIdentityFromRequest(r, req.CharacterID, true)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "hosted user identity is required")
+		writeError(w, http.StatusUnauthorized, "verified EVE character identity is required")
 		return
 	}
 	internalKey := hostedBillingInternalKey()
@@ -172,11 +184,9 @@ func (s *Server) handleHostedPaymentRequest(w http.ResponseWriter, r *http.Reque
 	}
 
 	payload := map[string]string{
-		"user_id": userID,
-		"plan_id": req.PlanID,
-	}
-	if req.CharacterID != "" {
-		payload["character_id"] = req.CharacterID
+		"user_id":      identity.UserID,
+		"plan_id":      req.PlanID,
+		"character_id": identity.CharacterID,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -216,7 +226,7 @@ func (s *Server) handleHostedPaymentRequest(w http.ResponseWriter, r *http.Reque
 
 	s.trackTelemetryEvent(r, telemetryEvent("plan_selected", "hosted", map[string]interface{}{
 		"plan":         req.PlanID,
-		"character_id": req.CharacterID,
+		"character_id": identity.CharacterID,
 	}))
 	writeJSON(w, result)
 }
@@ -239,9 +249,9 @@ func (s *Server) handleHostedPaymentCancel(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	req.CharacterID = strings.TrimSpace(req.CharacterID)
-	userID, ok := hostedBillingUserIDFromRequest(r)
+	identity, ok := s.hostedBillingIdentityFromRequest(r, req.CharacterID, true)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "hosted user identity is required")
+		writeError(w, http.StatusUnauthorized, "verified EVE character identity is required")
 		return
 	}
 	internalKey := hostedBillingInternalKey()
@@ -250,9 +260,9 @@ func (s *Server) handleHostedPaymentCancel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	payload := map[string]string{"user_id": userID}
-	if req.CharacterID != "" {
-		payload["character_id"] = req.CharacterID
+	payload := map[string]string{
+		"user_id":      identity.UserID,
+		"character_id": identity.CharacterID,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -291,7 +301,7 @@ func (s *Server) handleHostedPaymentCancel(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.trackTelemetryEvent(r, telemetryEvent("payment_request_cancelled", "hosted", map[string]interface{}{
-		"character_id": req.CharacterID,
+		"character_id": identity.CharacterID,
 		"cancelled":    result["cancelled"],
 	}))
 	writeJSON(w, result)
@@ -318,9 +328,9 @@ func (s *Server) handleHostedPaymentMarkSent(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "payment code is required")
 		return
 	}
-	userID, ok := hostedBillingUserIDFromRequest(r)
+	identity, ok := s.hostedBillingIdentityFromRequest(r, req.CharacterID, true)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "hosted user identity is required")
+		writeError(w, http.StatusUnauthorized, "verified EVE character identity is required")
 		return
 	}
 	internalKey := hostedBillingInternalKey()
@@ -330,11 +340,9 @@ func (s *Server) handleHostedPaymentMarkSent(w http.ResponseWriter, r *http.Requ
 	}
 
 	payload := map[string]string{
-		"user_id": userID,
-		"code":    req.Code,
-	}
-	if req.CharacterID != "" {
-		payload["character_id"] = req.CharacterID
+		"user_id":      identity.UserID,
+		"character_id": identity.CharacterID,
+		"code":         req.Code,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -373,7 +381,7 @@ func (s *Server) handleHostedPaymentMarkSent(w http.ResponseWriter, r *http.Requ
 	}
 
 	s.trackTelemetryEvent(r, telemetryEvent("payment_marked_sent", "hosted", map[string]interface{}{
-		"character_id": req.CharacterID,
+		"character_id": identity.CharacterID,
 	}))
 	writeJSON(w, result)
 }
@@ -571,7 +579,7 @@ func (s *Server) consumeHostedUsage(r *http.Request, feature string) (hostedUsag
 	if internalKey == "" && s.hostedBillingConfigured() {
 		return hostedUsageDecision{}, fmt.Errorf("hosted billing internal key is not configured")
 	}
-	userID, ok := hostedBillingUserIDFromRequest(r)
+	identity, ok := s.hostedBillingIdentityFromRequest(r, "", true)
 	if !ok {
 		return hostedUsageDecision{
 			Allowed: false,
@@ -580,14 +588,10 @@ func (s *Server) consumeHostedUsage(r *http.Request, feature string) (hostedUsag
 		}, nil
 	}
 	payload := map[string]interface{}{
-		"user_id": userID,
-		"feature": feature,
-		"units":   1,
-	}
-	if s.sessions != nil {
-		if sess := s.sessions.GetForUser(userID); sess != nil && sess.CharacterID > 0 {
-			payload["character_id"] = fmt.Sprintf("%d", sess.CharacterID)
-		}
+		"user_id":      identity.UserID,
+		"character_id": identity.CharacterID,
+		"feature":      feature,
+		"units":        1,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -624,6 +628,60 @@ func hostedBillingUserIDFromRequest(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return userID, true
+}
+
+type hostedBillingIdentity struct {
+	UserID        string
+	BrowserUserID string
+	CharacterID   string
+	CharacterName string
+}
+
+func (s *Server) hostedBillingIdentityFromRequest(r *http.Request, requestedCharacterID string, requireCharacter bool) (hostedBillingIdentity, bool) {
+	browserUserID, ok := hostedBillingUserIDFromRequest(r)
+	if !ok {
+		return hostedBillingIdentity{}, false
+	}
+	requestedCharacterID = strings.TrimSpace(requestedCharacterID)
+	if s != nil && s.sessions != nil {
+		if requestedCharacterID != "" {
+			characterID, err := strconv.ParseInt(requestedCharacterID, 10, 64)
+			if err != nil || characterID <= 0 {
+				return hostedBillingIdentity{}, false
+			}
+			sess := s.sessions.GetByCharacterIDForUser(browserUserID, characterID)
+			if sess == nil || sess.CharacterID <= 0 {
+				return hostedBillingIdentity{}, false
+			}
+			return hostedBillingIdentityForSession(browserUserID, sess.CharacterID, sess.CharacterName), true
+		}
+		if sess := s.sessions.GetForUser(browserUserID); sess != nil && sess.CharacterID > 0 {
+			return hostedBillingIdentityForSession(browserUserID, sess.CharacterID, sess.CharacterName), true
+		}
+	}
+	if requireCharacter {
+		return hostedBillingIdentity{}, false
+	}
+	return hostedBillingIdentity{
+		UserID:        browserUserID,
+		BrowserUserID: browserUserID,
+	}, true
+}
+
+func hostedBillingIdentityForSession(browserUserID string, characterID int64, characterName string) hostedBillingIdentity {
+	return hostedBillingIdentity{
+		UserID:        hostedBillingUserIDForCharacter(characterID),
+		BrowserUserID: browserUserID,
+		CharacterID:   fmt.Sprintf("%d", characterID),
+		CharacterName: strings.TrimSpace(characterName),
+	}
+}
+
+func hostedBillingUserIDForCharacter(characterID int64) string {
+	if characterID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("eve_character_%d", characterID)
 }
 
 func (s *Server) hostedBillingConfigured() bool {

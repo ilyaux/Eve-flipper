@@ -830,6 +830,14 @@ func (d *DB) CleanupOrderBookSnapshots(keepDays int, dryRun bool, vacuum bool) (
 	return plan, nil
 }
 
+func (d *DB) Vacuum() error {
+	if d == nil || d.sql == nil {
+		return nil
+	}
+	_, err := d.sql.Exec(`VACUUM`)
+	return err
+}
+
 func (d *DB) scanOrderBookRemainingRange(plan *OrderBookCleanupPlan) error {
 	if d == nil || d.sql == nil || plan == nil {
 		return nil

@@ -50,6 +50,7 @@ export interface FlipResult {
   RealProfit?: number;
   FilledQty?: number;
   CanFill?: boolean;
+  ExecutionQuote?: ExecutionQuote;
   SlippageBuyPct?: number;
   SlippageSellPct?: number;
   FillTimeDays?: number;
@@ -926,6 +927,7 @@ export interface ExecutionPlanResult {
   expected_price: number;
   slippage_percent: number;
   total_cost: number;
+  volume_filled: number;
   depth_levels: DepthLevel[];
   total_depth: number;
   can_fill: boolean;
@@ -933,6 +935,91 @@ export interface ExecutionPlanResult {
   suggested_min_gap: number;
   /** Set when market history available (Kyle's λ, √V, TWAP n*). */
   impact?: ImpactEstimate;
+  quote?: ExecutionQuote;
+}
+
+export type ExecutionQuoteDecision = "SAFE" | "CHANGED" | "DANGER" | string;
+
+export interface ExecutionQuoteCacheInfo {
+  buy_age_seconds?: number;
+  sell_age_seconds?: number;
+  buy_ttl_seconds?: number;
+  sell_ttl_seconds?: number;
+  stale: boolean;
+}
+
+export interface ExecutionQuoteSide {
+  region_id?: number;
+  system_id?: number;
+  location_id?: number;
+  vwap: number;
+  best_price: number;
+  gross_isk: number;
+  fee_isk: number;
+  filled_qty: number;
+  can_fill: boolean;
+  total_depth: number;
+  slippage_percent: number;
+  plan: ExecutionPlanResult;
+}
+
+export interface ExecutionQuote {
+  type_id: number;
+  requested_qty: number;
+  fill_qty: number;
+  partial_reason?: string;
+  buy_vwap: number;
+  sell_vwap: number;
+  buy_gross: number;
+  sell_gross: number;
+  buy_fees: number;
+  sell_fees: number;
+  total_fees: number;
+  shipping_cost: number;
+  shipping_jumps: number;
+  shipping_cost_per_m3_jump: number;
+  packaged_volume_m3: number;
+  filled_volume_m3: number;
+  net_profit: number;
+  profit_per_unit: number;
+  roi_percent: number;
+  decision: ExecutionQuoteDecision;
+  warnings?: string[];
+  cache?: ExecutionQuoteCacheInfo;
+  buy: ExecutionQuoteSide;
+  sell: ExecutionQuoteSide;
+}
+
+export type ExecutionRevalidationStatus = "SAFE" | "CHANGED" | "DANGER";
+
+export interface ExecutionRevalidationRow {
+  key: string;
+  row: FlipResult;
+  quote?: ExecutionQuote;
+  status: ExecutionRevalidationStatus;
+  oldQty: number;
+  nowQty: number;
+  oldBuy: number;
+  nowBuy: number;
+  oldSell: number;
+  nowSell: number;
+  oldProfit: number;
+  nowProfit: number;
+  deltaProfit: number;
+  qtyChanged: boolean;
+  avoid: boolean;
+  reasons: string[];
+}
+
+export interface ExecutionRevalidationReport {
+  createdAt: string;
+  rows: ExecutionRevalidationRow[];
+  safe: number;
+  changed: number;
+  danger: number;
+  totalOldProfit: number;
+  totalNowProfit: number;
+  totalDeltaProfit: number;
 }
 
 export interface ScanParams {
@@ -3163,6 +3250,7 @@ export interface RouteSafetySummary {
 
 export type RouteState =
   | { status: "loading" }
+  | { status: "unknown"; reason: "missing" | "error" }
   | {
       status: "summary";
       danger: "green" | "yellow" | "red";

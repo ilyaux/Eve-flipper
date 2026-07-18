@@ -10,14 +10,39 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"eve-flipper/internal/auth"
 	"eve-flipper/internal/config"
 )
+
+const hostedTestBrowserUserID = "hosted-user"
+const hostedTestCharacterID int64 = 123
+const hostedTestBillingUserID = "eve_character_123"
 
 func enableHostedMode(t *testing.T) {
 	t.Helper()
 	t.Setenv("EVEFLIPPER_HOSTED", "true")
 	t.Setenv(hostedEntitlementsKeyEnv, "test-hosted-key")
+}
+
+func newHostedBillingTestServer(t *testing.T, userID string, characterID int64) *Server {
+	t.Helper()
+	store := newSessionStoreForAPITest(t)
+	if err := store.SaveAndActivateForUser(userID, &auth.Session{
+		CharacterID:   characterID,
+		CharacterName: "Billing Test",
+		AccessToken:   "access-token",
+		RefreshToken:  "refresh-token",
+		ExpiresAt:     time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveAndActivateForUser: %v", err)
+	}
+	return NewServer(config.Default(), nil, nil, nil, store)
+}
+
+func withHostedUser(req *http.Request) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), userIDContextKey, hostedTestBrowserUserID))
 }
 
 func TestHostedAccessDefaultsToLocal(t *testing.T) {
@@ -90,7 +115,7 @@ func TestHostedPaymentRequestProxiesBillingService(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["plan_id"] != "trader" || body["character_id"] != "123" {
+		if body["user_id"] != hostedTestBillingUserID || body["plan_id"] != "trader" || body["character_id"] != "123" {
 			t.Fatalf("unexpected body: %#v", body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -105,11 +130,11 @@ func TestHostedPaymentRequestProxiesBillingService(t *testing.T) {
 
 	t.Setenv(hostedPaymentsURLEnv, billing.URL+"/v1/payments/request")
 	t.Setenv(hostedEntitlementsKeyEnv, apiKey)
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/hosted/payments/request", bytes.NewBufferString(`{"plan_id":"trader","character_id":"123"}`))
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	server.handleHostedPaymentRequest(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -138,7 +163,7 @@ func TestHostedPaymentCancelProxiesBillingService(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["user_id"] != "hosted-user" || body["character_id"] != "123" {
+		if body["user_id"] != hostedTestBillingUserID || body["character_id"] != "123" {
 			t.Fatalf("unexpected body: %#v", body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -150,11 +175,11 @@ func TestHostedPaymentCancelProxiesBillingService(t *testing.T) {
 
 	t.Setenv(hostedPaymentsURLEnv, billing.URL+"/v1/payments/request")
 	t.Setenv(hostedEntitlementsKeyEnv, apiKey)
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/hosted/payments/cancel", bytes.NewBufferString(`{"character_id":"123"}`))
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	server.handleHostedPaymentCancel(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -183,7 +208,7 @@ func TestHostedPaymentMarkSentProxiesBillingService(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["user_id"] != "hosted-user" || body["character_id"] != "123" || body["code"] != "EFLIP-A1B2C3D4E5F6" {
+		if body["user_id"] != hostedTestBillingUserID || body["character_id"] != "123" || body["code"] != "EFLIP-A1B2C3D4E5F6" {
 			t.Fatalf("unexpected body: %#v", body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -199,11 +224,11 @@ func TestHostedPaymentMarkSentProxiesBillingService(t *testing.T) {
 
 	t.Setenv(hostedPaymentsURLEnv, billing.URL+"/v1/payments/request")
 	t.Setenv(hostedEntitlementsKeyEnv, apiKey)
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/hosted/payments/mark-sent", bytes.NewBufferString(`{"character_id":"123","code":"eflip-a1b2c3d4e5f6"}`))
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	server.handleHostedPaymentMarkSent(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -250,7 +275,7 @@ func TestHostedAccessPreservesCorporationReceiverInstructions(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/hosted/access", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	server.handleHostedAccess(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -282,7 +307,7 @@ func TestHostedPaymentRequestDisabledOutsideHostedMode(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/hosted/payments/request", bytes.NewBufferString(`{"plan_id":"trader"}`))
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	server.handleHostedPaymentRequest(rec, req)
 
 	if called {
@@ -317,6 +342,31 @@ func TestHostedPaymentRequestRequiresUserIdentity(t *testing.T) {
 	}
 }
 
+func TestHostedPaymentRequestRejectsUnownedCharacter(t *testing.T) {
+	enableHostedMode(t)
+	called := false
+	billing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer billing.Close()
+
+	t.Setenv(hostedPaymentsURLEnv, billing.URL+"/v1/payments/request")
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/hosted/payments/request", bytes.NewBufferString(`{"plan_id":"trader","character_id":"999"}`))
+	req = withHostedUser(req)
+	server.handleHostedPaymentRequest(rec, req)
+
+	if called {
+		t.Fatal("billing service must not be called for unowned character_id")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHostedPaymentRequestRequiresInternalKey(t *testing.T) {
 	enableHostedMode(t)
 	called := false
@@ -328,11 +378,11 @@ func TestHostedPaymentRequestRequiresInternalKey(t *testing.T) {
 
 	t.Setenv(hostedPaymentsURLEnv, billing.URL+"/v1/payments/request")
 	t.Setenv(hostedEntitlementsKeyEnv, "")
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/hosted/payments/request", bytes.NewBufferString(`{"plan_id":"trader"}`))
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	server.handleHostedPaymentRequest(rec, req)
 
 	if called {
@@ -346,6 +396,13 @@ func TestHostedPaymentRequestRequiresInternalKey(t *testing.T) {
 func TestHostedQuotaMiddlewareBlocksExhaustedQuota(t *testing.T) {
 	enableHostedMode(t)
 	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["user_id"] != hostedTestBillingUserID || body["character_id"] != "123" {
+			t.Fatalf("unexpected usage body: %#v", body)
+		}
 		_ = json.NewEncoder(w).Encode(hostedUsageDecision{
 			Allowed: false,
 			Feature: "scans",
@@ -355,7 +412,7 @@ func TestHostedQuotaMiddlewareBlocksExhaustedQuota(t *testing.T) {
 	}))
 	defer usage.Close()
 	t.Setenv(hostedUsageURLEnv, usage.URL)
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	nextCalled := false
 	handler := server.hostedQuotaMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +421,7 @@ func TestHostedQuotaMiddlewareBlocksExhaustedQuota(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/scan", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	handler.ServeHTTP(rec, req)
 
 	if nextCalled {
@@ -416,11 +473,14 @@ func TestHostedQuotaMiddlewareAllowsUsage(t *testing.T) {
 		if body["feature"] != "station_ai" {
 			t.Fatalf("feature = %#v, want station_ai", body["feature"])
 		}
+		if body["user_id"] != hostedTestBillingUserID || body["character_id"] != "123" {
+			t.Fatalf("unexpected usage body: %#v", body)
+		}
 		_ = json.NewEncoder(w).Encode(hostedUsageDecision{Allowed: true, Feature: "station_ai", Used: 1})
 	}))
 	defer usage.Close()
 	t.Setenv(hostedUsageURLEnv, usage.URL)
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	nextCalled := false
 	handler := server.hostedQuotaMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -429,7 +489,7 @@ func TestHostedQuotaMiddlewareAllowsUsage(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/station/ai/chat", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	handler.ServeHTTP(rec, req)
 
 	if !nextCalled {
@@ -483,7 +543,7 @@ func TestHostedQuotaMiddlewareAllowsLocalModeWithStrayUsageService(t *testing.T)
 	}))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/scan", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	handler.ServeHTTP(rec, req)
 
 	if called {
@@ -501,7 +561,7 @@ func TestHostedQuotaMiddlewareFailsClosedWhenUsageServiceMissing(t *testing.T) {
 	enableHostedMode(t)
 	t.Setenv(hostedUsageURLEnv, "")
 	t.Setenv(hostedEntitlementsURLEnv, "http://billing.test/v1/entitlements/current")
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	nextCalled := false
 	handler := server.hostedQuotaMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -510,7 +570,7 @@ func TestHostedQuotaMiddlewareFailsClosedWhenUsageServiceMissing(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/scan", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	handler.ServeHTTP(rec, req)
 
 	if nextCalled {
@@ -540,7 +600,7 @@ func TestHostedQuotaMiddlewareFailsClosedWhenInternalKeyMissing(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/scan", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "hosted-user"))
+	req = withHostedUser(req)
 	handler.ServeHTTP(rec, req)
 
 	if called {
@@ -680,6 +740,9 @@ func TestHostedAccessProxiesEntitlementService(t *testing.T) {
 		if got := r.URL.Query().Get("character_id"); got != "123" {
 			t.Fatalf("character_id = %q, want 123", got)
 		}
+		if got := r.URL.Query().Get("user_id"); got != hostedTestBillingUserID {
+			t.Fatalf("user_id = %q, want %q", got, hostedTestBillingUserID)
+		}
 		_ = json.NewEncoder(w).Encode(hostedAccessResponse{
 			Plan:   hostedAccessPlan{ID: "pro", Name: "Pro"},
 			Status: "active",
@@ -693,10 +756,11 @@ func TestHostedAccessProxiesEntitlementService(t *testing.T) {
 
 	t.Setenv(hostedEntitlementsURLEnv, entitlements.URL)
 	t.Setenv(hostedEntitlementsKeyEnv, apiKey)
-	server := NewServer(config.Default(), nil, nil, nil, nil)
+	server := newHostedBillingTestServer(t, hostedTestBrowserUserID, hostedTestCharacterID)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/hosted/access?character_id=123", nil)
+	req = withHostedUser(req)
 	server.handleHostedAccess(rec, req)
 
 	if rec.Code != http.StatusOK {

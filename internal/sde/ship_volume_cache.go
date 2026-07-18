@@ -21,12 +21,13 @@ type ShipPackagedVolumeCache struct {
 }
 
 type ShipPackagedVolumeRefreshResult struct {
-	CachePath string
-	Cached    int
-	Missing   int
-	Fetched   int
-	Failed    int
-	Applied   int
+	CachePath        string
+	CorruptCachePath string
+	Cached           int
+	Missing          int
+	Fetched          int
+	Failed           int
+	Applied          int
 }
 
 func LoadShipPackagedVolumeCache(dataDir string) (map[int32]float64, string, error) {
@@ -51,6 +52,27 @@ func LoadShipPackagedVolumeCache(dataDir string) (map[int32]float64, string, err
 		out[int32(typeID)] = volume
 	}
 	return out, path, nil
+}
+
+func loadShipPackagedVolumeCacheForUpdate(dataDir string) (map[int32]float64, string, string, error) {
+	cache, path, err := LoadShipPackagedVolumeCache(dataDir)
+	if err == nil {
+		return cache, path, "", nil
+	}
+	if !isCorruptShipPackagedVolumeCache(err) {
+		return nil, path, "", err
+	}
+	corruptPath := path + ".corrupt." + time.Now().UTC().Format("20060102T150405Z")
+	if renameErr := os.Rename(path, corruptPath); renameErr != nil {
+		return nil, path, "", fmt.Errorf("move corrupt ship packaged volume cache: %w", renameErr)
+	}
+	return map[int32]float64{}, path, corruptPath, nil
+}
+
+func isCorruptShipPackagedVolumeCache(err error) bool {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
 }
 
 func SaveShipPackagedVolumeCache(dataDir string, volumes map[int32]float64) (string, error) {
@@ -118,16 +140,75 @@ func (d *Data) MissingShipPackagedVolumeTypeIDs() []int32 {
 	return ids
 }
 
+func ApplyCachedShipPackagedVolumes(dataDir string, data *Data) (ShipPackagedVolumeRefreshResult, error) {
+	cache, path, corruptPath, err := loadShipPackagedVolumeCacheForUpdate(dataDir)
+	if err != nil {
+		return ShipPackagedVolumeRefreshResult{CachePath: path}, fmt.Errorf("load ship packaged volume cache: %w", err)
+	}
+	result := ShipPackagedVolumeRefreshResult{
+		CachePath:        path,
+		CorruptCachePath: corruptPath,
+		Cached:           len(cache),
+	}
+	if data != nil {
+		result.Applied = data.ApplyShipPackagedVolumes(cache)
+		result.Missing = len(data.MissingShipPackagedVolumeTypeIDs())
+	}
+	return result, nil
+}
+
+func RefreshShipPackagedVolumeCacheForTypes(dataDir string, typeIDs []int32, fetch func(typeID int32) (float64, error)) (ShipPackagedVolumeRefreshResult, error) {
+	cache, path, corruptPath, err := loadShipPackagedVolumeCacheForUpdate(dataDir)
+	if err != nil {
+		return ShipPackagedVolumeRefreshResult{CachePath: path}, fmt.Errorf("load ship packaged volume cache: %w", err)
+	}
+	result := ShipPackagedVolumeRefreshResult{
+		CachePath:        path,
+		CorruptCachePath: corruptPath,
+		Cached:           len(cache),
+	}
+	missing := make([]int32, 0, len(typeIDs))
+	seen := make(map[int32]bool, len(typeIDs))
+	for _, typeID := range typeIDs {
+		if typeID <= 0 || seen[typeID] {
+			continue
+		}
+		seen[typeID] = true
+		if cache[typeID] <= 0 {
+			missing = append(missing, typeID)
+		}
+	}
+	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+	result.Missing = len(missing)
+	if len(missing) == 0 || fetch == nil {
+		return result, nil
+	}
+
+	fetched, failed := fetchShipPackagedVolumes(missing, fetch)
+	result.Failed = failed
+	for typeID, volume := range fetched {
+		cache[typeID] = volume
+		result.Fetched++
+	}
+	if result.Fetched > 0 {
+		if _, err := SaveShipPackagedVolumeCache(dataDir, cache); err != nil {
+			return result, fmt.Errorf("save ship packaged volume cache: %w", err)
+		}
+	}
+	return result, nil
+}
+
 func RefreshShipPackagedVolumeCache(dataDir string, data *Data, fetch func(typeID int32) (float64, error)) (ShipPackagedVolumeRefreshResult, error) {
-	cache, path, err := LoadShipPackagedVolumeCache(dataDir)
+	cache, path, corruptPath, err := loadShipPackagedVolumeCacheForUpdate(dataDir)
 	if err != nil {
 		return ShipPackagedVolumeRefreshResult{CachePath: path}, fmt.Errorf("load ship packaged volume cache: %w", err)
 	}
 
 	result := ShipPackagedVolumeRefreshResult{
-		CachePath: path,
-		Cached:    len(cache),
-		Applied:   data.ApplyShipPackagedVolumes(cache),
+		CachePath:        path,
+		CorruptCachePath: corruptPath,
+		Cached:           len(cache),
+		Applied:          data.ApplyShipPackagedVolumes(cache),
 	}
 	missing := data.MissingShipPackagedVolumeTypeIDs()
 	result.Missing = len(missing)
@@ -135,16 +216,32 @@ func RefreshShipPackagedVolumeCache(dataDir string, data *Data, fetch func(typeI
 		return result, nil
 	}
 
+	fetched, failed := fetchShipPackagedVolumes(missing, fetch)
+	result.Failed = failed
+	for typeID, volume := range fetched {
+		cache[typeID] = volume
+		result.Fetched++
+	}
+	result.Applied += data.ApplyShipPackagedVolumes(cache)
+	if result.Fetched > 0 {
+		if _, err := SaveShipPackagedVolumeCache(dataDir, cache); err != nil {
+			return result, fmt.Errorf("save ship packaged volume cache: %w", err)
+		}
+	}
+	return result, nil
+}
+
+func fetchShipPackagedVolumes(typeIDs []int32, fetch func(typeID int32) (float64, error)) (map[int32]float64, int) {
 	type fetchResult struct {
 		typeID int32
 		volume float64
 		err    error
 	}
 	jobs := make(chan int32)
-	results := make(chan fetchResult, len(missing))
+	results := make(chan fetchResult, len(typeIDs))
 	workers := 8
-	if len(missing) < workers {
-		workers = len(missing)
+	if len(typeIDs) < workers {
+		workers = len(typeIDs)
 	}
 
 	var wg sync.WaitGroup
@@ -159,7 +256,7 @@ func RefreshShipPackagedVolumeCache(dataDir string, data *Data, fetch func(typeI
 		}()
 	}
 	go func() {
-		for _, typeID := range missing {
+		for _, typeID := range typeIDs {
 			jobs <- typeID
 		}
 		close(jobs)
@@ -167,20 +264,14 @@ func RefreshShipPackagedVolumeCache(dataDir string, data *Data, fetch func(typeI
 		close(results)
 	}()
 
+	fetched := make(map[int32]float64)
+	failed := 0
 	for row := range results {
 		if row.err != nil || row.volume <= 0 {
-			result.Failed++
+			failed++
 			continue
 		}
-		cache[row.typeID] = row.volume
-		result.Fetched++
+		fetched[row.typeID] = row.volume
 	}
-
-	result.Applied += data.ApplyShipPackagedVolumes(cache)
-	if result.Fetched > 0 {
-		if _, err := SaveShipPackagedVolumeCache(dataDir, cache); err != nil {
-			return result, fmt.Errorf("save ship packaged volume cache: %w", err)
-		}
-	}
-	return result, nil
+	return fetched, failed
 }

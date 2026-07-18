@@ -8,9 +8,25 @@ import {
   useEffect,
   useRef,
 } from "react";
-import type { FlipResult, StationCacheMeta, WatchlistItem, RouteState, SystemDanger } from "@/lib/types";
+import type {
+  ExecutionRevalidationReport,
+  FlipResult,
+  StationCacheMeta,
+  WatchlistItem,
+  RouteState,
+  SystemDanger,
+} from "@/lib/types";
 import { formatISK, formatMargin } from "@/lib/format";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { revalidateRows } from "@/lib/executionRevalidation";
+import {
+  hasRouteSafetySummary,
+  routeSafetyMatchesFilter,
+  summarizeRouteSystems,
+  tripJumpsBreakdown,
+  type RouteSafetyFilter,
+} from "@/lib/scanResultsLogic";
+import { normalizeColumnPrefs } from "@/lib/tablePrefs";
 import {
   addToWatchlist,
   clearStationTradeStates,
@@ -25,12 +41,14 @@ import {
   removeFromWatchlist,
   setStationTradeState,
   setWaypointInGame,
+  type CharacterScope,
 } from "@/lib/api";
 import { useGlobalToast } from "./Toast";
 import { EmptyState, type EmptyReason } from "./EmptyState";
 import { TradeExecutionAutopilotPopup } from "./TradeExecutionAutopilotPopup";
 import { handleEveUIError } from "@/lib/handleEveUIError";
 import { BatchBuilderPopup } from "./BatchBuilderPopup";
+import { ExecutionRevalidationReportModal } from "./ExecutionRevalidationReportModal";
 import { RouteSafetyModal } from "./RouteSafetyModal";
 import { BacktestPopup } from "./BacktestPopup";
 import { PaperTradeJournalPopup } from "./PaperTradeJournalPopup";
@@ -89,6 +107,7 @@ interface Props {
   columnProfile?: "default" | "region_eveguru";
   isLoggedIn?: boolean;
   cargoLimit?: number;
+  characterScope?: CharacterScope;
 }
 
 type ColumnDef = {
@@ -965,18 +984,6 @@ function fmtCell(col: ColumnDef, row: FlipResult): string {
   return String(val ?? "");
 }
 
-function tripJumpsBreakdown(row: FlipResult): { total: number; pickup: number; trade: number; title: string } {
-  const pickup = Math.max(0, Math.floor(finiteNumber(row.BuyJumps)));
-  const trade = Math.max(0, Math.floor(finiteNumber(row.SellJumps)));
-  const explicitTotal = Math.floor(finiteNumber(row.TotalJumps));
-  const total = explicitTotal > 0 ? explicitTotal : pickup + trade;
-  const title =
-    pickup > 0
-      ? `Total trip: ${total} jumps (${pickup} pickup + ${trade} buy-to-sell)`
-      : `Buy-to-sell route: ${total} jumps`;
-  return { total, pickup, trade, title };
-}
-
 function finiteNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -1037,6 +1044,7 @@ export function ScanResultsTable({
   columnProfile = "default",
   isLoggedIn = false,
   cargoLimit = 0,
+  characterScope,
 }: Props) {
   const { t } = useI18n();
   const emptyReason: EmptyReason = scanCompletedWithZero
@@ -1102,7 +1110,7 @@ export function ScanResultsTable({
 
   // ── Route Safety ──
   const [routeSafetyMap, setRouteSafetyMap] = useState<Record<string, RouteState>>({});
-  const [routeSafetyFilter, setRouteSafetyFilter] = useState<"all" | "green" | "yellow" | "red">("all");
+  const [routeSafetyFilter, setRouteSafetyFilter] = useState<RouteSafetyFilter>("all");
   const [routeSafetyModal, setRouteSafetyModal] = useState<{ systems: SystemDanger[] } | null>(null);
 
   const isRegionGrouped = columnProfile === "region_eveguru";
@@ -1198,7 +1206,11 @@ export function ScanResultsTable({
         pairs.push({ from: f, to: t });
       }
     }
-    if (pairs.length === 0) return;
+    if (pairs.length === 0) {
+      setRouteSafetyMap({});
+      return;
+    }
+    let cancelled = false;
     // Mark all as loading
     setRouteSafetyMap((prev) => {
       const next = { ...prev };
@@ -1209,13 +1221,14 @@ export function ScanResultsTable({
       return next;
     });
     getGankCheckBatch(pairs).then((summaries) => {
+      if (cancelled) return;
+      const received = new Set(summaries.map((s) => s.key));
       setRouteSafetyMap((prev) => {
         const next = { ...prev };
-        // Clear any pairs that weren't in the response (treat as green/safe)
         for (const p of pairs) {
           const k = `${p.from}:${p.to}`;
-          if (next[k]?.status === "loading") {
-            next[k] = { status: "summary", danger: "green", kills: 0, totalISK: 0 };
+          if (next[k]?.status === "loading" && !received.has(k)) {
+            next[k] = { status: "unknown", reason: "missing" };
           }
         }
         for (const s of summaries) {
@@ -1224,16 +1237,21 @@ export function ScanResultsTable({
         return next;
       });
     }).catch(() => {
-      // On error, clear loading state so cells don't hang
+      if (cancelled) return;
       setRouteSafetyMap((prev) => {
         const next = { ...prev };
         for (const p of pairs) {
           const k = `${p.from}:${p.to}`;
-          if (next[k]?.status === "loading") delete next[k];
+          if (next[k]?.status === "loading") {
+            next[k] = { status: "unknown", reason: "error" };
+          }
         }
         return next;
       });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [results, scanning]);
   const watchlistIds = useMemo(
     () => new Set(watchlist.map((w) => w.type_id)),
@@ -1255,6 +1273,10 @@ export function ScanResultsTable({
   const [backtestOpen, setBacktestOpen] = useState(false);
   const [paperJournalOpen, setPaperJournalOpen] = useState(false);
   const [paperCreating, setPaperCreating] = useState(false);
+  const [revalidationReport, setRevalidationReport] =
+    useState<ExecutionRevalidationReport | null>(null);
+  const [revalidationOpen, setRevalidationOpen] = useState(false);
+  const [revalidating, setRevalidating] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [filterSearch, setFilterSearch] = useState("");
   const filterPanelRef = useRef<HTMLDivElement>(null);
@@ -1301,58 +1323,17 @@ export function ScanResultsTable({
 
   useEffect(() => {
     const defaultOrder = allColumnDefs.map((col) => col.key);
-    const available = new Set(defaultOrder);
-    let nextOrder = defaultOrder;
-    const nextHidden = new Set<SortKey>();
-    const nextWidths: Partial<Record<SortKey, number>> = {};
-    const nextPinned = new Set<SortKey>();
+    let raw: string | null = null;
     try {
-      const raw = localStorage.getItem(columnPrefsKey);
-      if (raw) {
-        const parsed = JSON.parse(raw) as {
-          order?: string[];
-          hidden?: string[];
-          widths?: Record<string, number>;
-          pinned?: string[];
-        };
-        if (Array.isArray(parsed.order)) {
-          const saved = parsed.order
-            .filter((k): k is SortKey => available.has(k as SortKey));
-          const missing = defaultOrder.filter((k) => !saved.includes(k));
-          nextOrder = [...saved, ...missing];
-        }
-        if (Array.isArray(parsed.hidden)) {
-          for (const key of parsed.hidden) {
-            if (available.has(key as SortKey)) {
-              nextHidden.add(key as SortKey);
-            }
-          }
-        }
-        if (parsed.widths && typeof parsed.widths === "object") {
-          for (const [key, value] of Object.entries(parsed.widths)) {
-            if (available.has(key as SortKey) && typeof value === "number" && Number.isFinite(value)) {
-              nextWidths[key as SortKey] = Math.max(44, Math.min(520, Math.round(value)));
-            }
-          }
-        }
-        if (Array.isArray(parsed.pinned)) {
-          for (const key of parsed.pinned) {
-            if (available.has(key as SortKey)) {
-              nextPinned.add(key as SortKey);
-            }
-          }
-        }
-      }
+      raw = localStorage.getItem(columnPrefsKey);
     } catch {
-      // Ignore malformed local settings.
+      raw = null;
     }
-    if (nextHidden.size >= nextOrder.length && nextOrder.length > 0) {
-      nextHidden.delete(nextOrder[0]);
-    }
-    setColumnOrder(nextOrder);
-    setHiddenColumns(nextHidden);
-    setColumnWidths(nextWidths);
-    setPinnedColumns(nextPinned);
+    const prefs = normalizeColumnPrefs<SortKey>(raw, defaultOrder);
+    setColumnOrder(prefs.order);
+    setHiddenColumns(prefs.hidden);
+    setColumnWidths(prefs.widths);
+    setPinnedColumns(prefs.pinned);
   }, [columnPrefsKey, allColumnDefs]);
 
   useEffect(() => {
@@ -1509,8 +1490,8 @@ export function ScanResultsTable({
     const dangerRank = (row: FlipResult): number => {
       const k = `${row.BuySystemID}:${row.SellSystemID}`;
       const rs = routeSafetyMap[k];
-      if (!rs || rs.status === "loading") return -1;
-      const d = rs.status === "full" || rs.status === "summary" ? rs.danger : "green";
+      if (!hasRouteSafetySummary(rs)) return -1;
+      const d = rs.danger;
       return d === "red" ? 2 : d === "yellow" ? 1 : 0;
     };
 
@@ -1607,10 +1588,7 @@ export function ScanResultsTable({
     if (routeSafetyFilter !== "all") {
       rows = rows.filter((ir) => {
         const k = `${ir.row.BuySystemID}:${ir.row.SellSystemID}`;
-        const rs = routeSafetyMap[k];
-        if (!rs || rs.status === "loading") return routeSafetyFilter === "green";
-        const d = rs.status === "full" || rs.status === "summary" ? rs.danger : "green";
-        return d === routeSafetyFilter;
+        return routeSafetyMatchesFilter(routeSafetyMap[k], routeSafetyFilter);
       });
     }
     return rows;
@@ -1821,6 +1799,58 @@ export function ScanResultsTable({
         : selectableVisibleRows;
     return rows.map((ir) => ir.row);
   }, [selectableVisibleRows, selectedIds]);
+
+  const selectedRowsForRevalidation = useMemo(
+    () =>
+      selectedIds.size > 0
+        ? selectableVisibleRows.filter((ir) => selectedIds.has(ir.id)).map((ir) => ir.row)
+        : [],
+    [selectableVisibleRows, selectedIds],
+  );
+
+  const handleRevalidateSelected = useCallback(async () => {
+    if (selectedRowsForRevalidation.length === 0) {
+      addToast("Select rows to revalidate before undock", "info", 2400);
+      return;
+    }
+    if (revalidating) return;
+    setRevalidating(true);
+    try {
+      const report = await revalidateRows(selectedRowsForRevalidation, {
+        brokerFeePercent,
+        salesTaxPercent,
+        splitTradeFees,
+        buyBrokerFeePercent,
+        sellBrokerFeePercent,
+        buySalesTaxPercent,
+        sellSalesTaxPercent,
+        characterId: characterScope,
+      });
+      setRevalidationReport(report);
+      setRevalidationOpen(true);
+      addToast(
+        `Revalidated: ${report.safe} safe, ${report.changed} changed, ${report.danger} danger`,
+        report.danger > 0 ? "error" : report.changed > 0 ? "info" : "success",
+        2600,
+      );
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "Revalidation failed", "error", 3200);
+    } finally {
+      setRevalidating(false);
+    }
+  }, [
+    addToast,
+    brokerFeePercent,
+    buyBrokerFeePercent,
+    buySalesTaxPercent,
+    characterScope,
+    revalidating,
+    salesTaxPercent,
+    selectedRowsForRevalidation,
+    sellBrokerFeePercent,
+    sellSalesTaxPercent,
+    splitTradeFees,
+  ]);
 
   const createPaperTradeFromRow = useCallback(
     async (row: FlipResult) => {
@@ -2390,13 +2420,16 @@ export function ScanResultsTable({
       getGankCheck(from, to).then((systems) => {
         setRouteSafetyMap((prev) => {
           const pe = prev[key];
-          const danger = pe && pe.status !== "loading" ? pe.danger : "green";
-          const kills = pe && pe.status !== "loading" ? pe.kills : 0;
-          const totalISK = pe && pe.status !== "loading" ? pe.totalISK : 0;
+          const summary = hasRouteSafetySummary(pe)
+            ? { danger: pe.danger, kills: pe.kills, totalISK: pe.totalISK }
+            : summarizeRouteSystems(systems);
+          const { danger, kills, totalISK } = summary;
           return { ...prev, [key]: { status: "full", danger, kills, totalISK, systems } };
         });
         setRouteSafetyModal({ systems });
         void trackAchievementEvent("route_checked", { gankRiskViewed: true });
+      }).catch(() => {
+        setRouteSafetyMap((prev) => ({ ...prev, [key]: { status: "unknown", reason: "error" } }));
       });
     },
     [routeSafetyMap, trackAchievementEvent],
@@ -2596,13 +2629,16 @@ export function ScanResultsTable({
         {/* Route Safety filter */}
         {results.length > 0 && !scanning && (
           <div className="inline-flex items-center rounded-sm border border-eve-border/60 bg-eve-dark/40 text-[11px] overflow-hidden">
-            {(["all", "green", "yellow", "red"] as const).map((lvl) => {
+            {(["all", "green", "yellow", "red", "unknown"] as const).map((lvl) => {
               const active = routeSafetyFilter === lvl;
-              const dot = lvl === "all" ? null : (
-                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-0.5 ${
-                  lvl === "green" ? "bg-green-400" : lvl === "yellow" ? "bg-yellow-400" : "bg-red-400"
-                }`} />
-              );
+              const dot =
+                lvl === "all" ? null : lvl === "unknown" ? (
+                  <span className="mr-0.5 text-eve-dim">?</span>
+                ) : (
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-0.5 ${
+                    lvl === "green" ? "bg-green-400" : lvl === "yellow" ? "bg-yellow-400" : "bg-red-400"
+                  }`} />
+                );
               return (
                 <button
                   key={lvl}
@@ -2674,6 +2710,15 @@ export function ScanResultsTable({
                 void copySelectedMultibuy();
               }}
               disabled={selectedIds.size === 0}
+            />
+            <ToolbarBtn
+              label="RV"
+              title="Revalidate selected rows before undock"
+              active={revalidationOpen}
+              onClick={() => {
+                void handleRevalidateSelected();
+              }}
+              disabled={selectedRowsForRevalidation.length === 0 || revalidating}
             />
             <ToolbarBtn
               label="⎘"
@@ -3685,6 +3730,20 @@ export function ScanResultsTable({
         anchorRow={batchPlanRow}
         rows={results}
         defaultCargoM3={cargoLimit}
+        characterScope={characterScope}
+        brokerFeePercent={brokerFeePercent}
+        salesTaxPercent={salesTaxPercent}
+        splitTradeFees={splitTradeFees}
+        buyBrokerFeePercent={buyBrokerFeePercent}
+        sellBrokerFeePercent={sellBrokerFeePercent}
+        buySalesTaxPercent={buySalesTaxPercent}
+        sellSalesTaxPercent={sellSalesTaxPercent}
+      />
+
+      <ExecutionRevalidationReportModal
+        open={revalidationOpen}
+        report={revalidationReport}
+        onClose={() => setRevalidationOpen(false)}
       />
 
       <BacktestPopup
@@ -3779,6 +3838,18 @@ function RouteSafetyCell({
   }
   if (entry.status === "loading") {
     return <span className="text-eve-dim/50 text-[10px] animate-pulse">·</span>;
+  }
+  if (entry.status === "unknown") {
+    return (
+      <button
+        type="button"
+        onClick={(e) => onRouteSafetyClick(from, to, e)}
+        className="inline-flex items-center gap-1 text-[11px] bg-transparent border-0 cursor-pointer p-0 text-eve-dim hover:text-eve-text transition-colors"
+        title={`Route safety unknown: ${entry.reason}. Click to inspect route.`}
+      >
+        ?
+      </button>
+    );
   }
   const danger = entry.danger;
   const kills = entry.kills;

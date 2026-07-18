@@ -15,51 +15,52 @@ const (
 )
 
 type RegionalDayTradeItem struct {
-	TypeID             int32     `json:"type_id"`
-	TypeName           string    `json:"type_name"`
-	IsContraband       bool      `json:"is_contraband,omitempty"`
-	SourceSystemID     int32     `json:"source_system_id"`
-	SourceSystemName   string    `json:"source_system_name"`
-	SourceStationName  string    `json:"source_station_name"`
-	SourceLocationID   int64     `json:"source_location_id"`
-	SourceRegionID     int32     `json:"source_region_id"`
-	SourceRegionName   string    `json:"source_region_name"`
-	TargetSystemID     int32     `json:"target_system_id"`
-	TargetSystemName   string    `json:"target_system_name"`
-	TargetStationName  string    `json:"target_station_name"`
-	TargetLocationID   int64     `json:"target_location_id"`
-	TargetRegionID     int32     `json:"target_region_id"`
-	TargetRegionName   string    `json:"target_region_name"`
-	PurchaseUnits      int32     `json:"purchase_units"`
-	SourceUnits        int32     `json:"source_units"`
-	TargetDemandPerDay float64   `json:"target_demand_per_day"`
-	TargetSupplyUnits  int64     `json:"target_supply_units"`
-	TargetDOS          float64   `json:"target_dos"`
-	Assets             int64     `json:"assets"`
-	ActiveOrders       int64     `json:"active_orders"`
-	SourceAvgPrice     float64   `json:"source_avg_price"`
-	TargetNowPrice     float64   `json:"target_now_price"`
-	TargetPeriodPrice  float64   `json:"target_period_price"`
-	TargetNowProfit    float64   `json:"target_now_profit"`
-	TargetPeriodProfit float64   `json:"target_period_profit"`
-	ROINow             float64   `json:"roi_now"`
-	ROIPeriod          float64   `json:"roi_period"`
-	CapitalRequired    float64   `json:"capital_required"`
-	ItemVolume         float64   `json:"item_volume"`
-	ShippingCost       float64   `json:"shipping_cost"`
-	Jumps              int       `json:"jumps"`
-	MarginNow          float64   `json:"margin_now"`
-	MarginPeriod       float64   `json:"margin_period"`
-	CategoryID         int32     `json:"category_id"`
-	GroupID            int32     `json:"group_id"`
-	GroupName          string    `json:"group_name"`
-	TradeScore         float64   `json:"trade_score"`
-	TargetPriceHistory []float64 `json:"target_price_history"`
-	TargetLowestSell   float64   `json:"target_lowest_sell"`
-	DiagnosticRejected bool      `json:"diagnostic_rejected,omitempty"`
-	DiagnosticReason   string    `json:"diagnostic_reason,omitempty"`
-	DiagnosticDetails  []string  `json:"diagnostic_details,omitempty"`
-	MarketDataStatus   string    `json:"market_data_status,omitempty"`
+	TypeID             int32           `json:"type_id"`
+	TypeName           string          `json:"type_name"`
+	IsContraband       bool            `json:"is_contraband,omitempty"`
+	SourceSystemID     int32           `json:"source_system_id"`
+	SourceSystemName   string          `json:"source_system_name"`
+	SourceStationName  string          `json:"source_station_name"`
+	SourceLocationID   int64           `json:"source_location_id"`
+	SourceRegionID     int32           `json:"source_region_id"`
+	SourceRegionName   string          `json:"source_region_name"`
+	TargetSystemID     int32           `json:"target_system_id"`
+	TargetSystemName   string          `json:"target_system_name"`
+	TargetStationName  string          `json:"target_station_name"`
+	TargetLocationID   int64           `json:"target_location_id"`
+	TargetRegionID     int32           `json:"target_region_id"`
+	TargetRegionName   string          `json:"target_region_name"`
+	PurchaseUnits      int32           `json:"purchase_units"`
+	SourceUnits        int32           `json:"source_units"`
+	TargetDemandPerDay float64         `json:"target_demand_per_day"`
+	TargetSupplyUnits  int64           `json:"target_supply_units"`
+	TargetDOS          float64         `json:"target_dos"`
+	Assets             int64           `json:"assets"`
+	ActiveOrders       int64           `json:"active_orders"`
+	SourceAvgPrice     float64         `json:"source_avg_price"`
+	TargetNowPrice     float64         `json:"target_now_price"`
+	TargetPeriodPrice  float64         `json:"target_period_price"`
+	TargetNowProfit    float64         `json:"target_now_profit"`
+	TargetPeriodProfit float64         `json:"target_period_profit"`
+	ROINow             float64         `json:"roi_now"`
+	ROIPeriod          float64         `json:"roi_period"`
+	CapitalRequired    float64         `json:"capital_required"`
+	ItemVolume         float64         `json:"item_volume"`
+	ShippingCost       float64         `json:"shipping_cost"`
+	Jumps              int             `json:"jumps"`
+	MarginNow          float64         `json:"margin_now"`
+	MarginPeriod       float64         `json:"margin_period"`
+	CategoryID         int32           `json:"category_id"`
+	GroupID            int32           `json:"group_id"`
+	GroupName          string          `json:"group_name"`
+	TradeScore         float64         `json:"trade_score"`
+	TargetPriceHistory []float64       `json:"target_price_history"`
+	TargetLowestSell   float64         `json:"target_lowest_sell"`
+	DiagnosticRejected bool            `json:"diagnostic_rejected,omitempty"`
+	DiagnosticReason   string          `json:"diagnostic_reason,omitempty"`
+	DiagnosticDetails  []string        `json:"diagnostic_details,omitempty"`
+	MarketDataStatus   string          `json:"market_data_status,omitempty"`
+	ExecutionQuote     *ExecutionQuote `json:"execution_quote,omitempty"`
 }
 
 type RegionalDayTradeHub struct {
@@ -367,11 +368,11 @@ func (s *Scanner) BuildRegionalDayTrader(
 			}
 			setRejection("below_scan_margin")
 		}
-		scanQty := row.FilledQty
+		scanQty := regionalRowExecutableQty(row)
 		if scanQty <= 0 {
 			scanQty = row.UnitsToBuy
 		}
-		scanBuyPrice := row.ExpectedBuyPrice
+		scanBuyPrice := regionalRowBuyVWAP(row)
 		if scanBuyPrice <= 0 {
 			scanBuyPrice = row.BuyPrice
 		}
@@ -399,19 +400,25 @@ func (s *Scanner) BuildRegionalDayTrader(
 		// 2) L1 ask fallback,
 		// 3) historical fallback,
 		// then stabilize extreme live-vs-history dislocations.
-		sourceAvgPrice := stabilizedSourceBuyPrice(
-			row.ExpectedBuyPrice,
-			row.BuyPrice,
-			sourceStats,
-			periodDays,
-		)
+		sourceExecutionPrice := regionalRowBuyVWAP(row)
+		sourceAvgPrice := sourceExecutionPrice
+		if sourceAvgPrice <= 0 || row.ExecutionQuote == nil {
+			sourceAvgPrice = stabilizedSourceBuyPrice(
+				sourceExecutionPrice,
+				row.BuyPrice,
+				sourceStats,
+				periodDays,
+			)
+		} else {
+			sourceAvgPrice = sanitizeFloat(sourceAvgPrice)
+		}
 		// targetNowPrice: revenue side for the "Now" profit column.
 		// Instant mode  → highest buy order at destination (immediate liquidity).
 		// Sell-order mode → lowest sell order at destination (you compete as a seller).
 		//                   Falls back to VWAP when no live sell data is available.
-		targetNowPrice := row.SellPrice
-		if row.ExpectedSellPrice > 0 {
-			targetNowPrice = row.ExpectedSellPrice
+		targetNowPrice := regionalRowSellVWAP(row)
+		if targetNowPrice <= 0 {
+			targetNowPrice = row.SellPrice
 		}
 		if params.SellOrderMode {
 			if row.TargetLowestSell > 0 {
@@ -490,14 +497,11 @@ func (s *Scanner) BuildRegionalDayTrader(
 				}
 			}
 		}
-		if params.SellOrderMode {
-			// Sell-order mode is not constrained by target buy-order depth, but it
-			// still must not expand beyond the source quantity already priced by
-			// the execution simulator. Otherwise a tiny cheap L1 ask can make a
-			// large multi-buy position look profitable at an impossible average.
-			if row.FilledQty > 0 && purchaseUnits > row.FilledQty {
-				purchaseUnits = row.FilledQty
-			}
+		// Demand, cargo, capital, and inventory can shrink the recommendation,
+		// but the regional row must not exceed the executable quantity already
+		// priced by the quote/scan execution simulator.
+		if executableQty := regionalRowExecutableQty(row); executableQty > 0 && purchaseUnits > executableQty {
+			purchaseUnits = executableQty
 		}
 		if purchaseUnits <= 0 {
 			if !params.RegionalDiagnosticMode {
@@ -720,6 +724,7 @@ func (s *Scanner) BuildRegionalDayTrader(
 			DiagnosticDetails:  diagnosticDetails,
 			MarketDataStatus:   regionalMarketDataStatus(sourceStats, targetStats, targetNowPrice, targetPeriodPrice, row.TargetLowestSell, params.SellOrderMode),
 		}
+		item.ExecutionQuote = regionalItemExecutionQuote(row, item, buyCostMult, sellRevenueMult, params.SellOrderMode)
 
 		addItem(row, item)
 	}
@@ -763,9 +768,30 @@ func FlattenRegionalDayHubs(hubs []RegionalDayTradeHub) []FlipResult {
 	rows := make([]FlipResult, 0)
 	for _, hub := range hubs {
 		for _, item := range hub.Items {
+			quote := item.ExecutionQuote
+			executionQty := item.PurchaseUnits
+			executionBuyPrice := item.SourceAvgPrice
+			executionSellPrice := item.TargetNowPrice
+			executionProfit := item.TargetNowProfit
+			executionShipping := item.ShippingCost
+			executionCanFill := item.PurchaseUnits > 0 && !item.DiagnosticRejected
+			if quote != nil {
+				if quote.FillQty > 0 {
+					executionQty = quote.FillQty
+				}
+				if quote.BuyVWAP > 0 {
+					executionBuyPrice = quote.BuyVWAP
+				}
+				if quote.SellVWAP > 0 {
+					executionSellPrice = quote.SellVWAP
+				}
+				executionProfit = quote.NetProfit
+				executionShipping = quote.ShippingCost
+				executionCanFill = quote.FillQty > 0 && quote.Decision != "DANGER" && !item.DiagnosticRejected
+			}
 			perUnitNowProfit := 0.0
-			if item.PurchaseUnits > 0 {
-				perUnitNowProfit = item.TargetNowProfit / float64(item.PurchaseUnits)
+			if executionQty > 0 {
+				perUnitNowProfit = executionProfit / float64(executionQty)
 			}
 			dailyProfit := 0.0
 			if item.TargetDemandPerDay > 0 {
@@ -781,16 +807,16 @@ func FlattenRegionalDayHubs(hubs []RegionalDayTradeHub) []FlipResult {
 				TypeName:          item.TypeName,
 				IsContraband:      item.IsContraband,
 				Volume:            sanitizeFloat(item.ItemVolume),
-				BuyPrice:          sanitizeFloat(item.SourceAvgPrice),
-				ExpectedBuyPrice:  sanitizeFloat(item.SourceAvgPrice),
+				BuyPrice:          sanitizeFloat(executionBuyPrice),
+				ExpectedBuyPrice:  sanitizeFloat(executionBuyPrice),
 				BuyStation:        chooseNonEmpty(item.SourceStationName, item.SourceSystemName),
 				BuySystemName:     item.SourceSystemName,
 				BuySystemID:       item.SourceSystemID,
 				BuyRegionID:       item.SourceRegionID,
 				BuyRegionName:     item.SourceRegionName,
 				BuyLocationID:     item.SourceLocationID,
-				SellPrice:         sanitizeFloat(item.TargetNowPrice),
-				ExpectedSellPrice: sanitizeFloat(item.TargetPeriodPrice),
+				SellPrice:         sanitizeFloat(executionSellPrice),
+				ExpectedSellPrice: sanitizeFloat(executionSellPrice),
 				SellStation:       chooseNonEmpty(item.TargetStationName, item.TargetSystemName),
 				SellSystemName:    item.TargetSystemName,
 				SellSystemID:      item.TargetSystemID,
@@ -799,17 +825,20 @@ func FlattenRegionalDayHubs(hubs []RegionalDayTradeHub) []FlipResult {
 				SellLocationID:    item.TargetLocationID,
 				ProfitPerUnit:     sanitizeFloat(perUnitNowProfit),
 				MarginPercent:     sanitizeFloat(item.MarginNow),
-				UnitsToBuy:        item.PurchaseUnits,
+				UnitsToBuy:        executionQty,
 				BuyOrderRemain:    int32(item.TargetSupplyUnits),
 				SellOrderRemain:   item.SourceUnits,
-				TotalProfit:       sanitizeFloat(item.TargetNowProfit),
-				RealProfit:        sanitizeFloat(item.TargetPeriodProfit),
-				ExpectedProfit:    sanitizeFloat(item.TargetPeriodProfit),
+				TotalProfit:       sanitizeFloat(executionProfit),
+				RealProfit:        sanitizeFloat(executionProfit),
+				ExpectedProfit:    sanitizeFloat(executionProfit),
+				FilledQty:         executionQty,
+				CanFill:           executionCanFill,
+				ExecutionQuote:    quote,
 				ProfitPerJump: func() float64 {
 					if item.Jumps > 0 {
-						return sanitizeFloat(item.TargetNowProfit / float64(item.Jumps))
+						return sanitizeFloat(executionProfit / float64(item.Jumps))
 					}
-					return sanitizeFloat(item.TargetNowProfit)
+					return sanitizeFloat(executionProfit)
 				}(),
 				BuyJumps:        0,
 				SellJumps:       item.Jumps,
@@ -835,7 +864,7 @@ func FlattenRegionalDayHubs(hubs []RegionalDayTradeHub) []FlipResult {
 				DayROINow:             sanitizeFloat(item.ROINow),
 				DayROIPeriod:          sanitizeFloat(item.ROIPeriod),
 				DayCapitalRequired:    sanitizeFloat(item.CapitalRequired),
-				DayShippingCost:       sanitizeFloat(item.ShippingCost),
+				DayShippingCost:       sanitizeFloat(executionShipping),
 				DayCategoryID:         item.CategoryID,
 				DayGroupID:            item.GroupID,
 				DayGroupName:          item.GroupName,
@@ -867,6 +896,224 @@ func chooseNonEmpty(primary string, fallback string) string {
 		return primary
 	}
 	return fallback
+}
+
+func regionalRowExecutableQty(row FlipResult) int32 {
+	if row.ExecutionQuote != nil && row.ExecutionQuote.FillQty > 0 {
+		return row.ExecutionQuote.FillQty
+	}
+	if row.FilledQty > 0 {
+		return row.FilledQty
+	}
+	return 0
+}
+
+func regionalRowBuyVWAP(row FlipResult) float64 {
+	if row.ExecutionQuote != nil {
+		if row.ExecutionQuote.BuyVWAP > 0 {
+			return sanitizeFloat(row.ExecutionQuote.BuyVWAP)
+		}
+		if row.ExecutionQuote.Buy.VWAP > 0 {
+			return sanitizeFloat(row.ExecutionQuote.Buy.VWAP)
+		}
+	}
+	if row.ExpectedBuyPrice > 0 {
+		return sanitizeFloat(row.ExpectedBuyPrice)
+	}
+	return sanitizeFloat(row.BuyPrice)
+}
+
+func regionalRowSellVWAP(row FlipResult) float64 {
+	if row.ExecutionQuote != nil {
+		if row.ExecutionQuote.SellVWAP > 0 {
+			return sanitizeFloat(row.ExecutionQuote.SellVWAP)
+		}
+		if row.ExecutionQuote.Sell.VWAP > 0 {
+			return sanitizeFloat(row.ExecutionQuote.Sell.VWAP)
+		}
+	}
+	if row.ExpectedSellPrice > 0 {
+		return sanitizeFloat(row.ExpectedSellPrice)
+	}
+	return sanitizeFloat(row.SellPrice)
+}
+
+func cloneExecutionQuoteCacheInfo(info *ExecutionQuoteCacheInfo) *ExecutionQuoteCacheInfo {
+	if info == nil {
+		return nil
+	}
+	clone := *info
+	return &clone
+}
+
+func regionalItemExecutionQuote(row FlipResult, item RegionalDayTradeItem, buyCostMult, sellRevenueMult float64, sellOrderMode bool) *ExecutionQuote {
+	qty := item.PurchaseUnits
+	if qty <= 0 {
+		return nil
+	}
+	sourceQuote := row.ExecutionQuote
+	buyVWAP := sanitizeFloat(item.SourceAvgPrice)
+	sellVWAP := sanitizeFloat(item.TargetNowPrice)
+	buyBestPrice := buyVWAP
+	sellBestPrice := sellVWAP
+	buySlippage := 0.0
+	sellSlippage := 0.0
+	buyDepth := item.SourceUnits
+	sellDepth := clampInt64ToInt32(item.TargetSupplyUnits)
+	buyCanFill := buyVWAP > 0
+	sellCanFill := sellVWAP > 0
+	var cacheInfo *ExecutionQuoteCacheInfo
+	var warnings []string
+	partialReason := ""
+
+	if sourceQuote != nil {
+		cacheInfo = cloneExecutionQuoteCacheInfo(sourceQuote.Cache)
+		warnings = append(warnings, sourceQuote.Warnings...)
+		if sourceQuote.PartialReason != "" {
+			partialReason = sourceQuote.PartialReason
+			warnings = appendExecutionWarning(warnings, sourceQuote.PartialReason)
+		}
+		if sourceQuote.BuyVWAP > 0 {
+			buyVWAP = sanitizeFloat(sourceQuote.BuyVWAP)
+		} else if sourceQuote.Buy.VWAP > 0 {
+			buyVWAP = sanitizeFloat(sourceQuote.Buy.VWAP)
+		}
+		if !sellOrderMode {
+			if sourceQuote.SellVWAP > 0 {
+				sellVWAP = sanitizeFloat(sourceQuote.SellVWAP)
+			} else if sourceQuote.Sell.VWAP > 0 {
+				sellVWAP = sanitizeFloat(sourceQuote.Sell.VWAP)
+			}
+		}
+		if sourceQuote.Buy.BestPrice > 0 {
+			buyBestPrice = sanitizeFloat(sourceQuote.Buy.BestPrice)
+		}
+		if !sellOrderMode && sourceQuote.Sell.BestPrice > 0 {
+			sellBestPrice = sanitizeFloat(sourceQuote.Sell.BestPrice)
+		}
+		buySlippage = sanitizeFloat(sourceQuote.Buy.SlippagePercent)
+		if !sellOrderMode {
+			sellSlippage = sanitizeFloat(sourceQuote.Sell.SlippagePercent)
+		}
+		if sourceQuote.Buy.TotalDepth > 0 {
+			buyDepth = sourceQuote.Buy.TotalDepth
+		}
+		if !sellOrderMode && sourceQuote.Sell.TotalDepth > 0 {
+			sellDepth = sourceQuote.Sell.TotalDepth
+		}
+		if sourceQuote.Buy.FilledQty > 0 {
+			buyCanFill = sourceQuote.Buy.FilledQty >= qty || sourceQuote.Buy.CanFill
+		}
+		if !sellOrderMode && sourceQuote.Sell.FilledQty > 0 {
+			sellCanFill = sourceQuote.Sell.FilledQty >= qty || sourceQuote.Sell.CanFill
+		}
+		if sourceQuote.RequestedQty > qty && sourceQuote.FillQty <= qty {
+			warnings = appendExecutionWarning(warnings, "regional_quantity_capped_to_executable_depth")
+		}
+	}
+	if buyDepth <= 0 {
+		buyDepth = qty
+	}
+	if sellDepth <= 0 {
+		sellDepth = qty
+	}
+
+	buyGross := sanitizeFloat(buyVWAP * float64(qty))
+	sellGross := sanitizeFloat(sellVWAP * float64(qty))
+	buyFees := sanitizeFloat(math.Max(0, buyGross*(buyCostMult-1)))
+	sellFees := sanitizeFloat(math.Max(0, sellGross*(1-sellRevenueMult)))
+	totalFees := sanitizeFloat(buyFees + sellFees)
+	shippingCost := sanitizeFloat(item.ShippingCost)
+	filledVolume := sanitizeFloat(item.ItemVolume * float64(qty))
+	netProfit := sanitizeFloat(sellGross - sellFees - buyGross - buyFees - shippingCost)
+	profitPerUnit := 0.0
+	if qty > 0 {
+		profitPerUnit = sanitizeFloat(netProfit / float64(qty))
+	}
+	roi := 0.0
+	deployed := buyGross + buyFees + shippingCost
+	if deployed > 0 {
+		roi = sanitizeFloat(netProfit / deployed * 100)
+	}
+
+	buyPlan := ExecutionPlanResult{
+		BestPrice:       sanitizeFloat(buyBestPrice),
+		ExpectedPrice:   sanitizeFloat(buyVWAP),
+		SlippagePercent: buySlippage,
+		TotalCost:       buyGross,
+		VolumeFilled:    qty,
+		TotalDepth:      buyDepth,
+		CanFill:         buyCanFill,
+		OptimalSlices:   1,
+		SuggestedMinGap: 0,
+	}
+	sellPlan := ExecutionPlanResult{
+		BestPrice:       sanitizeFloat(sellBestPrice),
+		ExpectedPrice:   sanitizeFloat(sellVWAP),
+		SlippagePercent: sellSlippage,
+		TotalCost:       sellGross,
+		VolumeFilled:    qty,
+		TotalDepth:      sellDepth,
+		CanFill:         sellCanFill,
+		OptimalSlices:   1,
+		SuggestedMinGap: 0,
+	}
+
+	decision := "SAFE"
+	if netProfit <= 0 || item.DiagnosticRejected || !buyCanFill || !sellCanFill || buyVWAP <= 0 || sellVWAP <= 0 {
+		decision = "DANGER"
+	}
+	if item.DiagnosticReason != "" {
+		warnings = appendExecutionWarning(warnings, item.DiagnosticReason)
+	}
+	if item.MarketDataStatus != "" && item.MarketDataStatus != "ok" {
+		for _, part := range strings.Split(item.MarketDataStatus, ",") {
+			warnings = appendExecutionWarning(warnings, strings.TrimSpace(part))
+		}
+	}
+	if math.Abs(item.TargetPeriodProfit-netProfit) > 1 {
+		warnings = appendExecutionWarning(warnings, "period_profit_differs_from_now_profit")
+	}
+	if netProfit <= 0 {
+		warnings = appendExecutionWarning(warnings, "unprofitable_after_fees_shipping")
+		if partialReason == "" {
+			partialReason = "unprofitable_after_fees"
+		}
+	}
+	if item.ItemVolume <= 0 {
+		warnings = appendExecutionWarning(warnings, "missing_packaged_volume")
+	}
+
+	quote := &ExecutionQuote{
+		TypeID:                item.TypeID,
+		RequestedQty:          qty,
+		FillQty:               qty,
+		PartialReason:         partialReason,
+		BuyVWAP:               sanitizeFloat(buyVWAP),
+		SellVWAP:              sanitizeFloat(sellVWAP),
+		BuyGross:              buyGross,
+		SellGross:             sellGross,
+		BuyFees:               buyFees,
+		SellFees:              sellFees,
+		TotalFees:             totalFees,
+		ShippingCost:          shippingCost,
+		ShippingJumps:         item.Jumps,
+		ShippingCostPerM3Jump: 0,
+		PackagedVolumeM3:      sanitizeFloat(item.ItemVolume),
+		FilledVolumeM3:        filledVolume,
+		NetProfit:             netProfit,
+		ProfitPerUnit:         profitPerUnit,
+		ROIPercent:            roi,
+		Decision:              decision,
+		Warnings:              warnings,
+		Cache:                 cacheInfo,
+		Buy:                   quoteSide(item.SourceRegionID, item.SourceSystemID, item.SourceLocationID, buyPlan, buyGross, buyFees),
+		Sell:                  quoteSide(item.TargetRegionID, item.TargetSystemID, item.TargetLocationID, sellPlan, sellGross, sellFees),
+	}
+	if item.ItemVolume > 0 && item.Jumps > 0 && qty > 0 && item.ShippingCost > 0 {
+		quote.ShippingCostPerM3Jump = sanitizeFloat(item.ShippingCost / (item.ItemVolume * float64(qty) * float64(item.Jumps)))
+	}
+	return quote
 }
 
 func regionalMarketDataStatus(

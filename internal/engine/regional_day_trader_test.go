@@ -1217,6 +1217,218 @@ func TestBuildRegionalDayTrader_UsesWeightedHubDOS(t *testing.T) {
 	}
 }
 
+func TestBuildRegionalDayTrader_ExecutionQuoteDrivesDepthAwareRegionalRow(t *testing.T) {
+	scanner := &Scanner{
+		SDE: &sde.Data{
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Src", RegionID: 10, Security: 0.8},
+				2: {ID: 2, Name: "Dst", RegionID: 20, Security: 0.9},
+			},
+			Regions: map[int32]*sde.Region{
+				10: {ID: 10, Name: "Source"},
+				20: {ID: 20, Name: "Target"},
+			},
+		},
+	}
+
+	flips := []FlipResult{
+		{
+			TypeID:           9101,
+			TypeName:         "Depth Aware",
+			Volume:           10,
+			BuyPrice:         90,
+			SellPrice:        210,
+			BuySystemID:      1,
+			BuySystemName:    "Src",
+			BuyRegionID:      10,
+			BuyRegionName:    "Source",
+			SellSystemID:     2,
+			SellSystemName:   "Dst",
+			SellRegionID:     20,
+			SellRegionName:   "Target",
+			UnitsToBuy:       10,
+			SellOrderRemain:  10,
+			TargetSellSupply: 100,
+			S2BPerDay:        100,
+			SellJumps:        3,
+			ExecutionQuote: &ExecutionQuote{
+				RequestedQty: 10,
+				FillQty:      4,
+				BuyVWAP:      125,
+				SellVWAP:     220,
+				Decision:     "SAFE",
+				Warnings:     []string{"esi_market_orders_may_be_cached"},
+				Cache: &ExecutionQuoteCacheInfo{
+					BuyAgeSeconds:  30,
+					SellAgeSeconds: 40,
+					BuyTTLSeconds:  300,
+					SellTTLSeconds: 300,
+				},
+				Buy: ExecutionQuoteSide{
+					VWAP:            125,
+					BestPrice:       100,
+					FilledQty:       4,
+					CanFill:         true,
+					TotalDepth:      10,
+					SlippagePercent: 25,
+				},
+				Sell: ExecutionQuoteSide{
+					VWAP:            220,
+					BestPrice:       230,
+					FilledQty:       4,
+					CanFill:         true,
+					TotalDepth:      12,
+					SlippagePercent: 4.3478,
+				},
+			},
+		},
+	}
+
+	hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(
+		ScanParams{ShippingCostPerM3Jump: 2},
+		flips,
+		nil,
+		nil,
+	)
+	if len(hubs) != 1 || totalItems != 1 {
+		t.Fatalf("unexpected result shape: hubs=%d items=%d", len(hubs), totalItems)
+	}
+	item := hubs[0].Items[0]
+	if item.PurchaseUnits != 4 {
+		t.Fatalf("purchase units = %d, want quote fill qty 4", item.PurchaseUnits)
+	}
+	if math.Abs(item.SourceAvgPrice-125) > 1e-6 {
+		t.Fatalf("source avg price = %.2f, want quote buy VWAP 125", item.SourceAvgPrice)
+	}
+	if math.Abs(item.ShippingCost-240) > 1e-6 {
+		t.Fatalf("shipping cost = %.2f, want 240", item.ShippingCost)
+	}
+	if math.Abs(item.TargetNowProfit-140) > 1e-6 {
+		t.Fatalf("target now profit = %.2f, want 140", item.TargetNowProfit)
+	}
+	if item.ExecutionQuote == nil {
+		t.Fatalf("missing regional execution quote")
+	}
+	quote := item.ExecutionQuote
+	if quote.FillQty != 4 || math.Abs(quote.BuyVWAP-125) > 1e-6 || math.Abs(quote.NetProfit-140) > 1e-6 {
+		t.Fatalf("quote mismatch: fill=%d buy=%.2f profit=%.2f", quote.FillQty, quote.BuyVWAP, quote.NetProfit)
+	}
+	if quote.Cache == nil || quote.Cache.BuyAgeSeconds != 30 || quote.Cache.SellAgeSeconds != 40 {
+		t.Fatalf("quote cache not preserved: %#v", quote.Cache)
+	}
+	if !hasString(quote.Warnings, "esi_market_orders_may_be_cached") {
+		t.Fatalf("quote warnings = %v, want cache warning", quote.Warnings)
+	}
+
+	rows := FlattenRegionalDayHubs(hubs)
+	if len(rows) != 1 {
+		t.Fatalf("flatten rows len = %d, want 1", len(rows))
+	}
+	row := rows[0]
+	if row.FilledQty != 4 || row.UnitsToBuy != 4 {
+		t.Fatalf("flatten qty mismatch: filled=%d units=%d", row.FilledQty, row.UnitsToBuy)
+	}
+	if math.Abs(row.ExpectedBuyPrice-125) > 1e-6 || math.Abs(row.ExpectedSellPrice-220) > 1e-6 {
+		t.Fatalf("flatten expected prices: buy=%.2f sell=%.2f", row.ExpectedBuyPrice, row.ExpectedSellPrice)
+	}
+	if math.Abs(row.RealProfit-140) > 1e-6 || math.Abs(row.DayShippingCost-240) > 1e-6 {
+		t.Fatalf("flatten profit/shipping: real=%.2f shipping=%.2f", row.RealProfit, row.DayShippingCost)
+	}
+}
+
+func TestBuildRegionalDayTrader_ExecutionQuoteMarksShippingUnprofitableDanger(t *testing.T) {
+	scanner := &Scanner{
+		SDE: &sde.Data{
+			Systems: map[int32]*sde.SolarSystem{
+				1: {ID: 1, Name: "Src", RegionID: 10, Security: 0.8},
+				2: {ID: 2, Name: "Dst", RegionID: 20, Security: 0.9},
+			},
+			Regions: map[int32]*sde.Region{
+				10: {ID: 10, Name: "Source"},
+				20: {ID: 20, Name: "Target"},
+			},
+		},
+	}
+
+	flips := []FlipResult{
+		{
+			TypeID:           9102,
+			TypeName:         "Shipping Loser",
+			Volume:           10,
+			BuyPrice:         100,
+			SellPrice:        105,
+			BuySystemID:      1,
+			BuySystemName:    "Src",
+			BuyRegionID:      10,
+			BuyRegionName:    "Source",
+			SellSystemID:     2,
+			SellSystemName:   "Dst",
+			SellRegionID:     20,
+			SellRegionName:   "Target",
+			UnitsToBuy:       3,
+			SellOrderRemain:  3,
+			TargetSellSupply: 100,
+			S2BPerDay:        100,
+			SellJumps:        3,
+			ExecutionQuote: &ExecutionQuote{
+				RequestedQty: 3,
+				FillQty:      3,
+				BuyVWAP:      100,
+				SellVWAP:     105,
+				Decision:     "SAFE",
+				Buy: ExecutionQuoteSide{
+					VWAP:       100,
+					BestPrice:  100,
+					FilledQty:  3,
+					CanFill:    true,
+					TotalDepth: 3,
+				},
+				Sell: ExecutionQuoteSide{
+					VWAP:       105,
+					BestPrice:  105,
+					FilledQty:  3,
+					CanFill:    true,
+					TotalDepth: 3,
+				},
+			},
+		},
+	}
+
+	hubs, totalItems, _, _ := scanner.BuildRegionalDayTrader(
+		ScanParams{ShippingCostPerM3Jump: 1},
+		flips,
+		nil,
+		nil,
+	)
+	if len(hubs) != 1 || totalItems != 1 {
+		t.Fatalf("unexpected result shape: hubs=%d items=%d", len(hubs), totalItems)
+	}
+	quote := hubs[0].Items[0].ExecutionQuote
+	if quote == nil {
+		t.Fatalf("missing regional execution quote")
+	}
+	if math.Abs(quote.NetProfit-(-75)) > 1e-6 {
+		t.Fatalf("quote net profit = %.2f, want -75", quote.NetProfit)
+	}
+	if quote.Decision != "DANGER" {
+		t.Fatalf("quote decision = %s, want DANGER", quote.Decision)
+	}
+	if !hasString(quote.Warnings, "unprofitable_after_fees_shipping") {
+		t.Fatalf("quote warnings = %v, want unprofitable warning", quote.Warnings)
+	}
+
+	rows := FlattenRegionalDayHubs(hubs)
+	if len(rows) != 1 {
+		t.Fatalf("flatten rows len = %d, want 1", len(rows))
+	}
+	if rows[0].CanFill {
+		t.Fatalf("flatten CanFill = true, want false for DANGER quote")
+	}
+	if math.Abs(rows[0].RealProfit-(-75)) > 1e-6 {
+		t.Fatalf("flatten real profit = %.2f, want -75", rows[0].RealProfit)
+	}
+}
+
 func TestFlattenRegionalDayHubs_MapsToFlipRows(t *testing.T) {
 	hubs := []RegionalDayTradeHub{
 		{
@@ -1284,8 +1496,11 @@ func TestFlattenRegionalDayHubs_MapsToFlipRows(t *testing.T) {
 	if row.BuySystemName != "Jita" || row.SellSystemName != "Amarr" {
 		t.Fatalf("row system mapping mismatch: buy=%s sell=%s", row.BuySystemName, row.SellSystemName)
 	}
-	if row.UnitsToBuy != 10 || row.TotalProfit != 180 || row.RealProfit != 160 {
-		t.Fatalf("row profit/units mismatch: units=%d now=%.2f period=%.2f", row.UnitsToBuy, row.TotalProfit, row.RealProfit)
+	if row.UnitsToBuy != 10 || row.TotalProfit != 180 || row.RealProfit != 180 || row.ExpectedProfit != 180 {
+		t.Fatalf("row execution profit/units mismatch: units=%d total=%.2f real=%.2f expected=%.2f", row.UnitsToBuy, row.TotalProfit, row.RealProfit, row.ExpectedProfit)
+	}
+	if row.DayNowProfit != 180 || row.DayPeriodProfit != 160 {
+		t.Fatalf("row day profit mismatch: now=%.2f period=%.2f", row.DayNowProfit, row.DayPeriodProfit)
 	}
 	if row.DayTargetDOS != 5 || row.DayTradeScore != 77 {
 		t.Fatalf("row day metrics mismatch: dos=%.2f score=%.2f", row.DayTargetDOS, row.DayTradeScore)

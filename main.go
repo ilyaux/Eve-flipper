@@ -179,9 +179,10 @@ func main() {
 			logger.Error("SDE", fmt.Sprintf("Load failed: %v", err))
 			return
 		}
-		prepareShipPackagedVolumes(dataDir, data, esiClient)
+		missingShipVolumes := prepareShipPackagedVolumes(dataDir, data)
 		srv.SetSDE(data)
 		logger.Success("SDE", "Scanner ready")
+		refreshShipPackagedVolumesInBackground(dataDir, missingShipVolumes, esiClient)
 	}()
 
 	// Combine API + embedded frontend into a single handler
