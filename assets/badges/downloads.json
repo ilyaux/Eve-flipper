@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-07-19T03:58:34.778Z",
+  "generated_at": "2026-07-19T08:35:32.438Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2085,
-  "current_github_total": 2085,
+  "total_downloads": 2088,
+  "current_github_total": 2088,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -1242,13 +1242,13 @@
       "tag_name": "v1.6.2",
       "release_id": "319968619",
       "state": "active",
-      "download_count": 0,
-      "github_download_count": 0,
+      "download_count": 1,
+      "github_download_count": 1,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.2/eve-flipper-web-darwin-amd64",
       "created_at": "2026-05-09T16:26:55Z",
       "updated_at": "2026-05-09T16:26:57Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-19T08:35:32.438Z"
     },
     {
       "id": "416107889",
@@ -1452,13 +1452,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 1,
-      "github_download_count": 1,
+      "download_count": 2,
+      "github_download_count": 2,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-web-windows-amd64.exe",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-19T03:58:34.778Z"
+      "last_seen_at": "2026-07-19T08:35:32.438Z"
     },
     {
       "id": "481914707",
@@ -1466,13 +1466,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 2,
-      "github_download_count": 2,
+      "download_count": 3,
+      "github_download_count": 3,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/SHA256SUMS.txt",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:07Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-19T03:58:34.778Z"
+      "last_seen_at": "2026-07-19T08:35:32.438Z"
     },
     {
       "id": "463242745",
