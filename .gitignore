@@ -53,6 +53,9 @@ frontend/tsconfig.tsbuildinfo
 .claude/
 CLAUDE.md
 
+# Local Codex configuration and project skills
+/.codex/
+
 # Graphify knowledge graph output
 graphify-out/
 
