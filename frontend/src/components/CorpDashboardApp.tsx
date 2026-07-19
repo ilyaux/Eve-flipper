@@ -2,15 +2,13 @@ import { useEffect, useState } from "react";
 import { getCorpDashboard } from "../lib/api";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import type { CorpDashboard } from "../lib/types";
-import {
-  OverviewSection,
-  WalletsSection,
-  MembersSection,
-  IndustrySection,
-  MiningSection,
-  MarketSection,
-  type CorpTab,
-} from "./corp-dashboard/CorpDashboardSections";
+import { OverviewSection } from "./corp-dashboard/OverviewSection";
+import { WalletsSection } from "./corp-dashboard/WalletsSection";
+import { MembersSection } from "./corp-dashboard/MembersSection";
+import { IndustrySection } from "./corp-dashboard/IndustrySection";
+import { MiningSection } from "./corp-dashboard/MiningSection";
+import { MarketSection } from "./corp-dashboard/MarketSection";
+import type { CorpTab } from "./corp-dashboard/types";
 
 export function CorpDashboardApp() {
   const { t } = useI18n();

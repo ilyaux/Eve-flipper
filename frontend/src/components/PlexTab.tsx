@@ -5,19 +5,11 @@ import { useTheme } from "../lib/useTheme";
 import type { PLEXDashboard, ArbitragePath, ScanParams } from "../lib/types";
 import { normalizeTaxProfile, type TaxProfile } from "../lib/taxProfile";
 import { usePlexAlerts, PlexAlertPanel } from "./PlexAlerts";
-import {
-  SignalCard,
-  GlobalPriceCard,
-  ArbitrageRow,
-  SPFarmCard,
-  ArbHistoryChart,
-  MarketDepthCard,
-  InjectionTiersCard,
-  ArbitrageModal,
-  PLEXChart,
-  OmegaComparatorCard,
-  CrossHubCard,
-} from "./plex-tab/PlexTabSections";
+import { SignalCard, GlobalPriceCard, ArbitrageRow, MarketDepthCard, InjectionTiersCard } from "./plex-tab/PlexMarketCards";
+import { SPFarmCard } from "./plex-tab/SPFarmCard";
+import { ArbHistoryChart, PLEXChart } from "./plex-tab/PlexCharts";
+import { ArbitrageModal } from "./plex-tab/PlexArbitrageModal";
+import { OmegaComparatorCard, CrossHubCard } from "./plex-tab/PlexAnalyticsCards";
 
 type PlexSubTab = "market" | "spfarm" | "analytics";
 const SKILL_ACCOUNTING = 16622;

@@ -12,20 +12,18 @@ import {
 import { useI18n } from "../lib/i18n";
 import { trackClientTelemetry } from "../lib/telemetry";
 import type { AuthCharacter, CharacterInfo, CharacterRoles, HostedAccessStatus, SecurityVaultStatus } from "../lib/types";
-import {
-  CombinedOrdersTab,
-  HostedAccessTab,
-  IndustryJobsTab,
-  OptimizerTab,
-  PIPlanetsTab,
-  OverviewTab,
-  PnLTab,
-  RiskTab,
-  TabBtn,
-  TransactionsTab,
-  TradingEdgeTab,
-  WalletDashboardTab,
-} from "./character-popup/CharacterPopupTabs";
+import { CombinedOrdersTab } from "./character-popup/CombinedOrdersTab";
+import { HostedAccessTab } from "./character-popup/HostedAccessTab";
+import { IndustryJobsTab } from "./character-popup/IndustryJobsTab";
+import { OptimizerTab } from "./character-popup/OptimizerTab";
+import { PIPlanetsTab } from "./character-popup/PIPlanetsTab";
+import { OverviewTab } from "./character-popup/OverviewTab";
+import { PnLTab } from "./character-popup/PnLTab";
+import { RiskTab } from "./character-popup/RiskTab";
+import { TabBtn } from "./character-popup/TabButton";
+import { TransactionsTab } from "./character-popup/TransactionsTab";
+import { TradingEdgeTab } from "./character-popup/TradingEdgeTab";
+import { WalletDashboardTab } from "./character-popup/WalletDashboardTab";
 import { AchievementLibraryPanel, useAchievements } from "./achievements";
 import { PlexTab } from "./PlexTab";
 import type { ScanParams } from "../lib/types";

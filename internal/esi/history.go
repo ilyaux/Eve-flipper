@@ -24,12 +24,6 @@ type MarketStats struct {
 	PriceTrend  float64 // % change over last 7 days (Theil-Sen slope)
 }
 
-// HistoryCache is a persistent cache for market history data.
-type HistoryCache interface {
-	GetHistory(regionID int32, typeID int32) ([]HistoryEntry, bool)
-	SetHistory(regionID int32, typeID int32, entries []HistoryEntry)
-}
-
 // FetchMarketHistory fetches market history for a type in a region from ESI.
 func (c *Client) FetchMarketHistory(regionID, typeID int32) ([]HistoryEntry, error) {
 	url := fmt.Sprintf("%s/markets/%d/history/?datasource=tranquility&type_id=%d",
