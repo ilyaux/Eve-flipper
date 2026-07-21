@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-07-21T08:48:08.765Z",
+  "generated_at": "2026-07-21T14:26:00.858Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2129,
-  "current_github_total": 2129,
+  "total_downloads": 2134,
+  "current_github_total": 2134,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -892,13 +892,13 @@
       "tag_name": "v1.6.4",
       "release_id": "323974971",
       "state": "active",
-      "download_count": 15,
-      "github_download_count": 15,
+      "download_count": 16,
+      "github_download_count": 16,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.4/eve-flipper-desktop-linux-amd64",
       "created_at": "2026-05-17T21:51:03Z",
       "updated_at": "2026-05-17T21:51:05Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T20:47:32.272Z"
+      "last_seen_at": "2026-07-21T14:26:00.858Z"
     },
     {
       "id": "422749855",
@@ -934,13 +934,13 @@
       "tag_name": "v1.6.4",
       "release_id": "323974971",
       "state": "active",
-      "download_count": 1,
-      "github_download_count": 1,
+      "download_count": 2,
+      "github_download_count": 2,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.4/eve-flipper-web-darwin-amd64",
       "created_at": "2026-05-17T21:51:03Z",
       "updated_at": "2026-05-17T21:51:05Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-21T14:26:00.858Z"
     },
     {
       "id": "422749852",
@@ -1382,13 +1382,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 10,
-      "github_download_count": 10,
+      "download_count": 11,
+      "github_download_count": 11,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-desktop-windows-amd64.exe",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-21T03:49:36.258Z"
+      "last_seen_at": "2026-07-21T14:26:00.858Z"
     },
     {
       "id": "481914704",
@@ -2250,13 +2250,13 @@
       "tag_name": "v1.6.0",
       "release_id": "303604271",
       "state": "active",
-      "download_count": 12,
-      "github_download_count": 12,
+      "download_count": 13,
+      "github_download_count": 13,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.0/eve-flipper-desktop-darwin-amd64",
       "created_at": "2026-03-31T09:25:07Z",
       "updated_at": "2026-03-31T09:25:09Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-21T14:26:00.858Z"
     },
     {
       "id": "385422640",
@@ -4168,13 +4168,13 @@
       "tag_name": "v1.2.6",
       "release_id": "282925883",
       "state": "active",
-      "download_count": 1,
-      "github_download_count": 1,
+      "download_count": 2,
+      "github_download_count": 2,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.2.6/eve-flipper-linux-amd64",
       "created_at": "2026-02-04T11:28:05Z",
       "updated_at": "2026-02-04T11:28:06Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-21T14:26:00.858Z"
     },
     {
       "id": "350546579",
