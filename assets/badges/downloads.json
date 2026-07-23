@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-07-23T03:48:15.937Z",
+  "generated_at": "2026-07-23T08:46:11.543Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2162,
-  "current_github_total": 2162,
+  "total_downloads": 2168,
+  "current_github_total": 2168,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -948,13 +948,13 @@
       "tag_name": "v1.6.4",
       "release_id": "323974971",
       "state": "active",
-      "download_count": 4,
-      "github_download_count": 4,
+      "download_count": 5,
+      "github_download_count": 5,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.4/eve-flipper-web-darwin-arm64",
       "created_at": "2026-05-17T21:51:03Z",
       "updated_at": "2026-05-17T21:51:05Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-23T08:46:11.543Z"
     },
     {
       "id": "422749857",
@@ -1060,13 +1060,13 @@
       "tag_name": "v1.6.3",
       "release_id": "323105293",
       "state": "active",
-      "download_count": 1,
-      "github_download_count": 1,
+      "download_count": 2,
+      "github_download_count": 2,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.3/eve-flipper-desktop-linux-arm64",
       "created_at": "2026-05-15T08:25:54Z",
       "updated_at": "2026-05-15T08:25:56Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-23T08:46:11.543Z"
     },
     {
       "id": "420852988",
@@ -1382,13 +1382,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 20,
-      "github_download_count": 20,
+      "download_count": 21,
+      "github_download_count": 21,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-desktop-windows-amd64.exe",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-22T19:46:43.946Z"
+      "last_seen_at": "2026-07-23T08:46:11.543Z"
     },
     {
       "id": "481914704",
@@ -1466,13 +1466,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 16,
-      "github_download_count": 16,
+      "download_count": 17,
+      "github_download_count": 17,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/SHA256SUMS.txt",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:07Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-22T19:46:43.946Z"
+      "last_seen_at": "2026-07-23T08:46:11.543Z"
     },
     {
       "id": "463242745",
@@ -2698,13 +2698,13 @@
       "tag_name": "v1.5.8",
       "release_id": "296800609",
       "state": "active",
-      "download_count": 2,
-      "github_download_count": 2,
+      "download_count": 3,
+      "github_download_count": 3,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.5.8/eve-flipper-desktop-linux-amd64",
       "created_at": "2026-03-13T17:18:30Z",
       "updated_at": "2026-03-13T17:18:31Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-23T08:46:11.543Z"
     },
     {
       "id": "373226353",
@@ -4308,13 +4308,13 @@
       "tag_name": "v1.2.4",
       "release_id": "282911240",
       "state": "active",
-      "download_count": 2,
-      "github_download_count": 2,
+      "download_count": 3,
+      "github_download_count": 3,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.2.4/eve-flipper-linux-amd64",
       "created_at": "2026-02-04T10:43:22Z",
       "updated_at": "2026-02-04T10:43:23Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T12:45:36.421Z"
+      "last_seen_at": "2026-07-23T08:46:11.543Z"
     },
     {
       "id": "350527900",
