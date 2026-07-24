@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-07-23T19:48:29.567Z",
+  "generated_at": "2026-07-24T03:47:06.680Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2175,
-  "current_github_total": 2175,
+  "total_downloads": 2178,
+  "current_github_total": 2178,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -220,13 +220,13 @@
       "tag_name": "v1.6.9",
       "release_id": "339426887",
       "state": "active",
-      "download_count": 3,
-      "github_download_count": 3,
+      "download_count": 4,
+      "github_download_count": 4,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.9/eve-flipper-web-windows-amd64.exe",
       "created_at": "2026-06-15T08:56:29Z",
       "updated_at": "2026-06-15T08:56:30Z",
       "first_seen_at": "2026-06-15T08:56:47.103Z",
-      "last_seen_at": "2026-06-15T18:47:35.146Z"
+      "last_seen_at": "2026-07-24T03:47:06.680Z"
     },
     {
       "id": "448000113",
@@ -374,13 +374,13 @@
       "tag_name": "v1.6.8",
       "release_id": "339249798",
       "state": "active",
-      "download_count": 2,
-      "github_download_count": 2,
+      "download_count": 3,
+      "github_download_count": 3,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.8/eve-flipper-web-windows-amd64.exe",
       "created_at": "2026-06-14T20:54:00Z",
       "updated_at": "2026-06-14T20:54:01Z",
       "first_seen_at": "2026-06-14T20:54:12.538Z",
-      "last_seen_at": "2026-06-15T08:56:47.103Z"
+      "last_seen_at": "2026-07-24T03:47:06.680Z"
     },
     {
       "id": "447555396",
@@ -1970,13 +1970,13 @@
       "tag_name": "v1.6.10",
       "release_id": "339735301",
       "state": "active",
-      "download_count": 1,
-      "github_download_count": 1,
+      "download_count": 2,
+      "github_download_count": 2,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.10/eve-flipper-desktop-linux-amd64",
       "created_at": "2026-06-15T18:47:15Z",
       "updated_at": "2026-06-15T18:47:17Z",
       "first_seen_at": "2026-06-15T18:47:35.146Z",
-      "last_seen_at": "2026-06-16T11:37:18.038Z"
+      "last_seen_at": "2026-07-24T03:47:06.680Z"
     },
     {
       "id": "448444887",
