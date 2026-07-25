@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-07-25T03:41:44.670Z",
+  "generated_at": "2026-07-25T08:25:47.852Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2191,
-  "current_github_total": 2191,
+  "total_downloads": 2196,
+  "current_github_total": 2196,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -682,13 +682,13 @@
       "tag_name": "v1.6.6",
       "release_id": "335692965",
       "state": "active",
-      "download_count": 8,
-      "github_download_count": 8,
+      "download_count": 9,
+      "github_download_count": 9,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.6/eve-flipper-web-windows-amd64.exe",
       "created_at": "2026-06-07T22:55:07Z",
       "updated_at": "2026-06-07T22:55:09Z",
       "first_seen_at": "2026-06-10T12:45:36.421Z",
-      "last_seen_at": "2026-06-10T20:47:32.272Z"
+      "last_seen_at": "2026-07-25T08:25:47.852Z"
     },
     {
       "id": "441219600",
@@ -1382,13 +1382,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 23,
-      "github_download_count": 23,
+      "download_count": 26,
+      "github_download_count": 26,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-desktop-windows-amd64.exe",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-23T19:48:29.567Z"
+      "last_seen_at": "2026-07-25T08:25:47.852Z"
     },
     {
       "id": "481914704",
@@ -1466,13 +1466,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 17,
-      "github_download_count": 17,
+      "download_count": 18,
+      "github_download_count": 18,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/SHA256SUMS.txt",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:07Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-23T08:46:11.543Z"
+      "last_seen_at": "2026-07-25T08:25:47.852Z"
     },
     {
       "id": "463242745",
