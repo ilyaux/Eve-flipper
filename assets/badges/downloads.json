@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-08-08T07:17:34.851Z",
+  "generated_at": "2026-08-08T13:14:26.382Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2249,
-  "current_github_total": 2249,
+  "total_downloads": 2252,
+  "current_github_total": 2252,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -192,13 +192,13 @@
       "tag_name": "v1.6.9",
       "release_id": "339426887",
       "state": "active",
-      "download_count": 2,
-      "github_download_count": 2,
+      "download_count": 3,
+      "github_download_count": 3,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.9/eve-flipper-web-linux-amd64",
       "created_at": "2026-06-15T08:56:29Z",
       "updated_at": "2026-06-15T08:56:30Z",
       "first_seen_at": "2026-06-15T08:56:47.103Z",
-      "last_seen_at": "2026-07-05T19:44:57.199Z"
+      "last_seen_at": "2026-08-08T13:14:26.382Z"
     },
     {
       "id": "448000106",
@@ -1410,13 +1410,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 1,
-      "github_download_count": 1,
+      "download_count": 2,
+      "github_download_count": 2,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-web-darwin-arm64",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-08-07T13:41:28.946Z"
+      "last_seen_at": "2026-08-08T13:14:26.382Z"
     },
     {
       "id": "481914717",
@@ -1886,13 +1886,13 @@
       "tag_name": "v1.6.11",
       "release_id": "340979126",
       "state": "active",
-      "download_count": 6,
-      "github_download_count": 6,
+      "download_count": 7,
+      "github_download_count": 7,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.11/eve-flipper-web-linux-amd64",
       "created_at": "2026-06-17T18:41:12Z",
       "updated_at": "2026-06-17T18:41:13Z",
       "first_seen_at": "2026-06-17T18:41:24.122Z",
-      "last_seen_at": "2026-07-09T04:15:58.639Z"
+      "last_seen_at": "2026-08-08T13:14:26.382Z"
     },
     {
       "id": "450478686",
