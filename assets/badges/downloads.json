@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "repo": "ilyaux/Eve-flipper",
-  "generated_at": "2026-08-08T19:01:06.203Z",
+  "generated_at": "2026-08-09T02:31:17.356Z",
   "latest_release": "v1.6.14",
-  "total_downloads": 2254,
-  "current_github_total": 2254,
+  "total_downloads": 2259,
+  "current_github_total": 2259,
   "active_asset_count": 334,
   "archived_asset_count": 0,
   "clone_stats": {
@@ -1326,13 +1326,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 3,
-      "github_download_count": 3,
+      "download_count": 4,
+      "github_download_count": 4,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-desktop-darwin-amd64",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-08-07T13:41:28.946Z"
+      "last_seen_at": "2026-08-09T02:31:17.356Z"
     },
     {
       "id": "481914715",
@@ -1382,13 +1382,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 43,
-      "github_download_count": 43,
+      "download_count": 46,
+      "github_download_count": 46,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-desktop-windows-amd64.exe",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-08-07T19:18:12.659Z"
+      "last_seen_at": "2026-08-09T02:31:17.356Z"
     },
     {
       "id": "481914704",
@@ -1452,13 +1452,13 @@
       "tag_name": "v1.6.14",
       "release_id": "356221636",
       "state": "active",
-      "download_count": 6,
-      "github_download_count": 6,
+      "download_count": 7,
+      "github_download_count": 7,
       "browser_download_url": "https://github.com/ilyaux/Eve-flipper/releases/download/v1.6.14/eve-flipper-web-windows-amd64.exe",
       "created_at": "2026-07-19T00:13:07Z",
       "updated_at": "2026-07-19T00:13:09Z",
       "first_seen_at": "2026-07-19T00:13:22.823Z",
-      "last_seen_at": "2026-07-30T19:54:49.046Z"
+      "last_seen_at": "2026-08-09T02:31:17.356Z"
     },
     {
       "id": "481914707",
